@@ -1,46 +1,30 @@
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { Text, StyleSheet } from 'react-native';
+import { Screen } from '@/components/ui/Screen';
+import { Card } from '@/components/ui/Card';
+import { SectionLabel } from '@/components/ui/SectionLabel';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
 
 export default function HifzScreen() {
   return (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
-      <Text style={styles.badge}>BIBLIOTHÈQUE</Text>
+    <Screen>
+      <SectionLabel text="Bibliothèque" style={styles.badge} />
       <Text style={styles.title}>Mon Hifz</Text>
       <Text style={styles.subtitle}>Les sourates que tu as mémorisées.</Text>
 
-      {/* TODO: surah list with status chips */}
-      <View style={styles.empty}>
-        <Text style={styles.emptyText}>Ta bibliothèque de mémorisation apparaîtra ici.</Text>
-      </View>
-    </ScrollView>
+      <Card>
+        <EmptyState
+          title="Ta bibliothèque est vide"
+          description="Ta bibliothèque de mémorisation apparaîtra ici une fois ta première sourate complétée."
+        />
+      </Card>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: colors.background },
-  container: { padding: spacing.md, paddingBottom: 40, paddingTop: 60 },
-  badge: {
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 2.5,
-    color: colors.gold,
-    marginBottom: 8,
-  },
-  title: { fontSize: 32, fontWeight: '700', color: colors.primary, marginBottom: 8 },
-  subtitle: { fontSize: 14, color: colors.muted, marginBottom: spacing.lg },
-  empty: {
-    backgroundColor: colors.surface,
-    borderRadius: 20,
-    padding: 40,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  emptyText: {
-    fontSize: 14,
-    color: colors.muted,
-    textAlign: 'center',
-    lineHeight: 22,
-  },
+  badge: { marginTop: spacing.sm },
+  title: { fontSize: 30, fontWeight: '700', color: colors.primary, marginBottom: 6 },
+  subtitle: { fontSize: 13, color: colors.muted, lineHeight: 20, marginBottom: spacing.lg },
 });

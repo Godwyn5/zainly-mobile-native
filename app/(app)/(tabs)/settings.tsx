@@ -1,7 +1,11 @@
 import { useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
+import { Text, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '@/db/client';
+import { Screen } from '@/components/ui/Screen';
+import { Card } from '@/components/ui/Card';
+import { SectionLabel } from '@/components/ui/SectionLabel';
+import { ListRow } from '@/components/ui/ListRow';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
 
@@ -20,84 +24,35 @@ export default function SettingsScreen() {
   }
 
   return (
-    <ScrollView style={styles.scroll} contentContainerStyle={styles.container}>
-      <Text style={styles.badge}>COMPTE</Text>
+    <Screen>
+      <SectionLabel text="Compte" style={styles.badge} />
       <Text style={styles.title}>Réglages</Text>
 
-      {/* TODO: rythme picker, programme rebuild */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Mon programme</Text>
-        <TouchableOpacity style={styles.row}>
-          <Text style={styles.rowText}>Changer mon rythme</Text>
-          <Text style={styles.rowChevron}>›</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.row, styles.rowLast]}>
-          <Text style={styles.rowText}>Reconstruire mon programme</Text>
-          <Text style={styles.rowChevron}>›</Text>
-        </TouchableOpacity>
-      </View>
+      <Card style={styles.groupCard}>
+        <SectionLabel text="Mon programme" style={styles.groupLabel} />
+        <ListRow title="Changer mon rythme" topBorder={false} />
+        <ListRow title="Reconstruire mon programme" />
+      </Card>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Compte</Text>
-        <TouchableOpacity style={styles.row}>
-          <Text style={styles.rowText}>Premium</Text>
-          <Text style={styles.rowChevron}>›</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.row, styles.rowLast, signingOut && styles.rowDisabled]}
+      <Card style={styles.groupCard}>
+        <SectionLabel text="Compte" style={styles.groupLabel} />
+        <ListRow title="Premium" topBorder={false} />
+        <ListRow
+          title="Se déconnecter"
+          destructive
+          chevron={false}
           onPress={handleSignOut}
+          loading={signingOut}
           disabled={signingOut}
-        >
-          {signingOut
-            ? <ActivityIndicator color={colors.danger} size="small" />
-            : <Text style={[styles.rowText, { color: colors.danger }]}>Se déconnecter</Text>
-          }
-        </TouchableOpacity>
-      </View>
-    </ScrollView>
+        />
+      </Card>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: colors.background },
-  container: { padding: spacing.md, paddingBottom: 40, paddingTop: 60 },
-  badge: {
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 2.5,
-    color: colors.gold,
-    marginBottom: 8,
-  },
-  title: { fontSize: 32, fontWeight: '700', color: colors.primary, marginBottom: spacing.lg },
-  section: {
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    marginBottom: spacing.md,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-    color: colors.muted,
-    paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 8,
-    textTransform: 'uppercase',
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  rowLast: {},
-  rowDisabled: { opacity: 0.5 },
-  rowText: { fontSize: 15, color: colors.text },
-  rowChevron: { fontSize: 18, color: colors.muted },
+  badge: { marginTop: spacing.sm },
+  title: { fontSize: 30, fontWeight: '700', color: colors.primary, marginBottom: spacing.lg },
+  groupCard: { padding: 0, overflow: 'hidden' },
+  groupLabel: { paddingHorizontal: 16, paddingTop: 14, marginBottom: 0 },
 });

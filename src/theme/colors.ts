@@ -1,6 +1,7 @@
 export const colors = {
   background: '#F5F0E6',
   surface: '#FFFFFF',
+  surfaceMuted: '#FAF7F2',
   primary: '#163026',
   primarySoft: '#23483A',
   gold: '#B8962E',
@@ -8,6 +9,8 @@ export const colors = {
   text: '#163026',
   muted: '#7A746A',
   border: '#E2D9CC',
+  disabled: '#C8C4BB',
+  tabInactive: '#9E9892',
   danger: '#B42318',
   success: '#2D6A4F',
 } as const;

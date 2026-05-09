@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuthStore } from '@/store/authStore';
@@ -7,6 +7,15 @@ import { usePlan } from '@/hooks/usePlan';
 import { useProgress } from '@/hooks/useProgress';
 import { useDueReviews } from '@/hooks/useDueReviews';
 import { getTodayProgramme } from '@/core/dailyPlan';
+import { Screen } from '@/components/ui/Screen';
+import { Card } from '@/components/ui/Card';
+import { SectionLabel } from '@/components/ui/SectionLabel';
+import { StatusChip } from '@/components/ui/StatusChip';
+import { StatPill } from '@/components/ui/StatPill';
+import { ProgressBar } from '@/components/ui/ProgressBar';
+import { PrimaryButton } from '@/components/ui/PrimaryButton';
+import { SecondaryButton } from '@/components/ui/SecondaryButton';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
 
@@ -47,29 +56,31 @@ export default function TodayScreen() {
 
   if (hasError) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <View style={styles.stateCard}>
-          <Text style={styles.stateTitle}>Impossible de charger ton programme</Text>
-          <Text style={styles.stateSub}>Vérifie ta connexion puis réessaie.</Text>
-          <Pressable style={styles.retryBtn} onPress={refetchAll}>
-            <Text style={styles.retryBtnText}>Réessayer</Text>
-          </Pressable>
-        </View>
-      </SafeAreaView>
+      <Screen>
+        <Card style={styles.stateCard}>
+          <EmptyState
+            title="Impossible de charger ton programme"
+            description="Vérifie ta connexion puis réessaie."
+            buttonLabel="Réessayer"
+            onPress={refetchAll}
+          />
+        </Card>
+      </Screen>
     );
   }
 
   if (hasNoPlan) {
     return (
-      <SafeAreaView style={styles.centered}>
-        <View style={styles.stateCard}>
-          <Text style={styles.stateTitle}>Ton programme n'est pas encore prêt</Text>
-          <Text style={styles.stateSub}>Commence par créer ton programme de mémorisation.</Text>
-          <Pressable style={styles.ctaBtn} onPress={() => router.push('/onboarding')}>
-            <Text style={styles.ctaBtnText}>Créer mon programme</Text>
-          </Pressable>
-        </View>
-      </SafeAreaView>
+      <Screen>
+        <Card style={styles.stateCard}>
+          <EmptyState
+            title="Ton programme n'est pas encore prêt"
+            description="Commence par créer ton programme de mémorisation."
+            buttonLabel="Créer mon programme"
+            onPress={() => router.push('/onboarding')}
+          />
+        </Card>
+      </Screen>
     );
   }
 
@@ -105,131 +116,102 @@ export default function TodayScreen() {
     : 0;
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
-
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerRow}>
-            <Text style={styles.title}>Aujourd'hui</Text>
-            <View style={[styles.chip, isPremium ? styles.chipPremium : styles.chipFree]}>
-              <Text style={[styles.chipText, isPremium ? styles.chipTextPremium : styles.chipTextFree]}>
-                {isPremium ? 'Premium actif' : 'Gratuit'}
-              </Text>
-            </View>
-          </View>
-          <Text style={styles.subtitle}>Ton programme de mémorisation du jour.</Text>
+    <Screen>
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={styles.headerRow}>
+          <Text style={styles.title}>Aujourd'hui</Text>
+          <StatusChip
+            label={isPremium ? 'Premium actif' : 'Gratuit'}
+            variant={isPremium ? 'premium' : 'free'}
+          />
         </View>
+        <Text style={styles.subtitle}>Ton programme de mémorisation du jour.</Text>
+      </View>
 
-        {/* Main card */}
-        <View style={styles.card}>
-          <Text style={styles.cardBadge}>PROGRAMME DU JOUR</Text>
+      {/* Main card */}
+      <Card>
+        <SectionLabel text="Programme du jour" />
 
-          {/* Section — Révisions */}
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>RÉVISIONS</Text>
-            {prog.dueReviewCount > 0 ? (
-              <>
-                <Text style={styles.sectionTitle}>
-                  {prog.dueReviewCount} ayat{prog.dueReviewCount > 1 ? 's' : ''} à revoir aujourd'hui
-                </Text>
-                <Text style={styles.sectionSub}>
-                  On commence par consolider ce que tu connais déjà.
-                </Text>
-              </>
-            ) : (
-              <>
-                <Text style={styles.sectionTitle}>Aucune révision prévue aujourd'hui</Text>
-                <Text style={styles.sectionSub}>
-                  Tu passeras directement à la nouvelle mémorisation.
-                </Text>
-              </>
-            )}
-          </View>
-
-          <View style={styles.divider} />
-
-          {/* Section — Nouvelle mémorisation */}
-          <View style={styles.section}>
-            <Text style={styles.sectionLabel}>NOUVELLE MÉMORISATION</Text>
-            {prog.sessionDoneToday ? (
-              <>
-                <Text style={styles.sectionTitle}>Session du jour terminée</Text>
-                <Text style={styles.sectionSub}>Reviens demain pour continuer ton programme.</Text>
-              </>
-            ) : (
-              <>
-                <Text style={styles.sectionTitle}>{ayatLabel}</Text>
-                <Text style={styles.sectionSub}>{ayatSubLabel}</Text>
-              </>
-            )}
-          </View>
-
-          {/* Section — Dans cette sourate */}
-          {!prog.surahExhausted && prog.currentSurah != null && prog.surahTotalAyats > 0 && (
+        {/* Révisions */}
+        <View style={styles.section}>
+          <Text style={styles.subsectionLabel}>RÉVISIONS</Text>
+          {prog.dueReviewCount > 0 ? (
             <>
-              <View style={styles.divider} />
-              <View style={styles.section}>
-                <Text style={styles.sectionLabel}>DANS CETTE SOURATE</Text>
-                <Text style={styles.sectionTitle}>
-                  {prog.currentAyah} / {prog.surahTotalAyats} ayats
-                </Text>
-                <View style={styles.progressBarBg}>
-                  <View style={[styles.progressBarFill, { width: `${progressPct * 100}%` }]} />
-                </View>
-                <Text style={styles.sectionSub}>
-                  {prog.sessionFinishesSurah
-                    ? `Tu termineras ${prog.surahName} aujourd'hui.`
-                    : `Il restera ${prog.remainingAfterSession} ayat${prog.remainingAfterSession > 1 ? 's' : ''} après ta session.`
-                  }
-                </Text>
-              </View>
+              <Text style={styles.sectionTitle}>
+                {prog.dueReviewCount} ayat{prog.dueReviewCount > 1 ? 's' : ''} à revoir aujourd'hui
+              </Text>
+              <Text style={styles.sectionSub}>On commence par consolider ce que tu connais déjà.</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.sectionTitle}>Aucune révision aujourd'hui</Text>
+              <Text style={styles.sectionSub}>Tu passeras directement à la nouvelle mémorisation.</Text>
             </>
           )}
         </View>
 
-        {/* Stats mini row */}
-        <View style={styles.statsRow}>
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>🔥 {prog.streak}</Text>
-            <Text style={styles.statLabel}>Série</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>{prog.totalMemorized}</Text>
-            <Text style={styles.statLabel}>Ayats acquis</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.statItem}>
-            <Text style={styles.statValue}>{prog.ayahPerDay}/j</Text>
-            <Text style={styles.statLabel}>Rythme</Text>
-          </View>
+        <View style={styles.divider} />
+
+        {/* Mémorisation */}
+        <View style={styles.section}>
+          <Text style={styles.subsectionLabel}>NOUVELLE MÉMORISATION</Text>
+          {prog.sessionDoneToday ? (
+            <>
+              <Text style={styles.sectionTitle}>Session du jour terminée</Text>
+              <Text style={styles.sectionSub}>Reviens demain pour continuer ton programme.</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.sectionTitle}>{ayatLabel}</Text>
+              <Text style={styles.sectionSub}>{ayatSubLabel}</Text>
+            </>
+          )}
         </View>
 
-        {/* CTA */}
-        <Pressable
-          style={({ pressed }) => [
-            styles.ctaBtn,
-            prog.sessionDoneToday && styles.ctaBtnDisabled,
-            pressed && !prog.sessionDoneToday && styles.ctaBtnPressed,
-          ]}
-          onPress={() => { if (!prog.sessionDoneToday) router.push('/(app)/session'); }}
-          disabled={prog.sessionDoneToday}
-        >
-          <Text style={styles.ctaBtnText}>
-            {prog.sessionDoneToday ? 'Session terminée' : 'Commencer la session'}
-          </Text>
-        </Pressable>
+        {/* Surah progress */}
+        {!prog.surahExhausted && prog.currentSurah != null && prog.surahTotalAyats > 0 && (
+          <>
+            <View style={styles.divider} />
+            <View style={styles.section}>
+              <Text style={styles.subsectionLabel}>DANS CETTE SOURATE</Text>
+              <Text style={styles.sectionTitle}>
+                {prog.currentAyah} / {prog.surahTotalAyats} ayats
+              </Text>
+              <View style={styles.barWrap}>
+                <ProgressBar progress={progressPct} />
+              </View>
+              <Text style={styles.sectionSub}>
+                {prog.sessionFinishesSurah
+                  ? `Tu termineras ${prog.surahName} aujourd'hui.`
+                  : `Il restera ${prog.remainingAfterSession} ayat${prog.remainingAfterSession > 1 ? 's' : ''} après ta session.`
+                }
+              </Text>
+            </View>
+          </>
+        )}
+      </Card>
 
-      </ScrollView>
-    </SafeAreaView>
+      {/* Stats row */}
+      <View style={styles.statsRow}>
+        <StatPill value={`🔥 ${prog.streak}`} label="Série" />
+        <View style={styles.statDivider} />
+        <StatPill value={String(prog.totalMemorized)} label="Ayats acquis" />
+        <View style={styles.statDivider} />
+        <StatPill value={`${prog.ayahPerDay}/j`} label="Rythme" />
+      </View>
+
+      {/* CTA */}
+      <PrimaryButton
+        label={prog.sessionDoneToday ? 'Session terminée' : 'Commencer la session'}
+        onPress={() => router.push('/(app)/session')}
+        disabled={prog.sessionDoneToday}
+      />
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: colors.background },
-  scroll: { flex: 1 },
-  container: { paddingHorizontal: spacing.md, paddingBottom: 48, paddingTop: spacing.md },
   centered: {
     flex: 1,
     backgroundColor: colors.background,
@@ -243,71 +225,24 @@ const styles = StyleSheet.create({
     color: colors.muted,
     textAlign: 'center',
   },
-
-  /* Header */
+  stateCard: { marginTop: spacing.xl },
   header: { marginBottom: spacing.lg, marginTop: spacing.sm },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
   title: { fontSize: 28, fontWeight: '700', color: colors.primary },
   subtitle: { fontSize: 13, color: colors.muted, lineHeight: 20 },
-  chip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
-  chipPremium: { backgroundColor: colors.goldSoft, borderColor: colors.gold },
-  chipFree: { backgroundColor: colors.surface, borderColor: colors.border },
-  chipText: { fontSize: 11, fontWeight: '600', letterSpacing: 0.3 },
-  chipTextPremium: { color: colors.gold },
-  chipTextFree: { color: colors.muted },
-
-  /* Main card */
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: 20,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
-    shadowColor: colors.primary,
-    shadowOpacity: 0.07,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
-  },
-  cardBadge: {
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 2,
-    color: colors.gold,
-    marginBottom: spacing.md,
-  },
   section: { marginBottom: 4 },
-  sectionLabel: {
+  subsectionLabel: {
     fontSize: 10,
     fontWeight: '700',
     letterSpacing: 1.5,
     color: colors.muted,
     marginBottom: 6,
+    textTransform: 'uppercase',
   },
   sectionTitle: { fontSize: 16, fontWeight: '600', color: colors.primary, marginBottom: 4 },
   sectionSub: { fontSize: 13, color: colors.muted, lineHeight: 19 },
   divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.md },
-
-  /* Progress bar */
-  progressBarBg: {
-    height: 5,
-    backgroundColor: colors.border,
-    borderRadius: 4,
-    marginTop: spacing.sm,
-    marginBottom: spacing.sm,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: 5,
-    backgroundColor: colors.primary,
-    borderRadius: 4,
-  },
-
-  /* Stats row */
+  barWrap: { marginVertical: spacing.sm },
   statsRow: {
     flexDirection: 'row',
     backgroundColor: colors.surface,
@@ -318,41 +253,5 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     alignItems: 'center',
   },
-  statItem: { flex: 1, alignItems: 'center' },
-  statValue: { fontSize: 16, fontWeight: '700', color: colors.primary, marginBottom: 2 },
-  statLabel: { fontSize: 11, color: colors.muted },
   statDivider: { width: 1, height: 32, backgroundColor: colors.border },
-
-  /* CTA */
-  ctaBtn: {
-    backgroundColor: colors.primary,
-    borderRadius: 14,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginBottom: spacing.sm,
-  },
-  ctaBtnPressed: { opacity: 0.85 },
-  ctaBtnDisabled: { backgroundColor: colors.border },
-  ctaBtnText: { color: colors.surface, fontSize: 16, fontWeight: '600' },
-
-  /* State screens */
-  stateCard: {
-    backgroundColor: colors.surface,
-    borderRadius: 20,
-    padding: spacing.lg,
-    alignItems: 'center',
-    width: '100%',
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  stateTitle: { fontSize: 17, fontWeight: '700', color: colors.primary, textAlign: 'center', marginBottom: 8 },
-  stateSub: { fontSize: 13, color: colors.muted, textAlign: 'center', lineHeight: 20, marginBottom: spacing.lg },
-  retryBtn: {
-    borderWidth: 1.5,
-    borderColor: colors.primary,
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 28,
-  },
-  retryBtnText: { color: colors.primary, fontSize: 14, fontWeight: '600' },
 });
