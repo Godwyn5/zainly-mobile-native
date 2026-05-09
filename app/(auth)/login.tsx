@@ -11,6 +11,21 @@ import { spacing } from '@/theme/spacing';
 
 type Mode = 'password' | 'magic';
 
+function friendlyAuthError(message: string): string {
+  if (message.includes('Network request failed') || message.includes('fetch')) {
+    return 'Impossible de contacter le serveur. Vérifie ta connexion internet puis réessaie.';
+  }
+  if (
+    message.includes('Invalid login credentials') ||
+    message.includes('invalid_credentials') ||
+    message.includes('Email not confirmed') === false &&
+    message.includes('password')
+  ) {
+    return 'E-mail ou mot de passe incorrect.';
+  }
+  return 'Connexion impossible pour le moment.';
+}
+
 export default function LoginScreen() {
   const [mode, setMode]         = useState<Mode>('password');
   const [email, setEmail]       = useState('');
@@ -31,7 +46,7 @@ export default function LoginScreen() {
     });
     setLoading(false);
     if (error) {
-      Alert.alert('Erreur de connexion', error.message);
+      Alert.alert('Erreur de connexion', friendlyAuthError(error.message));
       return;
     }
     router.replace('/(app)/(tabs)/');
@@ -50,7 +65,7 @@ export default function LoginScreen() {
     });
     setLoading(false);
     if (error) {
-      Alert.alert('Erreur', error.message);
+      Alert.alert('Erreur', friendlyAuthError(error.message));
       return;
     }
     setMagicSent(true);
