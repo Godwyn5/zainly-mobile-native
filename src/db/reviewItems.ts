@@ -1,6 +1,17 @@
 import { supabase } from './client';
 
-// TODO: implement review item queries
+export async function fetchDueCount(userId: string, today: string, startTodayISO: string): Promise<number> {
+  const { data, error } = await supabase
+    .from('review_items')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('mastered', false)
+    .lte('next_review', today)
+    .lt('created_at', startTodayISO);
+  if (error) throw error;
+  return (data ?? []).length;
+}
+
 export async function fetchDueItems(userId: string, today: string, startTodayISO: string) {
   const { data, error } = await supabase
     .from('review_items')
