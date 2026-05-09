@@ -173,6 +173,16 @@ export default function LoginScreen() {
             <Text style={styles.linkText}>Mot de passe oublié ?</Text>
           </TouchableOpacity>
         )}
+
+        {/* Sign up */}
+        <View style={styles.divider} />
+        <TouchableOpacity
+          onPress={() => router.push('/(auth)/signup')}
+          style={styles.link}
+          disabled={loading}
+        >
+          <Text style={styles.signupText}>Créer un compte</Text>
+        </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -257,4 +267,6 @@ const styles = StyleSheet.create({
   buttonText: { color: colors.surface, fontSize: 16, fontWeight: '600' },
   link: { alignItems: 'center', paddingVertical: 8 },
   linkText: { color: colors.primary, fontSize: 14 },
+  divider: { height: 1, backgroundColor: colors.border, marginVertical: spacing.sm },
+  signupText: { color: colors.primarySoft, fontSize: 14, fontWeight: '600' },
 });
