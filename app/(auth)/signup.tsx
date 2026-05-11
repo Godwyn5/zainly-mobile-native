@@ -1,242 +1,373 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, StyleSheet,
   TouchableOpacity, KeyboardAvoidingView,
-  Platform, ActivityIndicator, ScrollView,
+  Platform, ActivityIndicator, Alert, ScrollView,
+  Animated, Easing, StatusBar,
 } from 'react-native';
+import { useFonts } from 'expo-font';
+import { Lora_600SemiBold, Lora_400Regular } from '@expo-google-fonts/lora';
+import { Amiri_400Regular, Amiri_700Bold } from '@expo-google-fonts/amiri';
+import { Cinzel_500Medium } from '@expo-google-fonts/cinzel';
 import { router } from 'expo-router';
 import { supabase } from '@/db/client';
-import { colors } from '@/theme/colors';
-import { spacing } from '@/theme/spacing';
 
-function friendlySignupError(message: string): string {
-  if (message.includes('Network request failed') || message.includes('fetch')) {
+// ─── palette — inverted from entry: ivory bg, deep green text ───────────────
+const BG     = '#F8F4EA';
+const GREEN  = '#031A12';
+const GOLD   = '#C6A15B';
+const MUTED  = '#7A6E61';
+const BORDER = 'rgba(3,26,18,0.12)';
+const SURF        = '#FFFFFF';
+const GOLD_BORDER = 'rgba(198,161,91,0.30)';
+
+// ─── font families ───────────────────────────────────────────────────────────
+const F_BRAND  = 'Cinzel_500Medium';   // brand wordmark only
+const F_TITLE  = 'Lora_600SemiBold';   // hero titles — semibold for calm elegance
+const F_SUB    = 'Lora_400Regular';    // elegant subtitles
+const F_ARABIC = 'Amiri_700Bold';      // Arabic brand mark
+
+function friendlySignupError(msg: string): string {
+  if (msg.includes('Network request failed') || msg.includes('fetch'))
     return 'Impossible de contacter le serveur. Vérifie ta connexion internet.';
-  }
-  if (message.includes('already registered') || message.includes('already been registered') || message.includes('User already registered')) {
+  if (msg.includes('already registered') || msg.includes('already been registered') || msg.includes('User already registered'))
     return 'Un compte existe déjà avec cet e-mail.';
-  }
-  if (message.includes('weak_password') || message.includes('Password should be')) {
+  if (msg.includes('weak_password') || msg.includes('Password should be'))
     return 'Choisis un mot de passe plus sécurisé.';
-  }
   return 'Création du compte impossible pour le moment.';
 }
 
 export default function SignupScreen() {
-  const [email, setEmail]               = useState('');
-  const [password, setPassword]         = useState('');
-  const [confirm, setConfirm]           = useState('');
-  const [loading, setLoading]           = useState(false);
-  const [error, setError]               = useState<string | null>(null);
-  const [emailSent, setEmailSent]       = useState(false);
+  const [email, setEmail]             = useState('');
+  const [password, setPassword]       = useState('');
+  const [confirm, setConfirm]         = useState('');
+  const [showPw, setShowPw]           = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [loading, setLoading]         = useState(false);
+  const [error, setError]             = useState<string | null>(null);
+  const [emailSent, setEmailSent]     = useState(false);
+
+  const [fontsLoaded] = useFonts({
+    Lora_600SemiBold,
+    Lora_400Regular,
+    Amiri_400Regular,
+    Amiri_700Bold,
+    Cinzel_500Medium,
+  });
+
+  // ─── entrance animations ───────────────────────────────────────────────────
+  const brandO = useRef(new Animated.Value(0)).current;
+  const brandY = useRef(new Animated.Value(-10)).current;
+  const heroO  = useRef(new Animated.Value(0)).current;
+  const heroY  = useRef(new Animated.Value(14)).current;
+  const formO  = useRef(new Animated.Value(0)).current;
+  const formY  = useRef(new Animated.Value(14)).current;
+  const btnsO  = useRef(new Animated.Value(0)).current;
+  const btnsY  = useRef(new Animated.Value(12)).current;
+
+  useEffect(() => {
+    if (!fontsLoaded) return;
+    const E = Easing.out(Easing.cubic);
+    Animated.parallel([
+      Animated.timing(brandO, { toValue: 1, duration: 220, delay: 0,   easing: E, useNativeDriver: true }),
+      Animated.timing(brandY, { toValue: 0, duration: 220, delay: 0,   easing: E, useNativeDriver: true }),
+      Animated.timing(heroO,  { toValue: 1, duration: 240, delay: 60,  easing: E, useNativeDriver: true }),
+      Animated.timing(heroY,  { toValue: 0, duration: 240, delay: 60,  easing: E, useNativeDriver: true }),
+      Animated.timing(formO,  { toValue: 1, duration: 260, delay: 120, easing: E, useNativeDriver: true }),
+      Animated.timing(formY,  { toValue: 0, duration: 260, delay: 120, easing: E, useNativeDriver: true }),
+      Animated.timing(btnsO,  { toValue: 1, duration: 260, delay: 170, easing: E, useNativeDriver: true }),
+      Animated.timing(btnsY,  { toValue: 0, duration: 260, delay: 170, easing: E, useNativeDriver: true }),
+    ]).start();
+  }, [fontsLoaded]);
 
   async function handleSignup() {
     setError(null);
     const trimEmail = email.trim().toLowerCase();
-
-    if (!trimEmail) {
-      setError('Saisis ton adresse e-mail.');
-      return;
-    }
-    if (!password) {
-      setError('Choisis un mot de passe.');
-      return;
-    }
-    if (password.length < 6) {
-      setError('Le mot de passe doit contenir au moins 6 caractères.');
-      return;
-    }
-    if (password !== confirm) {
-      setError('Les mots de passe ne correspondent pas.');
-      return;
-    }
-
+    if (!trimEmail)        { setError('Saisis ton adresse e-mail.'); return; }
+    if (!password)         { setError('Choisis un mot de passe.'); return; }
+    if (password.length < 6) { setError('Le mot de passe doit contenir au moins 6 caractères.'); return; }
+    if (password !== confirm) { setError('Les mots de passe ne correspondent pas.'); return; }
     setLoading(true);
-    const { data, error: signupError } = await supabase.auth.signUp({
-      email: trimEmail,
-      password,
-    });
+    const { data, error: signupError } = await supabase.auth.signUp({ email: trimEmail, password });
     setLoading(false);
-
-    if (signupError) {
-      setError(friendlySignupError(signupError.message));
-      return;
-    }
-
-    if (data.session) {
-      router.replace('/onboarding');
-      return;
-    }
-
+    if (signupError) { setError(friendlySignupError(signupError.message)); return; }
+    if (data.session) { router.replace('/onboarding'); return; }
     setEmailSent(true);
   }
 
+  function handleSocial() {
+    Alert.alert('Bientôt disponible', 'Connexion sociale bientôt disponible.');
+  }
+
+  if (!fontsLoaded) {
+    return <View style={styles.root} />;
+  }
+
+  // ─── Email confirmation state ─────────────────────────────────────────────
   if (emailSent) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.badge}>INSCRIPTION</Text>
-        <Text style={styles.title}>Vérifie ta boîte mail</Text>
-        <Text style={styles.subtitle}>
-          Compte créé. Vérifie ton e-mail pour confirmer ton inscription avant de te connecter.
-        </Text>
-        <TouchableOpacity
-          onPress={() => router.replace('/(auth)/login')}
-          style={styles.link}
-        >
-          <Text style={styles.linkText}>← Retour à la connexion</Text>
-        </TouchableOpacity>
+      <View style={styles.root}>
+        <StatusBar barStyle="dark-content" backgroundColor={BG} />
+        <View style={styles.confirmedShell}>
+          <View style={styles.brandBlock}>
+            <Text style={styles.brandArabic}>زينلي</Text>
+            <View style={styles.goldLine} />
+            <Text style={styles.brandWord}>Zainly</Text>
+          </View>
+          <Text style={styles.heroTitle}>Compte créé</Text>
+          <Text style={styles.heroSub}>
+            {'Consulte ton e-mail pour confirmer ton inscription avant de te connecter.'}
+          </Text>
+          <TouchableOpacity onPress={() => router.replace('/(auth)/login')} style={styles.backRow}>
+            <Text style={styles.backText}>← Retour à la connexion</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.container}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Text style={styles.badge}>INSCRIPTION</Text>
-        <Text style={styles.title}>Créer un compte</Text>
-        <Text style={styles.subtitle}>
-          Commence ton programme de mémorisation avec Zainly.
-        </Text>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <StatusBar barStyle="dark-content" backgroundColor={BG} />
+      <ScrollView style={styles.root} contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
 
-        <Text style={styles.label}>Adresse e-mail</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="ton@email.com"
-          placeholderTextColor={colors.muted}
-          value={email}
-          onChangeText={setEmail}
-          keyboardType="email-address"
-          autoCapitalize="none"
-          autoCorrect={false}
-          editable={!loading}
-        />
+        {/* ── Brand lockup — centered ── */}
+        <Animated.View style={[styles.brandBlock, { opacity: brandO, transform: [{ translateY: brandY }] }]}>
+          <Text style={styles.brandArabic}>زينلي</Text>
+          <View style={styles.goldLine} />
+          <Text style={styles.brandWord}>Zainly</Text>
+        </Animated.View>
 
-        <Text style={styles.label}>Mot de passe</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="6 caractères minimum"
-          placeholderTextColor={colors.muted}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          editable={!loading}
-        />
+        {/* ── Hero title — centered ── */}
+        <Animated.View style={[styles.heroBlock, { opacity: heroO, transform: [{ translateY: heroY }] }]}>
+          <Text style={styles.heroTitle}>Commence ton Hifz</Text>
+          <Text style={styles.heroSub}>{'Crée ton compte pour sauvegarder ta progression.'}</Text>
+        </Animated.View>
 
-        <Text style={styles.label}>Confirmer le mot de passe</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="••••••••"
-          placeholderTextColor={colors.muted}
-          value={confirm}
-          onChangeText={setConfirm}
-          secureTextEntry
-          editable={!loading}
-        />
+        {/* ── Form ── */}
+        <Animated.View style={[styles.formBlock, { opacity: formO, transform: [{ translateY: formY }] }]}>
+          <TextInput
+            style={styles.input}
+            placeholder="Adresse e-mail"
+            placeholderTextColor={MUTED}
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!loading}
+          />
 
-        {error && (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{error}</Text>
+          <View style={styles.pwWrap}>
+            <TextInput
+              style={[styles.input, styles.pwInput]}
+              placeholder="Mot de passe (6 caractères min.)"
+              placeholderTextColor={MUTED}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPw}
+              editable={!loading}
+            />
+            <TouchableOpacity style={styles.pwEye} onPress={() => setShowPw(v => !v)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={styles.pwEyeText}>{showPw ? 'Masquer' : 'Voir'}</Text>
+            </TouchableOpacity>
           </View>
-        )}
 
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleSignup}
-          disabled={loading}
-        >
-          {loading
-            ? <ActivityIndicator color={colors.surface} />
-            : <Text style={styles.buttonText}>Créer mon compte</Text>
-          }
-        </TouchableOpacity>
+          <View style={styles.pwWrap}>
+            <TextInput
+              style={[styles.input, styles.pwInput]}
+              placeholder="Confirmer le mot de passe"
+              placeholderTextColor={MUTED}
+              value={confirm}
+              onChangeText={setConfirm}
+              secureTextEntry={!showConfirm}
+              editable={!loading}
+            />
+            <TouchableOpacity style={styles.pwEye} onPress={() => setShowConfirm(v => !v)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={styles.pwEyeText}>{showConfirm ? 'Masquer' : 'Voir'}</Text>
+            </TouchableOpacity>
+          </View>
 
-        <TouchableOpacity
-          onPress={() => router.replace('/(auth)/login')}
-          style={styles.link}
-          disabled={loading}
-        >
-          <Text style={styles.linkText}>J'ai déjà un compte</Text>
-        </TouchableOpacity>
+          {error && (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          )}
+        </Animated.View>
+
+        {/* ── Buttons ── */}
+        <Animated.View style={[styles.btnsBlock, { opacity: btnsO, transform: [{ translateY: btnsY }] }]}>
+          <TouchableOpacity style={[styles.primaryBtn, loading && styles.btnDim]} onPress={handleSignup} activeOpacity={0.85} disabled={loading}>
+            {loading
+              ? <ActivityIndicator color={BG} />
+              : <Text style={styles.primaryBtnText}>Créer mon compte →</Text>
+            }
+          </TouchableOpacity>
+
+          <View style={styles.orRow}>
+            <View style={styles.orLine} />
+            <Text style={styles.orLabel}>ou</Text>
+            <View style={styles.orLine} />
+          </View>
+
+          <TouchableOpacity style={styles.socialBtn} onPress={handleSocial} activeOpacity={0.8}>
+            <Text style={styles.socialBtnText}>Continuer avec Google</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.socialBtn, { marginBottom: 0 }]} onPress={handleSocial} activeOpacity={0.8}>
+            <Text style={styles.socialBtnText}>Continuer avec Apple</Text>
+          </TouchableOpacity>
+
+          <View style={styles.switchRow}>
+            <Text style={styles.switchText}>Déjà un compte ?{'  '}</Text>
+            <TouchableOpacity onPress={() => router.replace('/(auth)/login')} disabled={loading}>
+              <Text style={styles.switchLink}>Connexion</Text>
+            </TouchableOpacity>
+          </View>
+        </Animated.View>
+
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flex: 1, backgroundColor: colors.background },
+  root: { flex: 1, backgroundColor: BG },
   container: {
-    paddingHorizontal: 24,
-    paddingTop: 80,
+    alignItems: 'center',
+    paddingHorizontal: 28,
+    paddingTop: 56,
     paddingBottom: 48,
   },
-  badge: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 2.5,
-    color: colors.gold,
-    marginBottom: 12,
+  confirmedShell: {
+    paddingHorizontal: 28,
+    paddingTop: 56,
+    alignItems: 'center',
   },
-  title: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: colors.primary,
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 15,
-    color: colors.muted,
-    lineHeight: 22,
+
+  // ── brand ────────────────────────────────────────────────────────────────
+  brandBlock: {
+    alignItems: 'center',
     marginBottom: 32,
   },
-  label: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.primary,
+  brandArabic: {
+    fontFamily: F_ARABIC,
+    fontSize: 28,
+    color: GOLD,
+    includeFontPadding: false,
+    lineHeight: 34,
+  },
+  goldLine: {
+    width: 22,
+    height: 1,
+    backgroundColor: GOLD,
+    opacity: 0.55,
+    marginTop: 5,
     marginBottom: 6,
-    letterSpacing: 0.3,
+    borderRadius: 1,
+  },
+  brandWord: {
+    fontFamily: F_BRAND,
+    fontSize: 15,
+    color: GREEN,
+    letterSpacing: 4,
+  },
+
+  // ── hero ─────────────────────────────────────────────────────────────────
+  heroBlock: {
+    alignItems: 'center',
+    marginBottom: 28,
+  },
+  heroTitle: {
+    fontFamily: F_TITLE,
+    fontSize: 38,
+    color: GREEN,
+    lineHeight: 46,
+    textAlign: 'center',
+    marginBottom: 8,
+    letterSpacing: -0.2,
+  },
+  heroSub: {
+    fontFamily: F_SUB,
+    fontSize: 16,
+    color: MUTED,
+    textAlign: 'center',
+    lineHeight: 24,
+    maxWidth: 280,
+  },
+
+  // ── form ─────────────────────────────────────────────────────────────────
+  formBlock: {
+    width: '100%',
+    marginBottom: 8,
   },
   input: {
-    backgroundColor: colors.surface,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: colors.text,
-    marginBottom: spacing.md,
-  },
-  errorBox: {
-    backgroundColor: '#FEE9E7',
+    backgroundColor: SURF,
     borderWidth: 1,
-    borderColor: colors.danger,
+    borderColor: BORDER,
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    fontSize: 15,
+    color: GREEN,
+    marginBottom: 14,
+  },
+  pwWrap: { position: 'relative' },
+  pwInput: { paddingRight: 80 },
+  pwEye: { position: 'absolute', right: 18, top: 16 },
+  pwEyeText: { fontSize: 13, color: GOLD, fontWeight: '600' },
+
+  errorBox: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    marginBottom: spacing.md,
+    marginBottom: 12,
   },
-  errorText: {
-    fontSize: 13,
-    color: colors.danger,
-    lineHeight: 18,
-  },
-  button: {
-    backgroundColor: colors.primary,
+  errorText: { fontSize: 13, color: '#B91C1C', lineHeight: 18 },
+
+  // ── buttons ──────────────────────────────────────────────────────────────
+  btnsBlock: { width: '100%' },
+  primaryBtn: {
+    backgroundColor: GREEN,
     borderRadius: 14,
-    paddingVertical: 16,
+    paddingVertical: 17,
     alignItems: 'center',
-    marginTop: 4,
-    marginBottom: 16,
+    marginBottom: 20,
   },
-  buttonDisabled: { opacity: 0.6 },
-  buttonText: { color: colors.surface, fontSize: 16, fontWeight: '600' },
-  link: { alignItems: 'center', paddingVertical: 8 },
-  linkText: { color: colors.primary, fontSize: 14 },
+  btnDim: { opacity: 0.55 },
+  primaryBtnText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: BG,
+    letterSpacing: 0.2,
+  },
+
+  orRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 20 },
+  orLine: { flex: 1, height: 1, backgroundColor: BORDER },
+  orLabel: { fontSize: 12, color: MUTED, letterSpacing: 0.3 },
+
+  socialBtn: {
+    backgroundColor: SURF,
+    borderWidth: 1,
+    borderColor: GOLD_BORDER,
+    borderRadius: 14,
+    paddingVertical: 15,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  socialBtnText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: GREEN,
+  },
+
+  switchRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 24 },
+  switchText: { fontSize: 14, color: MUTED },
+  switchLink: { fontSize: 14, color: GREEN, fontWeight: '600', textDecorationLine: 'underline' },
+
+  // ── confirmation state ───────────────────────────────────────────────────
+  backRow: { alignItems: 'center', paddingVertical: 10, marginTop: 24 },
+  backText: { fontSize: 14, color: GREEN, fontWeight: '600', textDecorationLine: 'underline' },
 });
