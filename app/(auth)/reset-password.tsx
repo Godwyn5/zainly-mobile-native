@@ -12,8 +12,9 @@ import { router } from 'expo-router';
 import { supabase } from '@/db/client';
 
 // ─── palette — same inverted luxury DA as login/signup ───────────────────────
-const BG     = '#F8F4EA';
-const GREEN  = '#031A12';
+const BG          = '#F8F4EA';
+const GREEN       = '#031A12';
+const TITLE_GREEN = '#031A12';
 const GOLD   = '#C6A15B';
 const MUTED  = '#7A6E61';
 const BORDER = 'rgba(3,26,18,0.12)';
@@ -219,7 +220,7 @@ const styles = StyleSheet.create({
   heroTitle: {
     fontFamily: F_TITLE,
     fontSize: 38,
-    color: GREEN,
+    color: TITLE_GREEN,
     lineHeight: 46,
     textAlign: 'center',
     marginBottom: 8,

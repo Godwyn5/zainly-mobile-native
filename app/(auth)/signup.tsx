@@ -13,8 +13,9 @@ import { router } from 'expo-router';
 import { supabase } from '@/db/client';
 
 // ─── palette — inverted from entry: ivory bg, deep green text ───────────────
-const BG     = '#F8F4EA';
-const GREEN  = '#031A12';
+const BG          = '#F8F4EA';
+const GREEN       = '#031A12';
+const TITLE_GREEN = '#031A12';
 const GOLD   = '#C6A15B';
 const MUTED  = '#7A6E61';
 const BORDER = 'rgba(3,26,18,0.12)';
@@ -91,7 +92,7 @@ export default function SignupScreen() {
     const { data, error: signupError } = await supabase.auth.signUp({ email: trimEmail, password });
     setLoading(false);
     if (signupError) { setError(friendlySignupError(signupError.message)); return; }
-    if (data.session) { router.replace('/onboarding'); return; }
+    if (data.session) { router.replace('/onboarding/intro'); return; }
     setEmailSent(true);
   }
 
@@ -280,7 +281,7 @@ const styles = StyleSheet.create({
   heroTitle: {
     fontFamily: F_TITLE,
     fontSize: 38,
-    color: GREEN,
+    color: TITLE_GREEN,
     lineHeight: 46,
     textAlign: 'center',
     marginBottom: 8,
@@ -365,9 +366,9 @@ const styles = StyleSheet.create({
 
   switchRow: { flexDirection: 'row', justifyContent: 'center', marginTop: 24 },
   switchText: { fontSize: 14, color: MUTED },
-  switchLink: { fontSize: 14, color: GREEN, fontWeight: '600', textDecorationLine: 'underline' },
+  switchLink: { fontSize: 14, color: TITLE_GREEN, fontWeight: '600', textDecorationLine: 'underline' },
 
   // ── confirmation state ───────────────────────────────────────────────────
   backRow: { alignItems: 'center', paddingVertical: 10, marginTop: 24 },
-  backText: { fontSize: 14, color: GREEN, fontWeight: '600', textDecorationLine: 'underline' },
+  backText: { fontSize: 14, color: TITLE_GREEN, fontWeight: '600', textDecorationLine: 'underline' },
 });
