@@ -11,6 +11,7 @@ import { Amiri_400Regular, Amiri_700Bold } from '@expo-google-fonts/amiri';
 import { Cinzel_500Medium } from '@expo-google-fonts/cinzel';
 import { router } from 'expo-router';
 import { supabase } from '@/db/client';
+import { hapticLight, hapticMedium, hapticSelection } from '@/utils/haptics';
 
 // ─── palette — inverted from entry: ivory bg, deep green text ───────────────
 const BG          = '#F8F4EA';          // warm ivory (entry IVORY)
@@ -79,6 +80,7 @@ export default function LoginScreen() {
 
   async function handleLogin() {
     setError(null);
+    hapticMedium();
     const trimEmail = email.trim().toLowerCase();
     if (!trimEmail || !password) { setError('Saisis ton e-mail et ton mot de passe.'); return; }
     setLoading(true);
@@ -89,6 +91,7 @@ export default function LoginScreen() {
   }
 
   function handleSocial() {
+    hapticLight();
     Alert.alert('Bientôt disponible', 'Connexion sociale bientôt disponible.');
   }
 
@@ -138,7 +141,7 @@ export default function LoginScreen() {
               secureTextEntry={!showPw}
               editable={!loading}
             />
-            <TouchableOpacity style={styles.pwEye} onPress={() => setShowPw(v => !v)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <TouchableOpacity style={styles.pwEye} onPress={() => { hapticSelection(); setShowPw(v => !v); }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Text style={styles.pwEyeText}>{showPw ? 'Masquer' : 'Voir'}</Text>
             </TouchableOpacity>
           </View>
@@ -149,7 +152,7 @@ export default function LoginScreen() {
             </View>
           )}
 
-          <TouchableOpacity onPress={() => router.push('/(auth)/reset-password')} style={styles.forgotRow}>
+          <TouchableOpacity onPress={() => { hapticLight(); router.push('/(auth)/reset-password'); }} style={styles.forgotRow}>
             <Text style={styles.forgotText}>Mot de passe oublié ?</Text>
           </TouchableOpacity>
         </Animated.View>
@@ -178,7 +181,7 @@ export default function LoginScreen() {
 
           <View style={styles.switchRow}>
             <Text style={styles.switchText}>Pas encore de compte ?{'  '}</Text>
-            <TouchableOpacity onPress={() => router.push('/(auth)/signup')} disabled={loading}>
+            <TouchableOpacity onPress={() => { hapticLight(); router.push('/(auth)/signup'); }} disabled={loading}>
               <Text style={styles.switchLink}>Créer un compte</Text>
             </TouchableOpacity>
           </View>

@@ -11,6 +11,7 @@ import { Amiri_400Regular, Amiri_700Bold } from '@expo-google-fonts/amiri';
 import { Cinzel_500Medium } from '@expo-google-fonts/cinzel';
 import { router } from 'expo-router';
 import { supabase } from '@/db/client';
+import { hapticLight, hapticMedium, hapticSelection } from '@/utils/haptics';
 
 // ─── palette — inverted from entry: ivory bg, deep green text ───────────────
 const BG          = '#F8F4EA';
@@ -83,6 +84,7 @@ export default function SignupScreen() {
 
   async function handleSignup() {
     setError(null);
+    hapticMedium();
     const trimEmail = email.trim().toLowerCase();
     if (!trimEmail)        { setError('Saisis ton adresse e-mail.'); return; }
     if (!password)         { setError('Choisis un mot de passe.'); return; }
@@ -97,6 +99,7 @@ export default function SignupScreen() {
   }
 
   function handleSocial() {
+    hapticLight();
     Alert.alert('Bientôt disponible', 'Connexion sociale bientôt disponible.');
   }
 
@@ -119,7 +122,7 @@ export default function SignupScreen() {
           <Text style={styles.heroSub}>
             {'Consulte ton e-mail pour confirmer ton inscription avant de te connecter.'}
           </Text>
-          <TouchableOpacity onPress={() => router.replace('/(auth)/login')} style={styles.backRow}>
+          <TouchableOpacity onPress={() => { hapticLight(); router.replace('/(auth)/login'); }} style={styles.backRow}>
             <Text style={styles.backText}>← Retour à la connexion</Text>
           </TouchableOpacity>
         </View>
@@ -169,7 +172,7 @@ export default function SignupScreen() {
               secureTextEntry={!showPw}
               editable={!loading}
             />
-            <TouchableOpacity style={styles.pwEye} onPress={() => setShowPw(v => !v)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <TouchableOpacity style={styles.pwEye} onPress={() => { hapticSelection(); setShowPw(v => !v); }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Text style={styles.pwEyeText}>{showPw ? 'Masquer' : 'Voir'}</Text>
             </TouchableOpacity>
           </View>
@@ -184,7 +187,7 @@ export default function SignupScreen() {
               secureTextEntry={!showConfirm}
               editable={!loading}
             />
-            <TouchableOpacity style={styles.pwEye} onPress={() => setShowConfirm(v => !v)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <TouchableOpacity style={styles.pwEye} onPress={() => { hapticSelection(); setShowConfirm(v => !v); }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <Text style={styles.pwEyeText}>{showConfirm ? 'Masquer' : 'Voir'}</Text>
             </TouchableOpacity>
           </View>
@@ -220,7 +223,7 @@ export default function SignupScreen() {
 
           <View style={styles.switchRow}>
             <Text style={styles.switchText}>Déjà un compte ?{'  '}</Text>
-            <TouchableOpacity onPress={() => router.replace('/(auth)/login')} disabled={loading}>
+            <TouchableOpacity onPress={() => { hapticLight(); router.replace('/(auth)/login'); }} disabled={loading}>
               <Text style={styles.switchLink}>Connexion</Text>
             </TouchableOpacity>
           </View>

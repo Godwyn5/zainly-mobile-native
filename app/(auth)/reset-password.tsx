@@ -10,6 +10,7 @@ import { Amiri_400Regular, Amiri_700Bold } from '@expo-google-fonts/amiri';
 import { Cinzel_500Medium } from '@expo-google-fonts/cinzel';
 import { router } from 'expo-router';
 import { supabase } from '@/db/client';
+import { hapticLight, hapticMedium } from '@/utils/haptics';
 
 // ─── palette — same inverted luxury DA as login/signup ───────────────────────
 const BG          = '#F8F4EA';
@@ -67,6 +68,7 @@ export default function ResetPasswordScreen() {
 
   async function handleReset() {
     setError(null);
+    hapticMedium();
     const trimEmail = email.trim().toLowerCase();
     if (!trimEmail) { setError('Saisis ton adresse e-mail.'); return; }
     setLoading(true);
@@ -97,7 +99,7 @@ export default function ResetPasswordScreen() {
           <Text style={styles.heroSub}>
             {'Vérifie ta boîte mail pour réinitialiser ton mot de passe.'}
           </Text>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backRow}>
+          <TouchableOpacity onPress={() => { hapticLight(); router.back(); }} style={styles.backRow}>
             <Text style={styles.backText}>← Retour à la connexion</Text>
           </TouchableOpacity>
         </View>
@@ -158,7 +160,7 @@ export default function ResetPasswordScreen() {
               }
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={() => router.back()} style={styles.backRow}>
+            <TouchableOpacity onPress={() => { hapticLight(); router.back(); }} style={styles.backRow}>
               <Text style={styles.backText}>← Retour à la connexion</Text>
             </TouchableOpacity>
           </Animated.View>

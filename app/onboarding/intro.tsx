@@ -11,6 +11,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import { useAuthStore } from '@/store/authStore';
 import * as Haptics from 'expo-haptics';
+import { hapticLight, hapticMedium, hapticSuccess } from '@/utils/haptics';
 
 // ─── tokens ─────────────────────────────────────────────────────────────────
 const BG      = '#F8F4EA';   // warm ivory
@@ -347,7 +348,7 @@ export default function OnboardingIntroScreen() {
 
     // if reveal still running: complete all text immediately on first tap
     if (revealPhase === 'revealing') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      hapticLight();
       titleCompleteRef.current?.();
       bodyCompleteRef.current?.();
       return;
@@ -356,7 +357,7 @@ export default function OnboardingIntroScreen() {
     // reveal done — advance or finish
     if (index < SLIDES.length - 1) {
       isTransitioning.current = true;
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      hapticLight();
 
       const E = Easing.in(Easing.cubic);
       Animated.parallel([
@@ -376,14 +377,14 @@ export default function OnboardingIntroScreen() {
         });
       });
     } else {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      hapticSuccess();
       markIntroSeen().then(() => router.replace('/onboarding'));
     }
   }
 
   function skipAll() {
     if (isTransitioning.current) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    hapticMedium();
     markIntroSeen().then(() => router.replace('/onboarding'));
   }
 

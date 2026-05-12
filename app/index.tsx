@@ -19,6 +19,7 @@ import {
 } from '@expo-google-fonts/cinzel';
 import { router } from 'expo-router';
 import { useAuthStore } from '@/store/authStore';
+import { hapticLight, hapticMedium } from '@/utils/haptics';
 
 // ─── design tokens — luxury watch palette ───────────────────────────────────
 const BG           = '#031A12';
@@ -267,7 +268,7 @@ export default function EntryScreen() {
           <TouchableOpacity
             style={styles.primaryBtn}
             activeOpacity={0.85}
-            onPress={() => router.push('/(auth)/signup')}
+            onPress={() => { hapticMedium(); router.push('/(auth)/signup'); }}
           >
             <Text style={styles.primaryBtnText}>Commencer</Text>
           </TouchableOpacity>
@@ -275,7 +276,7 @@ export default function EntryScreen() {
           <TouchableOpacity
             style={styles.secondaryBtn}
             activeOpacity={0.7}
-            onPress={() => router.push('/(auth)/login')}
+            onPress={() => { hapticLight(); router.push('/(auth)/login'); }}
           >
             <Text style={styles.secondaryBtnText}>J'ai déjà un compte</Text>
           </TouchableOpacity>
