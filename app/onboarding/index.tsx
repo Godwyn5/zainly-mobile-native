@@ -602,6 +602,7 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
   const [planMode,         setPlanMode]         = useState<PlanMode>('recommended');
   const [startingSurah,    setStartingSurah]    = useState<number | null>(null);
   const [customOrder,      setCustomOrder]      = useState<number[]>([]);
+  const [continueWithRest, setContinueWithRest] = useState<boolean>(true);
   const [knownSurahs,      setKnownSurahs]      = useState<number[]>([]);
   const [ayahPerDay,       setAyahPerDay]       = useState<number>(2);
   const [surahSearch,      setSurahSearch]      = useState('');
@@ -664,6 +665,7 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
       knownSurahs,
       startingSurah: planMode === 'start_surah' ? startingSurah : null,
       customSurahOrder: planMode === 'custom_order' ? customOrder : undefined,
+      continueWithRest: planMode === 'custom_order' ? continueWithRest : undefined,
       ayahPerDay,
     });
 
@@ -697,10 +699,11 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
       knownSurahs,
       startingSurah: planMode === 'start_surah' ? startingSurah : null,
       customSurahOrder: planMode === 'custom_order' ? customOrder : undefined,
+      continueWithRest: planMode === 'custom_order' ? continueWithRest : undefined,
       ayahPerDay,
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, userId, planMode, knownSurahs, startingSurah, customOrder, ayahPerDay]);
+  }, [step, userId, planMode, knownSurahs, startingSurah, customOrder, continueWithRest, ayahPerDay]);
 
   // ── Step: startMode ──
   if (step === 'startMode') {
@@ -840,6 +843,30 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
             {customOrder.length === 0 && (
               <Text style={s.warningText}>Sélectionne au moins une sourate pour continuer.</Text>
             )}
+
+            {/* ── Continue with rest toggle ── */}
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => { hapticSelection(); setContinueWithRest(v => !v); }}
+              style={[s.continueRestCard, continueWithRest && s.continueRestCardActive]}
+            >
+              <View style={s.continueRestRow}>
+                <View style={s.continueRestCheck}>
+                  {continueWithRest && <Text style={s.continueRestCheckMark}>✓</Text>}
+                </View>
+                <View style={s.continueRestTextWrap}>
+                  <Text style={[s.continueRestTitle, continueWithRest && s.continueRestTitleActive]}>
+                    Continuer ensuite avec le reste du Coran
+                  </Text>
+                  <Text style={s.continueRestDesc}>
+                    {continueWithRest
+                      ? 'Zainly commencera par ton ordre, puis continuera avec les autres sourates.'
+                      : 'Ton programme sera limité aux sourates sélectionnées. Tu pourras en ajouter plus tard.'}
+                  </Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+
             <View style={s.searchWrap}>
               <TextInput
                 style={s.searchInput}
@@ -1014,7 +1041,7 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
   if (step === 'planSummary') {
     const modeLabel = planMode === 'recommended' ? 'Recommandé par Zainly'
       : planMode === 'start_surah' ? 'Sourate de départ choisie'
-      : 'Liberté totale';
+      : 'Ordre personnalisé';
 
     const startLabel = planMode === 'start_surah' && startingSurah
       ? (ZAINLY_ORDER[ZAINLY_INDEX_BY_SURAH[startingSurah]]?.name ?? '—')
@@ -1023,14 +1050,16 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
         ? (ZAINLY_ORDER[ZAINLY_INDEX_BY_SURAH[customOrder[0]]]?.name ?? '—')
         : '—';
 
-    const previewOk          = previewResult && !isPlanError(previewResult);
-    const estimateRange       = previewOk ? previewResult!.computed.estimateRange : null;
-    const computedEstimate    = estimateRange ? estimateRange.label : null;
-    const actualFirstName     = previewOk ? previewResult!.computed.firstSurahName : startLabel;
-    const skipped             = previewOk ? previewResult!.computed.skippedKnownSurahs : [];
-    const startSurahWasSkipped = planMode === 'start_surah' && startingSurah != null
+    const previewOk               = previewResult && !isPlanError(previewResult);
+    const estimateRange            = previewOk ? previewResult!.computed.estimateRange : null;
+    const computedEstimate         = estimateRange ? estimateRange.label : null;
+    const actualFirstName          = previewOk ? previewResult!.computed.firstSurahName : startLabel;
+    const skipped                  = previewOk ? previewResult!.computed.skippedKnownSurahs : [];
+    const selectedCustomCount      = previewOk ? previewResult!.computed.selectedCustomCount : customOrder.length;
+    const previewContinueWithRest  = previewOk ? previewResult!.computed.continueWithRest : continueWithRest;
+    const startSurahWasSkipped     = planMode === 'start_surah' && startingSurah != null
       && skipped.includes(startingSurah);
-    const showHighPaceWarning = ayahPerDay >= 7;
+    const showHighPaceWarning      = ayahPerDay >= 7;
 
     return (
       <PageShell stepKey="planSummary">
@@ -1070,6 +1099,15 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
                 <Text style={s.summaryRowLabel}>Sourate de départ</Text>
                 <Text style={s.summaryRowValue}>{actualFirstName}</Text>
               </View>
+              {planMode === 'custom_order' && (
+                <>
+                  <View style={s.summaryDivider} />
+                  <View style={s.summaryRow}>
+                    <Text style={s.summaryRowLabel}>Sourates choisies</Text>
+                    <Text style={s.summaryRowValue}>{selectedCustomCount} sourate{selectedCustomCount > 1 ? 's' : ''}</Text>
+                  </View>
+                </>
+              )}
               <View style={s.summaryDivider} />
               <View style={s.summaryRow}>
                 <Text style={s.summaryRowLabel}>Sourates connues</Text>
@@ -1080,6 +1118,17 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
                 <Text style={s.summaryRowLabel}>Rythme</Text>
                 <Text style={s.summaryRowValue}>{ayahPerDay} ayat{ayahPerDay > 1 ? 's' : ''} / jour</Text>
               </View>
+              {planMode === 'custom_order' && (
+                <>
+                  <View style={s.summaryDivider} />
+                  <View style={s.summaryRow}>
+                    <Text style={s.summaryRowLabel}>Suite du programme</Text>
+                    <Text style={s.summaryRowValue}>
+                      {previewContinueWithRest ? 'Reste du Coran' : 'Sourates choisies uniquement'}
+                    </Text>
+                  </View>
+                </>
+              )}
               {computedEstimate && <>
                 <View style={s.summaryDivider} />
                 <View style={s.summaryRow}>
@@ -1091,7 +1140,9 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
             {computedEstimate && estimateRange && (
               <View style={s.estimateHelperWrap}>
                 <Text style={s.estimateHelperLine}>
-                  {planMode === 'custom_order'
+                  {planMode === 'custom_order' && previewContinueWithRest
+                    ? 'Estimation pour mémoriser le Coran restant, en commençant par ton ordre personnalisé.'
+                    : planMode === 'custom_order'
                     ? 'Estimation pour terminer ton ordre personnalisé.'
                     : 'Estimation pour mémoriser le Coran restant, selon ton rythme actuel.'}
                 </Text>
@@ -1427,4 +1478,23 @@ const s = StyleSheet.create({
   // ── estimate helper text ──
   estimateHelperWrap: { paddingHorizontal: 4, marginBottom: 20, gap: 4 },
   estimateHelperLine: { fontFamily: F_BODY, fontSize: 11, color: MUTED, lineHeight: 17 },
+
+  // ── continue with rest toggle card ──
+  continueRestCard: {
+    borderRadius: 12, borderWidth: 1.5, borderColor: BORDER,
+    backgroundColor: SURF, padding: 14, marginBottom: 10,
+  },
+  continueRestCardActive: {
+    borderColor: GREEN, backgroundColor: 'rgba(3,26,18,0.04)',
+  },
+  continueRestRow:      { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  continueRestCheck: {
+    width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, borderColor: BORDER,
+    backgroundColor: BG, alignItems: 'center', justifyContent: 'center', marginTop: 1,
+  },
+  continueRestCheckMark: { fontSize: 13, color: GREEN, fontWeight: '700', lineHeight: 16 },
+  continueRestTextWrap:  { flex: 1 },
+  continueRestTitle:     { fontFamily: F_BODY, fontSize: 13, color: MUTED, fontWeight: '600', marginBottom: 3 },
+  continueRestTitleActive: { color: TITLE },
+  continueRestDesc:      { fontFamily: F_BODY, fontSize: 11, color: MUTED, lineHeight: 17 },
 });

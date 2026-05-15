@@ -19,14 +19,15 @@ export interface PartialKnown {
 }
 
 export interface PlanInput {
-  userId:           string;
-  planMode:         PlanMode;
-  knownSurahs:      number[];          // surah numbers fully memorised
+  userId:             string;
+  planMode:           PlanMode;
+  knownSurahs:        number[];          // surah numbers fully memorised
   partialKnownSurahs?: Record<number, PartialKnown>; // surahNum → {from,to}
-  startingSurah?:   number | null;     // for start_surah mode
-  customSurahOrder?: number[];         // for custom_order mode
-  ayahPerDay:       number;
-  daysPerWeek?:     number;            // default 6
+  startingSurah?:     number | null;     // for start_surah mode
+  customSurahOrder?:  number[];         // for custom_order mode
+  continueWithRest?:  boolean;          // custom_order: append rest of Quran after selected
+  ayahPerDay:         number;
+  daysPerWeek?:       number;            // default 6
 }
 
 // ─── Estimate types ─────────────────────────────────────────────────────────────
@@ -64,6 +65,8 @@ export interface PlanResult {
     skippedKnownSurahs:  number[];
     paceLabel:           string;
     estimateRange:       EstimateRange | null;
+    selectedCustomCount: number;
+    continueWithRest:    boolean;
   };
 }
 
@@ -396,9 +399,14 @@ export function computePlan(input: PlanInput): PlanEngineResult {
     partialKnownSurahs,
     startingSurah,
     customSurahOrder,
+    continueWithRest: continueWithRestRaw,
     ayahPerDay: ayahPerDayRaw,
     daysPerWeek = DAYS_PER_WEEK,
   } = input;
+
+  const continueWithRest = planMode === 'custom_order'
+    ? (continueWithRestRaw !== false)  // default true
+    : false;
 
   // ── Validate basics ──
   if (!userId) return { error: 'Utilisateur non identifié.' };
@@ -455,7 +463,7 @@ export function computePlan(input: PlanInput): PlanEngineResult {
     if (!Array.isArray(customSurahOrder) || customSurahOrder.length === 0) {
       return { error: 'Choisis au moins une sourate pour créer ton programme.' };
     }
-    // Validate + dedupe custom order
+    // Validate + dedupe custom order (preserve user-specified order)
     const validCustom: number[] = [];
     for (const n of customSurahOrder) {
       const num = Math.round(n);
@@ -464,17 +472,32 @@ export function computePlan(input: PlanInput): PlanEngineResult {
       }
       if (!validCustom.includes(num)) validCustom.push(num);
     }
-    // Filter known surahs — skip them instead of hard-erroring
-    effectiveOrder = validCustom
-      .filter(num => {
-        if (knownSet.has(num)) { skippedKnownSurahs.push(num); return false; }
-        return true;
-      })
-      .map(num => ZAINLY_ORDER[ZAINLY_INDEX_BY_SURAH[num]]);
+    const validCustomSet = new Set(validCustom);
 
-    if (effectiveOrder.length === 0) {
-      return { error: 'Toutes les sourates de ton ordre personnalisé sont marquées comme déjà maîtrisées. Ajoutes-en d\'autres ou ajuste tes acquis.' };
+    // Selected surahs that are non-known → front of effectiveOrder
+    const selectedNonKnown = validCustom.filter(num => {
+      if (knownSet.has(num)) { skippedKnownSurahs.push(num); return false; }
+      return true;
+    });
+
+    if (continueWithRest) {
+      // Append all ZAINLY_ORDER surahs not already in validCustom and not known
+      const appendedRest = ZAINLY_ORDER
+        .filter(s => !validCustomSet.has(s.surah) && !knownSet.has(s.surah))
+        .map(s => s.surah);
+      const fullOrder = [...selectedNonKnown, ...appendedRest];
+
+      if (fullOrder.length === 0) {
+        return { error: 'Tu as indiqué maîtriser toutes les sourates disponibles.' };
+      }
+      effectiveOrder = fullOrder.map(num => ZAINLY_ORDER[ZAINLY_INDEX_BY_SURAH[num]]);
+    } else {
+      if (selectedNonKnown.length === 0) {
+        return { error: 'Toutes les sourates de ton ordre personnalisé sont marquées comme déjà maîtrisées.' };
+      }
+      effectiveOrder = selectedNonKnown.map(num => ZAINLY_ORDER[ZAINLY_INDEX_BY_SURAH[num]]);
     }
+
     startAyah = getStartAyahForSurah(effectiveOrder[0].surah, partialMap);
 
   } else {
@@ -526,12 +549,17 @@ export function computePlan(input: PlanInput): PlanEngineResult {
     ayah_per_day:  ayahPerDay,
   };
 
+  // selectedCustomCount is meaningful only for custom_order
+  const selectedCustomCount = planMode === 'custom_order'
+    ? (Array.isArray(customSurahOrder) ? customSurahOrder.length : 0)
+    : 0;
+
   return {
     planPayload,
     progressPayload,
     computed: {
-      firstSurahNumber:   startSurah.surah,
-      firstSurahName:     startSurah.name,
+      firstSurahNumber:    startSurah.surah,
+      firstSurahName:      startSurah.name,
       startAyah,
       remainingAyats,
       estimatedMonths,
@@ -540,6 +568,8 @@ export function computePlan(input: PlanInput): PlanEngineResult {
       skippedKnownSurahs,
       paceLabel,
       estimateRange,
+      selectedCustomCount,
+      continueWithRest,
     },
   };
 }
