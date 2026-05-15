@@ -412,6 +412,226 @@ function SummaryScreen({ onContinue }: { onContinue: () => void }) {
   );
 }
 
+// ─── CreatingPlanScreen ───────────────────────────────────────────────────────
+
+const MIN_CREATING_VISIBLE_MS = 6000;   // minimum time before 100% can appear
+const SUCCESS_PROGRESS_MS     = 1000;   // duration of 92 → 100 animation
+const POST_SUCCESS_PAUSE_MS   = 1000;   // pause at 100% before navigation
+
+// Stage targets + per-stage durations — total to 92% ≈ 6000ms
+const CREATING_STAGES: { label: string; target: number; duration: number }[] = [
+  { label: 'Analyse de tes réponses…',          target: 14, duration: 1200 },
+  { label: 'Organisation de ton parcours…',     target: 36, duration: 1500 },
+  { label: 'Préparation des révisions…',        target: 64, duration: 1600 },
+  { label: 'Ouverture de ton tableau de bord…', target: 92, duration: 1700 },
+];
+
+const CHECKLIST_LABELS = [
+  'Réponses analysées',
+  'Ordre personnalisé',
+  'Révisions préparées',
+  'Tableau de bord prêt',
+];
+
+// thresholds at which each checklist item becomes checked (match stage targets)
+const CHECKLIST_THRESHOLDS = [14, 36, 64, 100];
+// thresholds at which each checklist item becomes active
+const ACTIVE_THRESHOLDS    = [0, 14, 36, 64];
+
+interface CreatingProps { backendDone: boolean; onFinished: () => void; }
+
+function CreatingPlanScreen({ backendDone, onFinished }: CreatingProps) {
+  const mountedRef      = useRef(true);
+  const progressAnim    = useRef(new Animated.Value(0)).current;
+  const brandAnim       = useRef(new Animated.Value(0)).current;
+  const titleAnim       = useRef(new Animated.Value(0)).current;
+  const statusOpacity   = useRef(new Animated.Value(1)).current;
+
+  const [displayedPercent, setDisplayedPercent] = useState(0);
+  const [statusLabel, setStatusLabel]           = useState(CREATING_STAGES[0].label);
+  const prevStatusRef   = useRef(CREATING_STAGES[0].label);
+  const stageTimers     = useRef<ReturnType<typeof setTimeout>[]>([]);  
+  const holdLoopRef     = useRef<Animated.CompositeAnimation | null>(null);
+  const finishedRef     = useRef(false);   // call onFinished only once
+
+  // These two refs let the hold-pulse callback check latest state without
+  // re-creating the animation effect.
+  const backendDoneRef  = useRef(backendDone);
+  const stagedDoneRef   = useRef(false);   // true once 92% staged animation finishes
+  useEffect(() => { backendDoneRef.current = backendDone; }, [backendDone]);
+
+  // ── progress listener → displayedPercent ──
+  useEffect(() => {
+    const id = progressAnim.addListener(({ value }) => {
+      if (mountedRef.current) setDisplayedPercent(Math.round(value));
+    });
+    return () => progressAnim.removeListener(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── crossfade status label ──
+  const crossfadeStatus = useCallback((next: string) => {
+    if (!mountedRef.current || next === prevStatusRef.current) return;
+    prevStatusRef.current = next;
+    Animated.timing(statusOpacity, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => {
+      if (!mountedRef.current) return;
+      setStatusLabel(next);
+      Animated.timing(statusOpacity, { toValue: 1, duration: 260, useNativeDriver: true }).start();
+    });
+  }, [statusOpacity]);
+
+  // ── complete: stop hold-pulse, go to 100, pause, call onFinished ──
+  const runCompletion = useCallback(() => {
+    if (!mountedRef.current || finishedRef.current) return;
+    holdLoopRef.current?.stop();
+    holdLoopRef.current = null;
+    progressAnim.stopAnimation();
+    crossfadeStatus('Programme prêt.');
+    Animated.timing(progressAnim, {
+      toValue: 100,
+      duration: SUCCESS_PROGRESS_MS,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start(() => {
+      if (!mountedRef.current || finishedRef.current) return;
+      setTimeout(() => {
+        if (!mountedRef.current || finishedRef.current) return;
+        finishedRef.current = true;
+        onFinished();
+      }, POST_SUCCESS_PAUSE_MS);
+    });
+  }, [crossfadeStatus, onFinished, progressAnim, statusOpacity]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── staged local progress animation ──
+  useEffect(() => {
+    mountedRef.current = true;
+
+    // entrance
+    Animated.stagger(110, [
+      Animated.spring(brandAnim, { toValue: 1, friction: 7, tension: 58, useNativeDriver: true }),
+      Animated.timing(titleAnim, { toValue: 1, duration: 360, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+    ]).start();
+
+    // Schedule stages — each delay is the cumulative sum of previous durations
+    let accumulated = 0;
+    CREATING_STAGES.forEach((stage, idx) => {
+      const delay = accumulated;
+      accumulated += stage.duration;
+      const t = setTimeout(() => {
+        if (!mountedRef.current) return;
+        crossfadeStatus(stage.label);
+        Animated.timing(progressAnim, {
+          toValue: stage.target,
+          duration: stage.duration,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: false,
+        }).start(({ finished }) => {
+          if (!finished || !mountedRef.current) return;
+          if (idx !== CREATING_STAGES.length - 1) return;
+          // Reached 92 — mark staged done
+          stagedDoneRef.current = true;
+          // If backend already finished, go straight to completion
+          if (backendDoneRef.current) { runCompletion(); return; }
+          // Otherwise hold/pulse until backendDone effect fires
+          const holdLoop = Animated.loop(
+            Animated.sequence([
+              Animated.timing(progressAnim, { toValue: 90, duration: 800, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
+              Animated.timing(progressAnim, { toValue: 92, duration: 800, easing: Easing.inOut(Easing.sin), useNativeDriver: false }),
+            ])
+          );
+          holdLoopRef.current = holdLoop;
+          holdLoop.start();
+        });
+      }, delay);
+      stageTimers.current.push(t);
+    });
+
+    return () => {
+      mountedRef.current = false;
+      stageTimers.current.forEach(clearTimeout);
+      stageTimers.current = [];
+      holdLoopRef.current?.stop();
+      progressAnim.stopAnimation();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── when backendDone flips true: complete only if staged animation already finished ──
+  useEffect(() => {
+    if (!backendDone) return;
+    // Staged animation not done yet — its callback will call runCompletion when it finishes
+    if (!stagedDoneRef.current) return;
+    runCompletion();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [backendDone]);
+
+  const brandScale   = brandAnim.interpolate({ inputRange: [0, 1], outputRange: [0.72, 1] });
+  const titleTranslY = titleAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] });
+  const barWidth     = progressAnim.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'] });
+
+  return (
+    <ScrollView
+      style={{ flex: 1, backgroundColor: BG }}
+      contentContainerStyle={s.creatingRoot}
+      scrollEnabled={false}
+    >
+      <StatusBar barStyle="dark-content" backgroundColor={BG} />
+
+      {/* brand */}
+      <Animated.View style={{ opacity: brandAnim, transform: [{ scale: brandScale }], alignItems: 'center', marginBottom: 28 }}>
+        <View style={s.creatingBrand}>
+          <Text style={s.creatingBrandText}>Z</Text>
+        </View>
+        <Text style={s.creatingWordmark}>ZAINLY</Text>
+      </Animated.View>
+
+      {/* title */}
+      <Animated.Text style={[s.creatingTitle, { opacity: titleAnim, transform: [{ translateY: titleTranslY }] }]}>
+        {'Ton programme\nse construit.'}
+      </Animated.Text>
+
+      {/* percent */}
+      <Text style={s.creatingPercent}>{displayedPercent}%</Text>
+
+      {/* progress bar */}
+      <View style={s.creatingBarTrack}>
+        <Animated.View style={[s.creatingBarFill, { width: barWidth }]} />
+      </View>
+
+      {/* status text */}
+      <Animated.Text style={[s.creatingStatus, { opacity: statusOpacity }]}>
+        {statusLabel}
+      </Animated.Text>
+
+      {/* checklist */}
+      <View style={s.creatingChecklist}>
+        {CHECKLIST_LABELS.map((label, i) => {
+          const checked = displayedPercent >= CHECKLIST_THRESHOLDS[i];
+          const active  = displayedPercent >= ACTIVE_THRESHOLDS[i] && !checked;
+          return (
+            <View key={label} style={[
+              s.creatingCheckItem,
+              checked && s.creatingCheckItemDone,
+              active  && s.creatingCheckItemActive,
+            ]}>
+              <View style={[s.creatingCheckDot, checked && s.creatingCheckDotDone]}>
+                {checked && <Text style={s.creatingCheckMark}>✓</Text>}
+                {active  && !checked && <View style={s.creatingActiveDot} />}
+              </View>
+              <Text style={[s.creatingCheckLabel, checked && s.creatingCheckLabelDone, active && s.creatingCheckLabelActive]}>
+                {label}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+
+      {/* note */}
+      <Text style={s.creatingNote}>Cela ne prend que quelques secondes.</Text>
+    </ScrollView>
+  );
+}
+
 // ─── SeriousQuestionnaire ─────────────────────────────────────────────────────
 // Covers steps: startMode → startSurahPicker/customOrderPicker → knownSurahs → rhythm → planSummary → creating
 
@@ -606,7 +826,9 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
   const [knownSurahs,      setKnownSurahs]      = useState<number[]>([]);
   const [ayahPerDay,       setAyahPerDay]       = useState<number>(2);
   const [surahSearch,      setSurahSearch]      = useState('');
-  const [submitError,      setSubmitError]      = useState<string | null>(null);
+  const [submitError,          setSubmitError]          = useState<string | null>(null);
+  const [creationBackendDone,  setCreationBackendDone]  = useState(false);
+  const isCreatingRef = useRef(false);
 
   const allKnownSelected = knownSurahs.length === ZAINLY_ORDER.length;
 
@@ -655,9 +877,15 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
   }, [normalizedSearch]);
 
   async function handleCreatePlan() {
+    if (isCreatingRef.current) return;   // guard duplicate taps
+    isCreatingRef.current = true;
     setSubmitError(null);
+    setCreationBackendDone(false);
     hapticMedium();
     onStepChange('creating');
+
+    // yield one frame so creating screen mounts before synchronous computePlan
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 
     const result = computePlan({
       userId,
@@ -670,6 +898,7 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
     });
 
     if (isPlanError(result)) {
+      isCreatingRef.current = false;
       setSubmitError(result.error);
       onStepChange('planSummary');
       hapticError();
@@ -679,11 +908,14 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
     try {
       await upsertPlan(userId, result.planPayload);
       await upsertProgress(userId, result.progressPayload);
-      await queryClient.invalidateQueries({ queryKey: ['plan', userId] });
-      await queryClient.invalidateQueries({ queryKey: ['progress', userId] });
+      // Do NOT invalidate queries here — doing so would refetch plan, trigger the
+      // routing guard, and navigate before the animation finishes.
+      // Invalidation happens inside onFinished, right before router.replace.
       hapticSuccess();
-      router.replace('/(app)/(tabs)');
+      setCreationBackendDone(true);
     } catch {
+      isCreatingRef.current = false;
+      setCreationBackendDone(false);
       setSubmitError('Impossible de créer ton programme pour le moment. Réessaie dans un instant.');
       onStepChange('planSummary');
       hapticError();
@@ -1166,11 +1398,17 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
 
   // ── Step: creating ──
   return (
-    <View style={s.loading}>
-      <StatusBar barStyle="dark-content" backgroundColor={BG} />
-      <Text style={s.loadingDot}>·</Text>
-      <Text style={s.loadingText}>Création de ton programme…</Text>
-    </View>
+    <CreatingPlanScreen
+      backendDone={creationBackendDone}
+      onFinished={async () => {
+        isCreatingRef.current = false;
+        // Invalidate now — after animation completes — so the plan guard
+        // does not fire mid-animation and steal navigation.
+        await queryClient.invalidateQueries({ queryKey: ['plan', userId] });
+        await queryClient.invalidateQueries({ queryKey: ['progress', userId] });
+        router.replace('/(app)/(tabs)');
+      }}
+    />
   );
 }
 
@@ -1212,13 +1450,15 @@ export default function OnboardingScreen() {
     if (!ready) return;
     if (!user) { router.replace('/(auth)/login'); return; }
     if (isLoading) return;
-    if (plan) { router.replace('/(app)/(tabs)'); return; }
+    // Do not redirect while the creation animation is running —
+    // CreatingPlanScreen.onFinished() is the only navigation path after creation.
+    if (plan && personalStep !== 'creating') { router.replace('/(app)/(tabs)'); return; }
     if (!introSeen) { router.replace('/onboarding/intro'); return; }
     if (personalDone && !seriousStartedRef.current) {
       seriousStartedRef.current = true;
       setPersonalStep('startMode');
     }
-  }, [ready, user, isLoading, plan, introSeen, personalDone]);
+  }, [ready, user, isLoading, plan, introSeen, personalDone, personalStep]);
 
   // ── save personal answers ──
   async function savePersonalAnswers(motivationId: string, obstacleId: string) {
@@ -1251,7 +1491,9 @@ export default function OnboardingScreen() {
   }
 
   // ── loading / gate ──
-  if (!user || isLoading || plan || !introSeen) {
+  // Exclude creating step from the plan-exists short-circuit so the animation
+  // can finish before onFinished navigates.
+  if (!user || isLoading || (plan && personalStep !== 'creating') || !introSeen) {
     return (
       <View style={s.loading}>
         <Text style={s.loadingDot}>·</Text>
@@ -1478,6 +1720,80 @@ const s = StyleSheet.create({
   // ── estimate helper text ──
   estimateHelperWrap: { paddingHorizontal: 4, marginBottom: 20, gap: 4 },
   estimateHelperLine: { fontFamily: F_BODY, fontSize: 11, color: MUTED, lineHeight: 17 },
+
+  // ── creating plan screen ──
+  creatingRoot: {
+    flexGrow: 1, backgroundColor: BG,
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 32, paddingVertical: 40,
+  },
+  creatingBrand: {
+    width: 56, height: 56, borderRadius: 16,
+    backgroundColor: GREEN,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 8,
+  },
+  creatingBrandText: {
+    fontFamily: F_TITLE, fontSize: 26, color: GOLD, lineHeight: 32,
+  },
+  creatingWordmark: {
+    fontFamily: F_BODY, fontSize: 11, color: TITLE,
+    textAlign: 'center', letterSpacing: 3, opacity: 0.6,
+  },
+  creatingTitle: {
+    fontFamily: F_TITLE, fontSize: 24, color: TITLE,
+    textAlign: 'center', lineHeight: 34, marginTop: 20, marginBottom: 24,
+  },
+  creatingPercent: {
+    fontFamily: F_TITLE, fontSize: 42, color: GOLD,
+    letterSpacing: -1, marginBottom: 10,
+  },
+  creatingBarTrack: {
+    width: '100%', height: 6, borderRadius: 3,
+    backgroundColor: GOLD_B, marginBottom: 14, overflow: 'hidden',
+  },
+  creatingBarFill: {
+    height: 6, borderRadius: 3, backgroundColor: GOLD,
+  },
+  creatingStatus: {
+    fontFamily: F_BODY, fontSize: 12, color: MUTED,
+    letterSpacing: 0.3, marginBottom: 28, textAlign: 'center',
+  },
+  creatingChecklist: {
+    width: '100%', gap: 8, marginBottom: 28,
+  },
+  creatingCheckItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: SURF, borderRadius: 10, padding: 12,
+    borderWidth: 1, borderColor: BORDER, opacity: 0.45,
+  },
+  creatingCheckItemActive: {
+    opacity: 1, borderColor: GOLD_B,
+  },
+  creatingCheckItemDone: {
+    opacity: 1, borderColor: 'rgba(198,161,91,0.5)',
+    backgroundColor: 'rgba(198,161,91,0.06)',
+  },
+  creatingCheckDot: {
+    width: 22, height: 22, borderRadius: 11,
+    borderWidth: 1.5, borderColor: BORDER,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: BG,
+  },
+  creatingCheckDotDone: {
+    borderColor: GOLD, backgroundColor: 'rgba(198,161,91,0.15)',
+  },
+  creatingCheckMark:  { fontSize: 12, color: GOLD, fontWeight: '700', lineHeight: 15 },
+  creatingActiveDot:  { width: 8, height: 8, borderRadius: 4, backgroundColor: GOLD },
+  creatingCheckLabel: {
+    fontFamily: F_BODY, fontSize: 13, color: MUTED, flex: 1,
+  },
+  creatingCheckLabelActive: { color: TITLE },
+  creatingCheckLabelDone:   { color: TITLE, fontWeight: '600' },
+  creatingNote: {
+    fontFamily: F_BODY, fontSize: 11, color: 'rgba(122,110,97,0.50)',
+    letterSpacing: 0.2, textAlign: 'center',
+  },
 
   // ── continue with rest toggle card ──
   continueRestCard: {
