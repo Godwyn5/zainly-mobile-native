@@ -10,7 +10,6 @@ import { getTodayProgramme } from '@/core/dailyPlan';
 import { Screen } from '@/components/ui/Screen';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { StatusChip } from '@/components/ui/StatusChip';
 import { StatPill } from '@/components/ui/StatPill';
 import { ProgressBar } from '@/components/ui/ProgressBar';
 import { PrimaryButton } from '@/components/ui/PrimaryButton';
@@ -91,8 +90,6 @@ export default function TodayScreen() {
     today,
   });
 
-  const isPremium = profile.data?.is_premium ?? false;
-
   const ayatLabel = (() => {
     if (prog.surahExhausted && prog.nextSurahName) {
       return `Passage à ${prog.nextSurahName}`;
@@ -119,13 +116,7 @@ export default function TodayScreen() {
     <Screen>
       {/* Header */}
       <View style={styles.header}>
-        <View style={styles.headerRow}>
-          <Text style={styles.title}>Aujourd'hui</Text>
-          <StatusChip
-            label={isPremium ? 'Premium actif' : 'Gratuit'}
-            variant={isPremium ? 'premium' : 'free'}
-          />
-        </View>
+        <Text style={styles.title}>Aujourd'hui</Text>
         <Text style={styles.subtitle}>Ton programme de mémorisation du jour.</Text>
       </View>
 
@@ -227,8 +218,7 @@ const styles = StyleSheet.create({
   },
   stateCard: { marginTop: spacing.xl },
   header: { marginBottom: spacing.lg, marginTop: spacing.sm },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
-  title: { fontSize: 28, fontWeight: '700', color: colors.primary },
+  title: { fontSize: 28, fontWeight: '700', color: colors.primary, marginBottom: 6 },
   subtitle: { fontSize: 13, color: colors.muted, lineHeight: 20 },
   section: { marginBottom: 4 },
   subsectionLabel: {

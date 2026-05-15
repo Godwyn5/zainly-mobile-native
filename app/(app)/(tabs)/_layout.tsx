@@ -1,6 +1,7 @@
 import { Text } from 'react-native';
 import { Tabs } from 'expo-router';
 import { colors } from '@/theme/colors';
+import { hapticSelection } from '@/utils/haptics';
 
 function TabIcon({ symbol, focused }: { symbol: string; focused: boolean }) {
   return (
@@ -9,6 +10,8 @@ function TabIcon({ symbol, focused }: { symbol: string; focused: boolean }) {
     </Text>
   );
 }
+
+const tabPressListener = { tabPress: () => hapticSelection() };
 
 export default function TabsLayout() {
   return (
@@ -38,27 +41,32 @@ export default function TabsLayout() {
           title: "Aujourd'hui",
           tabBarIcon: ({ focused }) => <TabIcon symbol="⌂" focused={focused} />,
         }}
-      />
-      <Tabs.Screen
-        name="progression"
-        options={{
-          title: 'Progression',
-          tabBarIcon: ({ focused }) => <TabIcon symbol="↗" focused={focused} />,
-        }}
+        listeners={tabPressListener}
       />
       <Tabs.Screen
         name="hifz"
         options={{
           title: 'Mon Hifz',
-          tabBarIcon: ({ focused }) => <TabIcon symbol="☾" focused={focused} />,
+          tabBarIcon: ({ focused }) => <TabIcon symbol="☽" focused={focused} />,
         }}
+        listeners={tabPressListener}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'Profil',
+          tabBarIcon: ({ focused }) => <TabIcon symbol="◎" focused={focused} />,
+        }}
+        listeners={tabPressListener}
+      />
+      {/* Hidden routes — kept in codebase, not shown in tab bar */}
+      <Tabs.Screen
+        name="progression"
+        options={{ href: null }}
       />
       <Tabs.Screen
         name="settings"
-        options={{
-          title: 'Réglages',
-          tabBarIcon: ({ focused }) => <TabIcon symbol="⚙" focused={focused} />,
-        }}
+        options={{ href: null }}
       />
     </Tabs>
   );
