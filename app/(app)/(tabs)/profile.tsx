@@ -1,6 +1,7 @@
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Screen } from '@/components/ui/Screen';
 import { SectionLabel } from '@/components/ui/SectionLabel';
+import { useLogout } from '@/hooks/useLogout';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
 
@@ -24,6 +25,8 @@ function ProfileRow({ title, description }: ProfileRowProps) {
 }
 
 export default function ProfileScreen() {
+  const { confirmLogout, isLoggingOut } = useLogout();
+
   return (
     <Screen>
       <SectionLabel text="Mon compte" style={styles.badge} />
@@ -50,11 +53,21 @@ export default function ProfileScreen() {
           title="Abonnement"
           description="Gérer ton accès Zainly."
         />
-        <View style={styles.divider} />
-        <ProfileRow
-          title="Compte"
-          description="Aide, confidentialité et déconnexion."
-        />
+      </View>
+
+      {/* ── Compte section ── */}
+      <SectionLabel text="Compte" style={styles.sectionLabel} />
+      <View style={styles.card}>
+        <TouchableOpacity
+          style={[styles.logoutRow, isLoggingOut && styles.logoutRowDisabled]}
+          onPress={confirmLogout}
+          disabled={isLoggingOut}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.logoutText, isLoggingOut && styles.logoutTextDim]}>
+            {isLoggingOut ? 'Déconnexion…' : 'Se déconnecter'}
+          </Text>
+        </TouchableOpacity>
       </View>
     </Screen>
   );
@@ -74,6 +87,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: spacing.lg,
   },
+  sectionLabel: { marginTop: spacing.lg },
   card: {
     backgroundColor: colors.surface,
     borderRadius: 16,
@@ -119,4 +133,15 @@ const styles = StyleSheet.create({
     backgroundColor: colors.border,
     marginHorizontal: spacing.md,
   },
+  logoutRow: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  logoutRowDisabled: { opacity: 0.5 },
+  logoutText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.danger,
+  },
+  logoutTextDim: { color: colors.muted },
 });
