@@ -736,8 +736,10 @@ interface SurahRowProps {
   orderIndex?: number;
   onPress: (surah: number) => void;
   delay: number;
+  disabled?: boolean;
+  disabledLabel?: string;
 }
-const SurahRow = memo(function SurahRow({ entry, selected, orderIndex, onPress, delay }: SurahRowProps) {
+const SurahRow = memo(function SurahRow({ entry, selected, orderIndex, onPress, delay, disabled, disabledLabel }: SurahRowProps) {
   const opacAnim   = useRef(new Animated.Value(0)).current;
   const pressScale = useRef(new Animated.Value(1)).current;
   useEffect(() => {
@@ -750,9 +752,9 @@ const SurahRow = memo(function SurahRow({ entry, selected, orderIndex, onPress, 
   return (
     <Animated.View style={{ opacity: opacAnim, transform: [{ scale: pressScale }] }}>
       <TouchableOpacity
-        activeOpacity={0.8}
-        onPress={() => { hapticSelection(); onPress(entry.surah); }}
-        style={[s.surahRow, selected && s.surahRowSelected]}
+        activeOpacity={disabled ? 1 : 0.8}
+        onPress={() => { if (disabled) return; hapticSelection(); onPress(entry.surah); }}
+        style={[s.surahRow, selected && s.surahRowSelected, disabled && s.surahRowDisabled]}
       >
         <View style={s.surahLeft}>
           {orderIndex != null
@@ -762,8 +764,10 @@ const SurahRow = memo(function SurahRow({ entry, selected, orderIndex, onPress, 
               </View>
           }
           <View style={{ flex: 1 }}>
-            <Text style={[s.surahName, selected && s.surahNameSelected]}>{entry.name}</Text>
-            <Text style={s.surahMeta}>Sourate {entry.surah} · {entry.ayahs} ayats</Text>
+            <Text style={[s.surahName, selected && s.surahNameSelected, disabled && s.surahNameDisabled]}>{entry.name}</Text>
+            <Text style={s.surahMeta}>
+              {disabledLabel ?? `Sourate ${entry.surah} · ${entry.ayahs} ayats`}
+            </Text>
           </View>
         </View>
       </TouchableOpacity>
@@ -832,7 +836,15 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
 
   const allKnownSelected = knownSurahs.length === ZAINLY_ORDER.length;
 
+  function pickStartingSurah(surahNum: number) {
+    setStartingSurah(surahNum);
+    // Remove the newly chosen starting surah from knownSurahs to prevent contradiction
+    setKnownSurahs(prev => prev.filter(n => n !== surahNum));
+  }
+
   function toggleKnown(surahNum: number) {
+    // Starting surah must never be added to knownSurahs
+    if (planMode === 'start_surah' && surahNum === startingSurah) return;
     hapticSelection();
     setKnownSurahs(prev =>
       prev.includes(surahNum) ? prev.filter(n => n !== surahNum) : [...prev, surahNum]
@@ -887,10 +899,15 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
     // yield one frame so creating screen mounts before synchronous computePlan
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 
+    // Invariant: knownSurahs must never include the startingSurah
+    const sanitizedKnown = planMode === 'start_surah' && startingSurah != null
+      ? knownSurahs.filter(n => n !== startingSurah)
+      : knownSurahs;
+
     const result = computePlan({
       userId,
       planMode,
-      knownSurahs,
+      knownSurahs: sanitizedKnown,
       startingSurah: planMode === 'start_surah' ? startingSurah : null,
       customSurahOrder: planMode === 'custom_order' ? customOrder : undefined,
       continueWithRest: planMode === 'custom_order' ? continueWithRest : undefined,
@@ -925,10 +942,14 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
   // Preview computed result for summary screen (no DB write)
   const previewResult = useMemo(() => {
     if (step !== 'planSummary') return null;
+    // Invariant: knownSurahs must never include the startingSurah
+    const sanitizedKnown = planMode === 'start_surah' && startingSurah != null
+      ? knownSurahs.filter(n => n !== startingSurah)
+      : knownSurahs;
     return computePlan({
       userId,
       planMode,
-      knownSurahs,
+      knownSurahs: sanitizedKnown,
       startingSurah: planMode === 'start_surah' ? startingSurah : null,
       customSurahOrder: planMode === 'custom_order' ? customOrder : undefined,
       continueWithRest: planMode === 'custom_order' ? continueWithRest : undefined,
@@ -1020,7 +1041,7 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
               <SurahRow
                 entry={item}
                 selected={startingSurah === item.surah}
-                onPress={setStartingSurah}
+                onPress={pickStartingSurah}
                 delay={0}
               />
             )}
@@ -1199,14 +1220,19 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
             removeClippedSubviews={true}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
-            renderItem={({ item }) => (
-              <SurahRow
-                entry={item}
-                selected={knownSurahs.includes(item.surah)}
-                onPress={toggleKnown}
-                delay={0}
-              />
-            )}
+            renderItem={({ item }) => {
+              const isStarting = planMode === 'start_surah' && item.surah === startingSurah;
+              return (
+                <SurahRow
+                  entry={item}
+                  selected={knownSurahs.includes(item.surah)}
+                  onPress={toggleKnown}
+                  delay={0}
+                  disabled={isStarting}
+                  disabledLabel={isStarting ? 'Sourate de départ' : undefined}
+                />
+              );
+            }}
           />
           <View style={s.ctaWrap}>
             <TouchableOpacity style={s.backBtn} activeOpacity={0.8}
@@ -1630,12 +1656,14 @@ const s = StyleSheet.create({
     backgroundColor: SURF, borderWidth: 1, borderColor: BORDER,
   },
   surahRowSelected:  { borderColor: GOLD, backgroundColor: 'rgba(198,161,91,0.06)' },
+  surahRowDisabled:  { opacity: 0.45, backgroundColor: 'rgba(0,0,0,0.02)' },
   surahLeft:         { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
   surahCheck:        { width: 20, height: 20, borderRadius: 10, borderWidth: 1.5, borderColor: BORDER, alignItems: 'center', justifyContent: 'center' },
   surahCheckSelected:{ borderColor: GOLD, backgroundColor: GOLD },
   surahCheckMark:    { fontSize: 11, color: SURF, fontWeight: '700' },
   surahName:         { fontFamily: F_BODY, fontSize: 13, fontWeight: '600', color: TITLE },
   surahNameSelected: { color: GREEN },
+  surahNameDisabled: { color: MUTED },
   surahMeta:         { fontFamily: F_BODY, fontSize: 11, color: MUTED },
   orderBadge:        { width: 24, height: 24, borderRadius: 12, backgroundColor: GOLD, alignItems: 'center', justifyContent: 'center' },
   orderBadgeText:    { fontSize: 11, fontWeight: '700', color: SURF },
