@@ -34,6 +34,7 @@ import { getTodayProgramme } from '@/core/dailyPlan';
 const SW = Dimensions.get('window').width;
 const PROGRESS_PCT           = 0.13; // Step 1 anchors at ~13%
 const DISCOVERY_PROGRESS_PCT = 0.28; // Step 2 anchors at ~28%
+const DECOUPAGE_PROGRESS_PCT = 0.44; // Step 3 anchors at ~44%
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -46,6 +47,50 @@ function estimateDuration(ayatCount: number, hasReviews: boolean): string {
   if (ayatCount <= 2) return hasReviews ? '~8 min' : '~5 min';
   if (ayatCount <= 5) return hasReviews ? '~12 min' : '~8 min';
   return hasReviews ? '~20 min' : '~15 min';
+}
+
+// ─── Découpage chunking helper ────────────────────────────────────────────────
+
+function chunkAyat(arabic: string): string[] {
+  if (!arabic || !arabic.trim()) return [];
+  const words = arabic.trim().split(/\s+/).filter(w => w.length > 0);
+  const n = words.length;
+  if (n === 0) return [];
+  if (n <= 3) {
+    // 1 word per chunk
+    return words;
+  }
+  if (n <= 6) {
+    // chunks of 2
+    const out: string[] = [];
+    for (let i = 0; i < n; i += 2) {
+      out.push(words.slice(i, i + 2).join(' '));
+    }
+    return out;
+  }
+  // 7+ words: chunks of 3 (last chunk may be 1–3 words)
+  const out: string[] = [];
+  for (let i = 0; i < n; i += 3) {
+    out.push(words.slice(i, i + 3).join(' '));
+  }
+  return out;
+}
+
+// Safe transliteration word-split mapping — only attempt if word counts match exactly
+function chunkTranslit(translit: string | null | undefined, arabicChunks: string[]): string[] | null {
+  if (!translit || !translit.trim()) return null;
+  const tWords = translit.trim().split(/\s+/).filter(w => w.length > 0);
+  const aWords = arabicChunks.flatMap(c => c.split(/\s+/));
+  if (tWords.length !== aWords.length) return null; // counts differ — skip safely
+  // Rebuild transliteration chunks matching arabic chunk word counts
+  const result: string[] = [];
+  let idx = 0;
+  for (const chunk of arabicChunks) {
+    const wc = chunk.split(/\s+/).length;
+    result.push(tWords.slice(idx, idx + wc).join(' '));
+    idx += wc;
+  }
+  return result;
 }
 
 type ChargeLevel = 'light' | 'normal' | 'intense';
@@ -273,7 +318,7 @@ interface DiscoveryScreenProps {
   memStart:    number;
   memEnd:      number;
   onBack:      () => void;
-  onNext:      () => void;
+  onNext:      (loadedAyat: QuranAyahContent | null) => void;
 }
 
 function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: DiscoveryScreenProps) {
@@ -301,6 +346,11 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surahNumber, memStart]);
 
+  // ── listen gate ──
+  const MIN_LISTENS = 3;
+  const [listenCount, setListenCount] = useState(0);
+  const unlocked = listenCount >= MIN_LISTENS;
+
   // ── animation refs ──
   const screenAnim  = useRef(new Animated.Value(0)).current;
   const cardAnim    = useRef(new Animated.Value(0)).current;
@@ -314,6 +364,7 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
   const haloScale   = useRef(new Animated.Value(1)).current;
   const haloOpacity = useRef(new Animated.Value(0.10)).current;
   const haloLoop    = useRef<Animated.CompositeAnimation | null>(null);
+  const countPulse  = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -364,6 +415,20 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const onAudioPress = useCallback(() => {
+    hapticMedium();
+    setListenCount(prev => prev + 1);
+    Animated.sequence([
+      Animated.timing(countPulse, { toValue: 1.18, duration: 120, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(countPulse, { toValue: 1.00, duration: 200, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+    ]).start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const ctaLabel = !unlocked
+    ? (listenCount === 0 ? 'Écoute 3 fois pour continuer' : listenCount === MIN_LISTENS - 1 ? 'Encore 1 écoute' : `Encore ${MIN_LISTENS - listenCount} écoutes`)
+    : 'Continuer vers le découpage →';
+
   const ctaShineX = ctaShine.interpolate({ inputRange: [-1, 1], outputRange: ['-60%', '160%'] });
 
   return (
@@ -390,7 +455,7 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
             <Text style={ds.headerChipText}>DÉCOUVERTE</Text>
           </View>
           <Text style={ds.headerTitle}>Découverte de l'ayat</Text>
-          <Text style={ds.headerSub}>{surahName}</Text>
+          <Text style={ds.headerSub}>Lis doucement. Écoute 3 fois. Ne cherche pas encore à retenir.</Text>
         </Animated.View>
 
         {/* ── PROGRESS BAR ── */}
@@ -466,23 +531,47 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
 
             <View style={ds.ayatDivider} />
 
-            {/* Audio button — UI-ready, audio infra not yet installed */}
-            <Animated.View style={{ transform: [{ scale: audioPulse }] }}>
-              <Pressable
-                style={({ pressed }) => [ds.audioBtn, pressed && ds.audioBtnPressed]}
-                onPress={() => { hapticMedium(); }}
-                accessibilityLabel="Écouter l'ayat"
-              >
-                <View style={ds.audioBtnInner}>
-                  <View style={ds.audioIcon}>
-                    <View style={ds.audioIconBar1} />
-                    <View style={ds.audioIconBar2} />
-                    <View style={ds.audioIconBar3} />
+            {/* Audio section — listen gate */}
+            <View style={ds.audioSection}>
+              {/* counter / badge row */}
+              <Animated.View style={[ds.listenCountRow, { transform: [{ scale: countPulse }] }]}>
+                {unlocked ? (
+                  <View style={ds.minBadge}>
+                    <View style={ds.minBadgeDot} />
+                    <Text style={ds.minBadgeText}>Minimum atteint</Text>
                   </View>
-                  <Text style={ds.audioBtnText}>Écouter l'ayat</Text>
-                </View>
-              </Pressable>
-            </Animated.View>
+                ) : (
+                  <View style={ds.listenCounter}>
+                    <Text style={ds.listenCounterText}>Écoute {listenCount}/{MIN_LISTENS}</Text>
+                  </View>
+                )}
+              </Animated.View>
+
+              {/* audio button */}
+              <Animated.View style={{ transform: [{ scale: audioPulse }] }}>
+                <Pressable
+                  style={({ pressed }) => [ds.audioBtn, pressed && ds.audioBtnPressed]}
+                  onPress={onAudioPress}
+                  accessibilityLabel={unlocked ? "Réécouter l'ayat" : "Écouter l'ayat"}
+                >
+                  <View style={ds.audioBtnInner}>
+                    <View style={ds.audioIcon}>
+                      <View style={ds.audioIconBar1} />
+                      <View style={ds.audioIconBar2} />
+                      <View style={ds.audioIconBar3} />
+                    </View>
+                    <Text style={ds.audioBtnText}>
+                      {unlocked ? "Réécouter l'ayat" : "Écouter l'ayat"}
+                    </Text>
+                  </View>
+                </Pressable>
+              </Animated.View>
+
+              {/* helper text after unlock */}
+              {unlocked ? (
+                <Text style={ds.listenHelper}>Tu peux réécouter autant que nécessaire.</Text>
+              ) : null}
+            </View>
 
           </View>
         </Animated.View>
@@ -511,11 +600,12 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
       <View style={ds.stickyBottom}>
         <View style={ds.ctaWrap}>
           <Pressable
-            style={({ pressed }) => [ds.cta, pressed && ds.ctaPressed]}
-            onPress={() => { hapticSelection(); onNext(); }}
+            style={({ pressed }) => [ds.cta, !unlocked && ds.ctaLocked, unlocked && pressed && ds.ctaPressed]}
+            onPress={() => { if (!unlocked) return; hapticSelection(); onNext(ayat); }}
+            accessibilityState={{ disabled: !unlocked }}
           >
-            <Text style={ds.ctaText}>J'ai découvert l'ayat →</Text>
-            <Animated.View pointerEvents="none" style={[ds.ctaShine, { left: ctaShineX }]} />
+            <Text style={[ds.ctaText, !unlocked && ds.ctaLockedText]}>{ctaLabel}</Text>
+            {unlocked ? <Animated.View pointerEvents="none" style={[ds.ctaShine, { left: ctaShineX }]} /> : null}
           </Pressable>
         </View>
       </View>
@@ -608,6 +698,567 @@ const ds = StyleSheet.create({
   ctaPressed:   { opacity: 0.82, transform: [{ scale: 0.975 }] },
   ctaText:      { color: '#FFFFFF', fontSize: 17, fontWeight: '800', letterSpacing: 0.5 },
   ctaShine:     { position: 'absolute', top: 0, width: '35%', height: '100%', backgroundColor: 'rgba(255,255,255,0.11)', transform: [{ skewX: '-20deg' }] },
+  ctaLocked:    { backgroundColor: 'rgba(22,48,38,0.20)', shadowOpacity: 0 },
+  ctaLockedText:{ color: 'rgba(22,48,38,0.55)', fontSize: 15, fontWeight: '600', letterSpacing: 0.2 },
+
+  // audio gate
+  audioSection:     { gap: 8 },
+  listenCountRow:   { alignItems: 'center', marginBottom: 2 },
+  listenCounter:    { backgroundColor: 'rgba(184,150,46,0.12)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(184,150,46,0.28)' },
+  listenCounterText:{ fontSize: 11, fontWeight: '700', color: colors.gold, letterSpacing: 0.8 },
+  minBadge:         { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(22,48,38,0.10)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(22,48,38,0.22)', gap: 5 },
+  minBadgeDot:      { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.success },
+  minBadgeText:     { fontSize: 11, fontWeight: '700', color: colors.primary, letterSpacing: 0.6 },
+  listenHelper:     { fontSize: 12, color: colors.muted, textAlign: 'center', fontStyle: 'italic', marginTop: 2 },
+});
+
+// ─── Step 3: Découpage (focus mode) ──────────────────────────────────────────
+
+interface DecoupageScreenProps {
+  surahNumber: number;
+  ayatNumber:  number;
+  ayat:        QuranAyahContent | null;
+  onBack:      () => void;
+  onNext:      () => void;
+}
+
+function DecoupageScreen({ ayatNumber, ayat, onBack, onNext }: DecoupageScreenProps) {
+  const mountedRef = useRef(true);
+
+  // ── compute chunks once ──
+  const chunks = useMemo(() => {
+    if (!ayat?.arabic) return [];
+    return chunkAyat(ayat.arabic);
+  }, [ayat?.arabic]);
+
+  const translitChunks = useMemo(() => {
+    if (!ayat?.transliteration || chunks.length === 0) return null;
+    return chunkTranslit(ayat.transliteration, chunks);
+  }, [ayat?.transliteration, chunks]);
+
+  // ── focus state — one chunk at a time ──
+  const [focusIdx,    setFocusIdx]    = useState(0);
+  const [visitedCount,setVisitedCount]= useState(1); // chunk 0 auto-visited
+  const total        = chunks.length;
+  const allVisited   = total > 0 && visitedCount >= total;
+  // guard rapid taps during transition
+  const isTransitioning = useRef(false);
+
+  // ── animation refs ──
+  const mountAnim    = useRef(new Animated.Value(0)).current;
+  const refCardAnim  = useRef(new Animated.Value(0)).current;
+  const focusCardAnim= useRef(new Animated.Value(0)).current;
+  const coachAnim    = useRef(new Animated.Value(0)).current;
+  const ctaShine     = useRef(new Animated.Value(-1)).current;
+  const ctaShineLoop = useRef<Animated.CompositeAnimation | null>(null);
+  const activeGlow   = useRef(new Animated.Value(0.5)).current;
+  const activeGlowLoop = useRef<Animated.CompositeAnimation | null>(null);
+  const audioPulse   = useRef(new Animated.Value(1)).current;
+  const audioPulseLoop = useRef<Animated.CompositeAnimation | null>(null);
+  // pill fill anims — one per chunk (0=locked/empty, 1=visited fill)
+  const pillAnims    = useRef(Array.from({ length: 12 }, () => new Animated.Value(0))).current;
+  // per-transition: out then in
+  const focusSlide   = useRef(new Animated.Value(0)).current;
+  const focusOpacity = useRef(new Animated.Value(1)).current;
+
+  // ── screen entrance ──
+  useEffect(() => {
+    mountedRef.current = true;
+
+    Animated.stagger(80, [
+      Animated.timing(mountAnim,     { toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(refCardAnim,   { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(focusCardAnim, { toValue: 1, duration: 420, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(coachAnim,     { toValue: 1, duration: 340, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+    ]).start();
+
+    // first pill unlock
+    Animated.timing(pillAnims[0], { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+
+    // breathing gold glow on focus card
+    activeGlowLoop.current = Animated.loop(Animated.sequence([
+      Animated.timing(activeGlow, { toValue: 1.0,  duration: 1400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      Animated.timing(activeGlow, { toValue: 0.5,  duration: 1400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+    ]));
+    activeGlowLoop.current.start();
+
+    // audio button subtle pulse
+    audioPulseLoop.current = Animated.loop(Animated.sequence([
+      Animated.timing(audioPulse, { toValue: 1.04, duration: 1600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      Animated.timing(audioPulse, { toValue: 1.00, duration: 1600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+    ]));
+    audioPulseLoop.current.start();
+
+    return () => {
+      mountedRef.current = false;
+      activeGlowLoop.current?.stop();
+      audioPulseLoop.current?.stop();
+      ctaShineLoop.current?.stop();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── CTA shine when all visited ──
+  useEffect(() => {
+    if (!allVisited) return;
+    ctaShineLoop.current = Animated.loop(Animated.sequence([
+      Animated.timing(ctaShine, { toValue: 1, duration: 1400, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
+      Animated.delay(2600),
+      Animated.timing(ctaShine, { toValue: -1, duration: 0, useNativeDriver: false }),
+    ]));
+    ctaShineLoop.current.start();
+    return () => { ctaShineLoop.current?.stop(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allVisited]);
+
+  // ── core chunk navigator (direction-aware, transition-guarded) ──
+  const navigateTo = useCallback((targetIdx: number, direction: 1 | -1) => {
+    if (isTransitioning.current) return;
+    if (targetIdx < 0 || targetIdx >= total) return;
+    if (targetIdx === focusIdx) return; // already here
+    isTransitioning.current = true;
+
+    const outSlide = direction === 1 ? -22 : 22;
+    const inSlide  = direction === 1 ?  26 : -26;
+
+    Animated.parallel([
+      Animated.timing(focusOpacity, { toValue: 0, duration: 170, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(focusSlide,   { toValue: outSlide, duration: 170, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+    ]).start(() => {
+      if (!mountedRef.current) { isTransitioning.current = false; return; }
+      setFocusIdx(targetIdx);
+      focusSlide.setValue(inSlide);
+      focusOpacity.setValue(0);
+      Animated.parallel([
+        Animated.timing(focusOpacity, { toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(focusSlide,   { toValue: 0, duration: 280, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      ]).start(() => { isTransitioning.current = false; });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusIdx, total]);
+
+  // ── tap a navigator pill ──
+  const handlePillPress = useCallback((i: number) => {
+    if (i >= visitedCount) return; // locked
+    if (i === focusIdx) return;    // already active
+    hapticSelection();
+    const dir: 1 | -1 = i > focusIdx ? 1 : -1;
+    navigateTo(i, dir);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusIdx, visitedCount, navigateTo]);
+
+  // ── CTA press ──
+  const goNext = useCallback(() => {
+    if (allVisited) { hapticMedium(); onNext(); return; }
+    if (isTransitioning.current) return;
+    hapticSelection();
+
+    const isAtFrontierNow = focusIdx === visitedCount - 1;
+
+    if (!isAtFrontierNow) {
+      // User is reviewing: jump forward to the frontier chunk
+      const frontier = visitedCount - 1;
+      if (frontier < 0 || frontier >= total) return;
+      navigateTo(frontier, 1);
+      return;
+    }
+
+    // At the frontier: advance to the next unvisited chunk
+    const nextIdx = focusIdx + 1;
+    if (nextIdx >= total) return;
+    const newCount = nextIdx + 1;
+    setVisitedCount(prev => Math.max(prev, newCount));
+    // unlock pill with fade-in
+    if (nextIdx < 12) {
+      Animated.timing(pillAnims[nextIdx], { toValue: 1, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    }
+    navigateTo(nextIdx, 1);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusIdx, visitedCount, total, allVisited, onNext, navigateTo]);
+
+  const ctaShineX = ctaShine.interpolate({ inputRange: [-1, 1], outputRange: ['-60%', '160%'] });
+
+  // CTA label logic:
+  //  • all visited → final navigation label
+  //  • focusIdx is the frontier (last unlocked) and it is the last chunk → terminer
+  //  • focusIdx is the frontier but not last chunk → j'ai vu
+  //  • focusIdx < frontier (reviewing earlier chunk) → continuer
+  const isAtFrontier = focusIdx === visitedCount - 1;
+  const ctaLabel = allVisited
+    ? 'Continuer vers la répétition →'
+    : !isAtFrontier
+      ? 'Continuer le découpage →'
+      : focusIdx === total - 1
+        ? 'Terminer le découpage →'
+        : 'J\'ai vu ce morceau →';
+
+  // ── active chunk data ──
+  const activeChunk  = chunks[focusIdx] ?? '';
+  const activeTChunk = translitChunks?.[focusIdx] ?? null;
+  // fallback: show full translit with label when chunk-level not safe
+  const showFullTranslitFallback = !translitChunks && !!ayat?.transliteration;
+
+  return (
+    <SafeAreaView style={dec.safe}>
+      <PremiumBackground />
+      <View style={dec.halo} pointerEvents="none" />
+      <View style={dec.ornLine} pointerEvents="none" />
+
+      <ScrollView
+        contentContainerStyle={dec.scroll}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+
+        {/* ── HEADER ── */}
+        <Animated.View style={[dec.header, {
+          opacity: mountAnim,
+          transform: [{ translateY: mountAnim.interpolate({ inputRange: [0, 1], outputRange: [18, 0] }) }],
+        }]}>
+          <Pressable style={dec.backBtn} onPress={() => { hapticLight(); onBack(); }} hitSlop={12}>
+            <Text style={dec.backBtnText}>←</Text>
+          </Pressable>
+          <View style={dec.headerChip}>
+            <View style={dec.headerChipDot} />
+            <Text style={dec.headerChipText}>ÉTAPE 3 · DÉCOUPAGE</Text>
+          </View>
+          <Text style={dec.headerTitle}>Découpe l'ayat</Text>
+          <Text style={dec.headerSub}>Un morceau à la fois. Lis, écoute, avance.</Text>
+        </Animated.View>
+
+        {/* ── PROGRESS BAR ── */}
+        <Animated.View style={{ opacity: mountAnim }}>
+          <SessionProgressBar
+            pct={DECOUPAGE_PROGRESS_PCT}
+            label="Étape 3 · Découpage"
+            phase="Morceaux"
+          />
+        </Animated.View>
+
+        {/* ── COMPACT REFERENCE CARD ── */}
+        <Animated.View style={[dec.refCardWrap, {
+          opacity: refCardAnim,
+          transform: [
+            { translateY: refCardAnim.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) },
+            { scale:      refCardAnim.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1.0] }) },
+          ],
+        }]}>
+          <View style={dec.refCard}>
+            {/* top badges row */}
+            <View style={dec.refTopRow}>
+              <View style={dec.refBadge}>
+                <Text style={dec.refBadgeText}>L'AYAT COMPLET</Text>
+              </View>
+              <View style={dec.refNumBadge}>
+                <Text style={dec.refNumText}>Ayat {ayatNumber}</Text>
+              </View>
+            </View>
+
+            {ayat?.arabic ? (
+              <>
+                <Text style={dec.refArabic} textBreakStrategy="simple">
+                  {ayat.arabic}
+                </Text>
+                {ayat.transliteration ? (
+                  <Text style={dec.refTranslit} numberOfLines={2}>
+                    {ayat.transliteration}
+                  </Text>
+                ) : null}
+                {ayat.translationFr ? (
+                  <Text style={dec.refTranslation} numberOfLines={2}>
+                    {ayat.translationFr}
+                  </Text>
+                ) : null}
+              </>
+            ) : (
+              <Text style={dec.refFallback}>Contenu indisponible.</Text>
+            )}
+          </View>
+        </Animated.View>
+
+
+        {/* ── FOCUS CHUNK CARD ── */}
+        {chunks.length === 0 ? (
+          <View style={dec.focusFallback}>
+            <Text style={dec.focusFallbackText}>L'ayat n'a pas pu être découpé.</Text>
+          </View>
+        ) : (
+          <Animated.View style={[dec.focusCardWrap, {
+            opacity:   focusCardAnim,
+            transform: [{ translateY: focusCardAnim.interpolate({ inputRange: [0, 1], outputRange: [18, 0] }) },
+                        { scale: focusCardAnim.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1.0] }) }],
+          }]}>
+            {/* breathing gold glow shell */}
+            <Animated.View style={[dec.focusGlowShell, { opacity: activeGlow }]} />
+
+            <Animated.View style={[dec.focusCard, {
+              opacity:   focusOpacity,
+              transform: [{ translateY: focusSlide }],
+            }]}>
+              {/* ── focus card header: label left + mini pill nav right ── */}
+              <View style={dec.focusTopRow}>
+                {/* left: morceau label */}
+                <View style={dec.focusLabelBadge}>
+                  <Text style={dec.focusLabelText}>
+                    MORCEAU {focusIdx + 1}{total > 1 ? ` SUR ${total}` : ''}
+                  </Text>
+                </View>
+
+                {/* right: mini pills (hidden for single-chunk ayats) */}
+                {total > 1 ? (
+                  <View style={dec.miniNav}>
+                    {Array.from({ length: total }).map((_, i) => {
+                      const isActive  = i === focusIdx;
+                      const isVisited = i < visitedCount;
+                      return (
+                        <Pressable
+                          key={i}
+                          style={({ pressed }) => [
+                            dec.miniPill,
+                            isActive   && dec.miniPillActive,
+                            !isActive && isVisited  && dec.miniPillVisited,
+                            !isVisited && dec.miniPillLocked,
+                            pressed && isVisited && !isActive && dec.miniPillPressed,
+                          ]}
+                          onPress={() => handlePillPress(i)}
+                          disabled={!isVisited}
+                          accessibilityLabel={`Morceau ${i + 1}`}
+                          hitSlop={6}
+                        >
+                          <Text style={[
+                            dec.miniPillText,
+                            isActive  && dec.miniPillTextActive,
+                            !isActive && isVisited  && dec.miniPillTextVisited,
+                            !isVisited && dec.miniPillTextLocked,
+                          ]}>
+                            {i + 1}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ) : allVisited ? (
+                  <View style={dec.focusDoneBadge}>
+                    <Text style={dec.focusDoneText}>✓ Tous vus</Text>
+                  </View>
+                ) : null}
+              </View>
+
+              <View style={dec.focusDivider} />
+
+              {/* ── Arabic chunk — star of the card ── */}
+              <Text style={dec.focusArabic} textBreakStrategy="simple">
+                {activeChunk || '—'}
+              </Text>
+
+              {/* ── Transliteration: chunk-level if safe, full fallback otherwise ── */}
+              {activeTChunk ? (
+                <Text style={dec.focusTranslit}>{activeTChunk}</Text>
+              ) : showFullTranslitFallback ? (
+                <View style={dec.focusTranslitFallbackWrap}>
+                  <Text style={dec.focusTranslitFallbackLabel}>Translittération de l'ayat</Text>
+                  <Text style={dec.focusTranslit}>{ayat!.transliteration}</Text>
+                </View>
+              ) : null}
+
+              <View style={dec.focusDivider} />
+
+              {/* ── Sens de l'ayat (full translation, always) ── */}
+              {ayat?.translationFr ? (
+                <View style={dec.sensWrap}>
+                  <Text style={dec.sensLabel}>SENS DE L'AYAT</Text>
+                  <Text style={dec.sensText}>{ayat.translationFr}</Text>
+                </View>
+              ) : null}
+
+              <View style={dec.focusSubDivider} />
+
+              {/* ── Audio button ── */}
+              <Animated.View style={{ transform: [{ scale: audioPulse }] }}>
+                <Pressable
+                  style={({ pressed }) => [dec.audioBtn, pressed && dec.audioBtnPressed]}
+                  onPress={() => { hapticMedium(); }}
+                  accessibilityLabel="Écouter l'ayat"
+                >
+                  <View style={dec.audioBtnInner}>
+                    <View style={dec.audioIcon}>
+                      <View style={dec.audioBar1} />
+                      <View style={dec.audioBar2} />
+                      <View style={dec.audioBar3} />
+                    </View>
+                    <Text style={dec.audioBtnText}>Écouter l'ayat</Text>
+                  </View>
+                </Pressable>
+              </Animated.View>
+
+            </Animated.View>
+          </Animated.View>
+        )}
+
+
+        {/* ── COMPACT GUIDE LINE ── */}
+        <Animated.View style={[dec.guideLine, {
+          opacity: coachAnim,
+          transform: [{ translateY: coachAnim.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }],
+        }]}>
+          <View style={dec.guideAccent} />
+          <Text style={[dec.guideText, allVisited && dec.guideTextDone]}>
+            {allVisited
+              ? 'Parfait — tous les morceaux sont vus. Continue.'
+              : 'Lis ce morceau doucement. Aide-toi de l\u2019audio et de la translittération.'}
+          </Text>
+        </Animated.View>
+
+        <View style={{ height: 80 }} />
+      </ScrollView>
+
+      {/* ── STICKY CTA ── */}
+      <View style={dec.stickyBottom}>
+        <Pressable
+          style={({ pressed }) => [
+            dec.cta,
+            allVisited && dec.ctaUnlocked,
+            pressed && dec.ctaPressed,
+          ]}
+          onPress={goNext}
+        >
+          <Text style={dec.ctaText}>{ctaLabel}</Text>
+          {allVisited ? (
+            <Animated.View pointerEvents="none" style={[dec.ctaShine, { left: ctaShineX }]} />
+          ) : null}
+        </Pressable>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+const dec = StyleSheet.create({
+  safe:   { flex: 1, backgroundColor: colors.background },
+  scroll: { paddingHorizontal: spacing.lg, paddingTop: 4, paddingBottom: 0 },
+
+  // ── background ──
+  halo:    { position: 'absolute', top: -70, right: -90, width: 300, height: 300, borderRadius: 150, backgroundColor: 'rgba(22,48,38,0.10)', zIndex: 0 },
+  ornLine: { position: 'absolute', top: 220, left: spacing.lg, right: spacing.lg, height: 1, backgroundColor: 'rgba(184,150,46,0.10)', zIndex: 0 },
+
+  // ── header ──
+  header:        { marginBottom: 6 },
+  backBtn:       { marginBottom: 5, alignSelf: 'flex-start' },
+  backBtnText:   { fontSize: 22, color: colors.muted, fontWeight: '300', lineHeight: 24 },
+  headerChip:    { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', backgroundColor: 'rgba(22,48,38,0.10)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(22,48,38,0.22)', marginBottom: 4 },
+  headerChipDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: colors.primary, marginRight: 5 },
+  headerChipText:{ fontSize: 10, fontWeight: '700', color: colors.primary, letterSpacing: 1.4 },
+  headerTitle:   { fontSize: 19, fontWeight: '800', color: colors.primary, marginBottom: 1 },
+  headerSub:     { fontSize: 12, color: colors.muted, lineHeight: 18 },
+
+  // ── compact reference card ──
+  refCardWrap: { marginBottom: 6 },
+  refCard:     {
+    backgroundColor: '#FEFCF5',
+    borderRadius: 16, borderWidth: 1, borderColor: 'rgba(184,150,46,0.25)',
+    paddingHorizontal: spacing.md, paddingVertical: 8,
+    shadowColor: colors.gold, shadowOpacity: 0.07, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2,
+  },
+  refTopRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
+  refBadge:     { backgroundColor: 'rgba(22,48,38,0.08)', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(22,48,38,0.15)' },
+  refBadgeText: { fontSize: 8, fontWeight: '700', color: colors.primary, letterSpacing: 1.2, textTransform: 'uppercase' },
+  refNumBadge:  { backgroundColor: 'rgba(184,150,46,0.12)', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(184,150,46,0.28)' },
+  refNumText:   { fontSize: 9, fontWeight: '800', color: colors.gold, letterSpacing: 0.4 },
+  refArabic:    { fontSize: 17, color: colors.primary, textAlign: 'right', lineHeight: 29, fontWeight: '600', writingDirection: 'rtl', letterSpacing: 1.0, marginBottom: 3 },
+  refTranslit:  { fontSize: 10, color: colors.muted, fontStyle: 'italic', lineHeight: 15, marginBottom: 2 },
+  refTranslation:{ fontSize: 10, color: colors.disabled, lineHeight: 15 },
+  refFallback:  { fontSize: 12, color: colors.muted, fontStyle: 'italic' },
+
+  // ── mini pill nav (inside focus card header) ──
+  miniNav:          { flexDirection: 'row', gap: 5, alignItems: 'center' },
+  miniPill:         {
+    width: 24, height: 24, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(184,150,46,0.08)',
+    borderWidth: 1, borderColor: 'rgba(184,150,46,0.25)',
+  },
+  miniPillActive:   {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+    shadowColor: colors.primary, shadowOpacity: 0.28, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 3,
+  },
+  miniPillVisited:  { backgroundColor: '#FEFCF5', borderColor: 'rgba(22,48,38,0.30)' },
+  miniPillLocked:   { backgroundColor: 'rgba(184,150,46,0.04)', borderColor: 'rgba(184,150,46,0.12)', opacity: 0.45 },
+  miniPillPressed:  { opacity: 0.60, transform: [{ scale: 0.88 }] },
+  miniPillText:     { fontSize: 10, fontWeight: '800', color: colors.muted },
+  miniPillTextActive:  { color: '#FFFFFF' },
+  miniPillTextVisited: { color: colors.primary },
+  miniPillTextLocked:  { color: 'rgba(184,150,46,0.45)' },
+
+  // ── focus chunk card ──
+  focusCardWrap:   { position: 'relative', marginBottom: 8 },
+  focusGlowShell:  {
+    position: 'absolute', top: -3, left: -3, right: -3, bottom: -3,
+    borderRadius: 28, borderWidth: 2.5, borderColor: colors.gold, zIndex: 0,
+  },
+  focusCard:       {
+    backgroundColor: '#FEFCF5',
+    borderRadius: 24, borderWidth: 1.5, borderColor: 'rgba(184,150,46,0.38)',
+    paddingHorizontal: spacing.lg, paddingTop: 14, paddingBottom: 12,
+    shadowColor: colors.gold, shadowOpacity: 0.18, shadowRadius: 18, shadowOffset: { width: 0, height: 5 }, elevation: 5,
+    zIndex: 1,
+  },
+  focusTopRow:     { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 },
+  focusLabelBadge: { backgroundColor: 'rgba(22,48,38,0.10)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(22,48,38,0.20)' },
+  focusLabelText:  { fontSize: 10, fontWeight: '800', color: colors.primary, letterSpacing: 1.2 },
+  focusDoneBadge:  { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(45,106,79,0.10)', borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(45,106,79,0.25)' },
+  focusDoneText:   { fontSize: 9, fontWeight: '800', color: colors.success, letterSpacing: 0.5 },
+  focusDivider:    { height: 1, backgroundColor: 'rgba(184,150,46,0.18)', marginVertical: 8 },
+  focusSubDivider: { height: 1, backgroundColor: 'rgba(184,150,46,0.10)', marginVertical: 7 },
+
+  // Arabic chunk — dominant
+  focusArabic:  {
+    fontSize: 32, color: colors.primary, textAlign: 'right',
+    lineHeight: 52, fontWeight: '600', writingDirection: 'rtl',
+    letterSpacing: 1.5, marginBottom: 4,
+  },
+
+  // Transliteration
+  focusTranslit:              { fontSize: 13, fontWeight: '500', color: colors.muted, lineHeight: 21, fontStyle: 'italic', marginBottom: 3 },
+  focusTranslitFallbackWrap:  { marginBottom: 4 },
+  focusTranslitFallbackLabel: { fontSize: 9, fontWeight: '700', color: colors.gold, letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 3 },
+
+  // Sens de l'ayat
+  sensWrap:  { marginBottom: 2 },
+  sensLabel: { fontSize: 9, fontWeight: '700', color: colors.muted, letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 3 },
+  sensText:  { fontSize: 12, color: colors.muted, lineHeight: 20, fontStyle: 'italic' },
+
+  // Audio button
+  audioBtn:        {
+    backgroundColor: colors.surface,
+    borderRadius: 12, borderWidth: 1.5, borderColor: 'rgba(22,48,38,0.18)',
+    paddingVertical: 9, paddingHorizontal: spacing.md,
+    shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 1,
+  },
+  audioBtnPressed: { opacity: 0.80, transform: [{ scale: 0.97 }] },
+  audioBtnInner:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  audioIcon:       { flexDirection: 'row', alignItems: 'flex-end', gap: 2.5, height: 16 },
+  audioBar1:       { width: 2.5, height: 9,  borderRadius: 2, backgroundColor: colors.primary },
+  audioBar2:       { width: 2.5, height: 16, borderRadius: 2, backgroundColor: colors.primary },
+  audioBar3:       { width: 2.5, height: 11, borderRadius: 2, backgroundColor: colors.primary },
+  audioBtnText:    { fontSize: 12, fontWeight: '700', color: colors.primary, letterSpacing: 0.3 },
+
+  // fallback
+  focusFallback:     { backgroundColor: colors.surface, borderRadius: 18, padding: spacing.lg, borderWidth: 1, borderColor: colors.border, marginBottom: spacing.md, alignItems: 'center' },
+  focusFallbackText: { fontSize: 13, color: colors.muted, fontStyle: 'italic', textAlign: 'center' },
+
+  // ── compact guide line ──
+  guideLine:    { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  guideAccent:  { width: 3, height: 28, borderRadius: 2, backgroundColor: colors.primary, opacity: 0.60 },
+  guideText:    { flex: 1, fontSize: 12, color: colors.muted, lineHeight: 19, fontStyle: 'italic' },
+  guideTextDone:{ color: colors.primary, fontWeight: '600', fontStyle: 'normal' },
+
+  // ── sticky CTA ──
+  stickyBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: 'rgba(184,150,46,0.15)', paddingHorizontal: spacing.lg, paddingTop: 10, paddingBottom: spacing.xl },
+  cta:          { backgroundColor: colors.primary, borderRadius: 16, height: 58, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', shadowColor: colors.primary, shadowOpacity: 0.40, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 6 },
+  ctaUnlocked:  { shadowOpacity: 0.50 },
+  ctaPressed:   { opacity: 0.82, transform: [{ scale: 0.975 }] },
+  ctaText:      { color: '#FFFFFF', fontSize: 17, fontWeight: '800', letterSpacing: 0.5 },
+  ctaShine:     { position: 'absolute', top: 0, width: '35%', height: '100%', backgroundColor: 'rgba(255,255,255,0.11)', transform: [{ skewX: '-20deg' }] },
 });
 
 // ─── Coming-next placeholder ───────────────────────────────────────────────────
@@ -655,11 +1306,11 @@ function ComingNextScreen({ onBack, onQuit }: { onBack: () => void; onQuit: () =
         <Animated.View style={[cn.header, { opacity: fadeAnim, transform: [{ translateY: fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [18, 0] }) }] }]}>
           <View style={cn.headerChip}>
             <View style={cn.headerChipDot} />
-            <Text style={cn.headerChipText}>PROCHAINE ÉTAPE</Text>
+            <Text style={cn.headerChipText}>ÉTAPE 4 · RÉPÉTITION GUIDÉE</Text>
           </View>
           <Text style={cn.headerTitle}>Prochaine étape</Text>
           <Text style={cn.headerSub}>
-            Ensuite, Zainly affichera le premier ayat et te guidera pour le découvrir doucement.
+            On va maintenant répéter chaque morceau pour l'ancrer vraiment.
           </Text>
         </Animated.View>
 
@@ -671,11 +1322,11 @@ function ComingNextScreen({ onBack, onQuit }: { onBack: () => void; onQuit: () =
           <View style={cn.previewAccent} />
           <View style={cn.previewBody}>
             <View style={cn.previewChip}>
-              <Text style={cn.previewChipText}>Étape suivante</Text>
+              <Text style={cn.previewChipText}>Étape 4 · Répétition guidée</Text>
             </View>
-            <Text style={cn.previewTitle}>Découvrir l'ayat</Text>
+            <Text style={cn.previewTitle}>Répétition guidée</Text>
             <Text style={cn.previewDesc}>
-              Zainly te montrera l'ayat et t'accompagnera mot par mot.
+              On va maintenant répéter chaque morceau pour l'ancrer vraiment. Morceau par morceau, sans se presser.
             </Text>
             {/* step dots preview */}
             <View style={cn.stepDots}>
@@ -697,8 +1348,8 @@ function ComingNextScreen({ onBack, onQuit }: { onBack: () => void; onQuit: () =
           <View style={cn.noteInner}>
             <Text style={cn.noteQuote}>"</Text>
             <Text style={cn.noteText}>
-              Cette étape sera construite prochainement.{'\n'}
-              Ta mission du jour est bien enregistrée.
+              La répétition guidée arrive prochainement.{'\n'}
+              Tu as bien découpé l'ayat. Continue demain.
             </Text>
           </View>
         </Animated.View>
@@ -814,7 +1465,9 @@ export default function SessionScreen() {
   }), [plan.data, progress.data, reviews.data, today]);
 
   // ── internal phase ──
-  const [phase, setPhase] = useState<'mission' | 'discovery' | 'comingNext'>('mission');
+  const [phase, setPhase] = useState<'mission' | 'discovery' | 'decoupage' | 'comingNext'>('mission');
+  // ayat passed from discovery → decoupage (avoids refetch)
+  const [discoveredAyat, setDiscoveredAyat] = useState<QuranAyahContent | null>(null);
 
   // ── animation refs ──
   const mountedRef  = useRef(true);
@@ -961,16 +1614,29 @@ export default function SessionScreen() {
         memStart={prog.memStart!}
         memEnd={prog.memEnd!}
         onBack={() => { setPhase('mission'); }}
+        onNext={(loadedAyat) => { setDiscoveredAyat(loadedAyat); setPhase('decoupage'); }}
+      />
+    );
+  }
+
+  // ── decoupage step 3 ──
+  if (phase === 'decoupage') {
+    return (
+      <DecoupageScreen
+        surahNumber={prog.currentSurah!}
+        ayatNumber={prog.memStart!}
+        ayat={discoveredAyat}
+        onBack={() => { setPhase('discovery'); }}
         onNext={() => { setPhase('comingNext'); }}
       />
     );
   }
 
-  // ── coming-next placeholder ──
+  // ── coming-next step 4 placeholder ──
   if (phase === 'comingNext') {
     return (
       <ComingNextScreen
-        onBack={() => { setPhase('discovery'); }}
+        onBack={() => { setPhase('decoupage'); }}
         onQuit={goDashboard}
       />
     );
