@@ -23,6 +23,9 @@ import { spacing } from '@/theme/spacing';
 import { hapticLight, hapticMedium, hapticSelection } from '@/utils/haptics';
 import { getQuranAyahRange } from '@/core/quranContent';
 import type { QuranAyahContent } from '@/core/quranContent';
+import { getAyatAudioUrl } from '@/core/quranAudio';
+import { useAyatAudio } from '@/hooks/useAyatAudio';
+import { usePassageAudio } from '@/hooks/usePassageAudio';
 import { useAuthStore }      from '@/store/authStore';
 import { usePlan }           from '@/hooks/usePlan';
 import { useProgress }       from '@/hooks/useProgress';
@@ -313,6 +316,127 @@ const ss = StyleSheet.create({
   btnLabel: { color: '#FFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.4 },
 });
 
+// ─── Shared: AyatAudioControl ─────────────────────────────────────────────────
+// Compact, premium audio button usable in Steps 3, 4, 5 compare.
+// Does NOT increment any learning counter unless onCompleted is provided.
+
+type AyatAudioControlProps = {
+  surahNumber:  number;
+  ayatNumber:   number;
+  label?:       string;         // default: "Écouter l'ayat"
+  onCompleted?: () => void;     // called after natural playback completion
+  compact?:     boolean;        // tighter padding for inline use
+};
+
+function AyatAudioControl({ surahNumber, ayatNumber, label, onCompleted, compact }: AyatAudioControlProps) {
+  const url    = getAyatAudioUrl({ surahNumber, ayahNumber: ayatNumber });
+  const onDone = useCallback(() => { if (onCompleted) onCompleted(); }, [onCompleted]);
+  const audio  = useAyatAudio(url, onDone);
+
+  const bar1 = useRef(new Animated.Value(0.4)).current;
+  const bar2 = useRef(new Animated.Value(0.7)).current;
+  const bar3 = useRef(new Animated.Value(0.5)).current;
+  const barsLoop = useRef<Animated.CompositeAnimation | null>(null);
+  const btnScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (audio.isPlaying) {
+      barsLoop.current = Animated.loop(Animated.parallel([
+        Animated.sequence([
+          Animated.timing(bar1, { toValue: 1.0, duration: 330, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+          Animated.timing(bar1, { toValue: 0.3, duration: 330, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        ]),
+        Animated.sequence([
+          Animated.timing(bar2, { toValue: 0.3, duration: 270, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+          Animated.timing(bar2, { toValue: 1.0, duration: 380, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        ]),
+        Animated.sequence([
+          Animated.timing(bar3, { toValue: 1.0, duration: 410, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+          Animated.timing(bar3, { toValue: 0.4, duration: 300, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        ]),
+      ]));
+      barsLoop.current.start();
+    } else {
+      barsLoop.current?.stop();
+      bar1.setValue(0.4);
+      bar2.setValue(0.7);
+      bar3.setValue(0.5);
+    }
+    return () => { barsLoop.current?.stop(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audio.isPlaying]);
+
+  const handlePress = useCallback(() => {
+    hapticLight();
+    audio.play();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audio.play]);
+
+  const btnLabel = audio.isLoading
+    ? 'Chargement…'
+    : audio.isPlaying
+      ? 'Lecture en cours…'
+      : label ?? "Écouter l'ayat";
+
+  return (
+    <View>
+      <Animated.View style={{ transform: [{ scale: btnScale }] }}>
+        <Pressable
+          style={({ pressed }) => [
+            aco.btn,
+            compact && aco.btnCompact,
+            audio.isPlaying && aco.btnPlaying,
+            pressed && !audio.isLoading && aco.btnPressed,
+          ]}
+          onPress={handlePress}
+          disabled={audio.isLoading}
+          accessibilityLabel={btnLabel}
+        >
+          <View style={aco.inner}>
+            {audio.isLoading ? (
+              <Text style={aco.loadingDots}>···</Text>
+            ) : (
+              <View style={aco.icon}>
+                <Animated.View style={[aco.bar1, { transform: [{ scaleY: bar1 }] }]} />
+                <Animated.View style={[aco.bar2, { transform: [{ scaleY: bar2 }] }]} />
+                <Animated.View style={[aco.bar3, { transform: [{ scaleY: bar3 }] }]} />
+              </View>
+            )}
+            <Text style={[aco.label, audio.isPlaying && aco.labelPlaying]}>{btnLabel}</Text>
+          </View>
+        </Pressable>
+      </Animated.View>
+      {audio.hasError ? (
+        <View style={aco.errorRow}>
+          <Text style={aco.errorText}>{audio.errorMessage}</Text>
+          <Pressable onPress={handlePress} style={aco.retryBtn} hitSlop={8}>
+            <Text style={aco.retryText}>Réessayer</Text>
+          </Pressable>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const aco = StyleSheet.create({
+  btn:         { backgroundColor: colors.surface, borderRadius: 12, borderWidth: 1.5, borderColor: 'rgba(22,48,38,0.18)', paddingVertical: 9, paddingHorizontal: spacing.md, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  btnCompact:  { paddingVertical: 7, paddingHorizontal: 12 },
+  btnPlaying:  { backgroundColor: 'rgba(22,48,38,0.07)', borderColor: colors.primary },
+  btnPressed:  { opacity: 0.80, transform: [{ scale: 0.97 }] },
+  inner:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  icon:        { flexDirection: 'row', alignItems: 'flex-end', gap: 2.5, height: 16 },
+  bar1:        { width: 2.5, height: 9,  borderRadius: 2, backgroundColor: colors.primary },
+  bar2:        { width: 2.5, height: 16, borderRadius: 2, backgroundColor: colors.primary },
+  bar3:        { width: 2.5, height: 11, borderRadius: 2, backgroundColor: colors.primary },
+  label:       { fontSize: 12, fontWeight: '700', color: colors.primary, letterSpacing: 0.3 },
+  labelPlaying:{ color: colors.primary, opacity: 0.85 },
+  loadingDots: { fontSize: 18, color: colors.muted, letterSpacing: 4, lineHeight: 20 },
+  errorRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 5 },
+  errorText:   { fontSize: 11, color: colors.muted, flex: 1 },
+  retryBtn:    { paddingHorizontal: 10, paddingVertical: 3 },
+  retryText:   { fontSize: 11, fontWeight: '700', color: colors.primary, textDecorationLine: 'underline' },
+});
+
 // ─── Step 2: Découverte de l'ayat ─────────────────────────────────────────────
 
 interface DiscoveryScreenProps {
@@ -354,6 +478,20 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
   const [listenCount, setListenCount] = useState(0);
   const unlocked = listenCount >= MIN_LISTENS;
 
+  // ── audio ──
+  const audioUrl = getAyatAudioUrl({ surahNumber, ayahNumber: memStart });
+  const onAudioFinish = useCallback(() => {
+    if (!mountedRef.current) return;
+    setListenCount(prev => prev + 1);
+    hapticLight();
+    Animated.sequence([
+      Animated.timing(countPulse, { toValue: 1.18, duration: 120, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(countPulse, { toValue: 1.00, duration: 200, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+    ]).start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const audio = useAyatAudio(audioUrl, onAudioFinish);
+
   // ── animation refs ──
   const screenAnim  = useRef(new Animated.Value(0)).current;
   const cardAnim    = useRef(new Animated.Value(0)).current;
@@ -368,6 +506,11 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
   const haloOpacity = useRef(new Animated.Value(0.10)).current;
   const haloLoop    = useRef<Animated.CompositeAnimation | null>(null);
   const countPulse  = useRef(new Animated.Value(1)).current;
+  // animated bars for playing state (3 bars)
+  const bar1Anim = useRef(new Animated.Value(0.4)).current;
+  const bar2Anim = useRef(new Animated.Value(0.7)).current;
+  const bar3Anim = useRef(new Animated.Value(0.5)).current;
+  const barsLoop = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -414,19 +557,43 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
       haloLoop.current?.stop();
       audioPulseLoop.current?.stop();
       ctaShineLoop.current?.stop();
+      barsLoop.current?.stop();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── animated bars: run while audio is playing ──
+  useEffect(() => {
+    if (audio.isPlaying) {
+      barsLoop.current = Animated.loop(Animated.parallel([
+        Animated.sequence([
+          Animated.timing(bar1Anim, { toValue: 1.0, duration: 320, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+          Animated.timing(bar1Anim, { toValue: 0.3, duration: 320, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        ]),
+        Animated.sequence([
+          Animated.timing(bar2Anim, { toValue: 0.3, duration: 260, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+          Animated.timing(bar2Anim, { toValue: 1.0, duration: 380, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        ]),
+        Animated.sequence([
+          Animated.timing(bar3Anim, { toValue: 1.0, duration: 400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+          Animated.timing(bar3Anim, { toValue: 0.4, duration: 290, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        ]),
+      ]));
+      barsLoop.current.start();
+    } else {
+      barsLoop.current?.stop();
+      bar1Anim.setValue(0.4);
+      bar2Anim.setValue(0.7);
+      bar3Anim.setValue(0.5);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audio.isPlaying]);
+
   const onAudioPress = useCallback(() => {
     hapticMedium();
-    setListenCount(prev => prev + 1);
-    Animated.sequence([
-      Animated.timing(countPulse, { toValue: 1.18, duration: 120, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-      Animated.timing(countPulse, { toValue: 1.00, duration: 200, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-    ]).start();
+    audio.play();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [audio.play]);
 
   const ctaLabel = !unlocked
     ? (listenCount === 0 ? 'Écoute 3 fois pour continuer' : listenCount === MIN_LISTENS - 1 ? 'Encore 1 écoute' : `Encore ${MIN_LISTENS - listenCount} écoutes`)
@@ -550,25 +717,58 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
                 )}
               </Animated.View>
 
+              {/* reciter label */}
+              <Text style={ds.reciterLabel}>Récitateur : Al-Husary</Text>
+
               {/* audio button */}
               <Animated.View style={{ transform: [{ scale: audioPulse }] }}>
                 <Pressable
-                  style={({ pressed }) => [ds.audioBtn, pressed && ds.audioBtnPressed]}
+                  style={({ pressed }) => [
+                    ds.audioBtn,
+                    audio.isPlaying && ds.audioBtnPlaying,
+                    pressed && !audio.isLoading && ds.audioBtnPressed,
+                  ]}
                   onPress={onAudioPress}
-                  accessibilityLabel={unlocked ? "Réécouter l'ayat" : "Écouter l'ayat"}
+                  disabled={audio.isLoading}
+                  accessibilityLabel={
+                    audio.isLoading ? 'Chargement…'
+                    : audio.isPlaying ? 'Lecture en cours…'
+                    : listenCount > 0 ? "Réécouter l'ayat"
+                    : "Écouter l'ayat"
+                  }
                 >
                   <View style={ds.audioBtnInner}>
-                    <View style={ds.audioIcon}>
-                      <View style={ds.audioIconBar1} />
-                      <View style={ds.audioIconBar2} />
-                      <View style={ds.audioIconBar3} />
-                    </View>
-                    <Text style={ds.audioBtnText}>
-                      {unlocked ? "Réécouter l'ayat" : "Écouter l'ayat"}
+                    {audio.isLoading ? (
+                      <Text style={ds.audioBtnLoadingDots}>···</Text>
+                    ) : (
+                      <View style={ds.audioIcon}>
+                        <Animated.View style={[ds.audioIconBar1, { transform: [{ scaleY: bar1Anim }] }]} />
+                        <Animated.View style={[ds.audioIconBar2, { transform: [{ scaleY: bar2Anim }] }]} />
+                        <Animated.View style={[ds.audioIconBar3, { transform: [{ scaleY: bar3Anim }] }]} />
+                      </View>
+                    )}
+                    <Text style={[ds.audioBtnText, audio.isPlaying && ds.audioBtnTextPlaying]}>
+                      {audio.isLoading
+                        ? 'Chargement…'
+                        : audio.isPlaying
+                          ? 'Lecture en cours…'
+                          : listenCount > 0
+                            ? "Réécouter l'ayat"
+                            : "Écouter l'ayat"}
                     </Text>
                   </View>
                 </Pressable>
               </Animated.View>
+
+              {/* error state */}
+              {audio.hasError ? (
+                <View style={ds.audioError}>
+                  <Text style={ds.audioErrorText}>{audio.errorMessage}</Text>
+                  <Pressable onPress={onAudioPress} style={ds.audioRetry}>
+                    <Text style={ds.audioRetryText}>Réessayer</Text>
+                  </Pressable>
+                </View>
+              ) : null}
 
               {/* helper text after unlock */}
               {unlocked ? (
@@ -713,6 +913,20 @@ const ds = StyleSheet.create({
   minBadgeDot:      { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.success },
   minBadgeText:     { fontSize: 11, fontWeight: '700', color: colors.primary, letterSpacing: 0.6 },
   listenHelper:     { fontSize: 12, color: colors.muted, textAlign: 'center', fontStyle: 'italic', marginTop: 2 },
+
+  // reciter label
+  reciterLabel:     { fontSize: 10, color: colors.muted, textAlign: 'center', fontWeight: '500', letterSpacing: 0.5, opacity: 0.70 },
+
+  // audio button states
+  audioBtnPlaying:      { backgroundColor: 'rgba(22,48,38,0.10)', borderColor: colors.primary, borderWidth: 1.5 },
+  audioBtnTextPlaying:  { color: colors.primary },
+  audioBtnLoadingDots:  { fontSize: 20, color: colors.muted, letterSpacing: 4, lineHeight: 22 },
+
+  // audio error inline
+  audioError:     { backgroundColor: 'rgba(184,150,46,0.08)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(184,150,46,0.22)', paddingHorizontal: 12, paddingVertical: 8, alignItems: 'center', gap: 6 },
+  audioErrorText: { fontSize: 12, color: colors.muted, textAlign: 'center', lineHeight: 18 },
+  audioRetry:     { paddingHorizontal: 12, paddingVertical: 4 },
+  audioRetryText: { fontSize: 12, color: colors.primary, fontWeight: '700', textDecorationLine: 'underline' },
 });
 
 // ─── Step 3: Découpage (focus mode) ──────────────────────────────────────────
@@ -725,7 +939,7 @@ interface DecoupageScreenProps {
   onNext:      () => void;
 }
 
-function DecoupageScreen({ ayatNumber, ayat, onBack, onNext }: DecoupageScreenProps) {
+function DecoupageScreen({ surahNumber, ayatNumber, ayat, onBack, onNext }: DecoupageScreenProps) {
   const mountedRef = useRef(true);
 
   // ── compute chunks once ──
@@ -756,8 +970,6 @@ function DecoupageScreen({ ayatNumber, ayat, onBack, onNext }: DecoupageScreenPr
   const ctaShineLoop = useRef<Animated.CompositeAnimation | null>(null);
   const activeGlow   = useRef(new Animated.Value(0.5)).current;
   const activeGlowLoop = useRef<Animated.CompositeAnimation | null>(null);
-  const audioPulse   = useRef(new Animated.Value(1)).current;
-  const audioPulseLoop = useRef<Animated.CompositeAnimation | null>(null);
   // pill fill anims — one per chunk (0=locked/empty, 1=visited fill)
   const pillAnims    = useRef(Array.from({ length: 12 }, () => new Animated.Value(0))).current;
   // per-transition: out then in
@@ -785,17 +997,9 @@ function DecoupageScreen({ ayatNumber, ayat, onBack, onNext }: DecoupageScreenPr
     ]));
     activeGlowLoop.current.start();
 
-    // audio button subtle pulse
-    audioPulseLoop.current = Animated.loop(Animated.sequence([
-      Animated.timing(audioPulse, { toValue: 1.04, duration: 1600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-      Animated.timing(audioPulse, { toValue: 1.00, duration: 1600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-    ]));
-    audioPulseLoop.current.start();
-
     return () => {
       mountedRef.current = false;
       activeGlowLoop.current?.stop();
-      audioPulseLoop.current?.stop();
       ctaShineLoop.current?.stop();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1076,23 +1280,12 @@ function DecoupageScreen({ ayatNumber, ayat, onBack, onNext }: DecoupageScreenPr
 
               <View style={dec.focusSubDivider} />
 
-              {/* ── Audio button ── */}
-              <Animated.View style={{ transform: [{ scale: audioPulse }] }}>
-                <Pressable
-                  style={({ pressed }) => [dec.audioBtn, pressed && dec.audioBtnPressed]}
-                  onPress={() => { hapticMedium(); }}
-                  accessibilityLabel="Écouter l'ayat"
-                >
-                  <View style={dec.audioBtnInner}>
-                    <View style={dec.audioIcon}>
-                      <View style={dec.audioBar1} />
-                      <View style={dec.audioBar2} />
-                      <View style={dec.audioBar3} />
-                    </View>
-                    <Text style={dec.audioBtnText}>Écouter l'ayat</Text>
-                  </View>
-                </Pressable>
-              </Animated.View>
+              {/* ── Audio button — full ayat, no listen counter ── */}
+              <AyatAudioControl
+                surahNumber={surahNumber}
+                ayatNumber={ayatNumber}
+                label="Écouter l'ayat complet"
+              />
 
             </Animated.View>
           </Animated.View>
@@ -1269,13 +1462,14 @@ const dec = StyleSheet.create({
 const MIN_REPS = 3;
 
 type RepetitionScreenProps = {
+  surahNumber: number;
   ayatNumber: number;
   ayat: QuranAyahContent | null;
   onBack: () => void;
   onNext: () => void;
 };
 
-function RepetitionScreen({ ayatNumber, ayat, onBack, onNext }: RepetitionScreenProps) {
+function RepetitionScreen({ surahNumber, ayatNumber, ayat, onBack, onNext }: RepetitionScreenProps) {
   const mountedRef = useRef(true);
 
   // ── chunks ──
@@ -1315,8 +1509,6 @@ function RepetitionScreen({ ayatNumber, ayat, onBack, onNext }: RepetitionScreen
   const guideAnim     = useRef(new Animated.Value(0)).current;
   const ctaShine      = useRef(new Animated.Value(-1)).current;
   const ctaShineLoop  = useRef<Animated.CompositeAnimation | null>(null);
-  const audioPulse    = useRef(new Animated.Value(1)).current;
-  const audioPulseLoop= useRef<Animated.CompositeAnimation | null>(null);
   const activeGlow    = useRef(new Animated.Value(0.5)).current;
   const activeGlowLoop= useRef<Animated.CompositeAnimation | null>(null);
   // per-chunk slide/fade
@@ -1349,16 +1541,9 @@ function RepetitionScreen({ ayatNumber, ayat, onBack, onNext }: RepetitionScreen
     ]));
     activeGlowLoop.current.start();
 
-    audioPulseLoop.current = Animated.loop(Animated.sequence([
-      Animated.timing(audioPulse, { toValue: 1.03, duration: 1700, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-      Animated.timing(audioPulse, { toValue: 1.00, duration: 1700, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-    ]));
-    audioPulseLoop.current.start();
-
     return () => {
       mountedRef.current = false;
       activeGlowLoop.current?.stop();
-      audioPulseLoop.current?.stop();
       ctaShineLoop.current?.stop();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1649,23 +1834,12 @@ function RepetitionScreen({ ayatNumber, ayat, onBack, onNext }: RepetitionScreen
 
               <View style={rep.subDivider} />
 
-              {/* ── Audio button ── */}
-              <Animated.View style={{ transform: [{ scale: audioPulse }] }}>
-                <Pressable
-                  style={({ pressed }) => [rep.audioBtn, pressed && rep.audioBtnPressed]}
-                  onPress={() => hapticMedium()}
-                  accessibilityLabel="Écouter l'ayat"
-                >
-                  <View style={rep.audioBtnInner}>
-                    <View style={rep.audioIcon}>
-                      <View style={rep.audioBar1} />
-                      <View style={rep.audioBar2} />
-                      <View style={rep.audioBar3} />
-                    </View>
-                    <Text style={rep.audioBtnText}>Écouter l'ayat</Text>
-                  </View>
-                </Pressable>
-              </Animated.View>
+              {/* ── Audio button — full ayat, no listen counter ── */}
+              <AyatAudioControl
+                surahNumber={surahNumber}
+                ayatNumber={ayatNumber}
+                label="Écouter l'ayat"
+              />
 
             </Animated.View>
           </Animated.View>
@@ -1901,6 +2075,7 @@ const rep = StyleSheet.create({
 type AyatRecitationMode = 'recite' | 'compare';
 
 type AyatRecitationScreenProps = {
+  surahNumber:       number;
   ayat:              QuranAyahContent | null;
   ayatNumber:        number;
   totalAyatsToday:   number;
@@ -1912,7 +2087,7 @@ type AyatRecitationScreenProps = {
 };
 
 function AyatRecitationScreen({
-  ayat, ayatNumber, totalAyatsToday, surahName, isLastAyat, onBack, onNextAyat, onFinalTest,
+  surahNumber, ayat, ayatNumber, totalAyatsToday, surahName, isLastAyat, onBack, onNextAyat, onFinalTest,
 }: AyatRecitationScreenProps) {
   const mountedRef = useRef(true);
 
@@ -2145,6 +2320,16 @@ function AyatRecitationScreen({
                           <Text style={ar.revealTranslation}>{ayat.translationFr}</Text>
                         </View>
                       ) : null}
+
+                      {/* audio — compare mode only, no listen counter */}
+                      <View style={ar.revealAudioRow}>
+                        <AyatAudioControl
+                          surahNumber={surahNumber}
+                          ayatNumber={ayatNumber}
+                          label="Réécouter l'ayat"
+                          compact
+                        />
+                      </View>
                     </View>
                   ) : (
                     <Text style={ar.fallbackText}>Contenu non disponible.</Text>
@@ -2250,6 +2435,7 @@ const ar = StyleSheet.create({
   revealTranslit:   { fontSize: 13, color: colors.muted, lineHeight: 20, fontStyle: 'italic' },
   revealLabel:      { fontSize: 9, fontWeight: '800', color: colors.gold, letterSpacing: 1.4, marginBottom: 4, textTransform: 'uppercase' },
   revealTranslation:{ fontSize: 12, color: colors.muted, lineHeight: 18, fontStyle: 'italic' },
+  revealAudioRow:   { marginTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(184,150,46,0.12)', paddingTop: 10 },
   fallbackText:     { fontSize: 13, color: colors.muted, fontStyle: 'italic' },
 
   // guide line
@@ -2274,6 +2460,7 @@ type FinalTestMode = 'recite' | 'compare' | 'evaluate';
 type DifficultyLevel = 'easy' | 'hesitant' | 'hard';
 
 type FinalTestScreenProps = {
+  surahNumber:       number;
   allAyats:          QuranAyahContent[];
   memStart:          number;
   memEnd:            number;
@@ -2283,7 +2470,7 @@ type FinalTestScreenProps = {
   onRestartPassage:  () => void;
 };
 
-function FinalTestScreen({ allAyats, memStart, memEnd, surahName, onBack, onComplete, onRestartPassage }: FinalTestScreenProps) {
+function FinalTestScreen({ surahNumber, allAyats, memStart, memEnd, surahName, onBack, onComplete, onRestartPassage }: FinalTestScreenProps) {
   const mountedRef = useRef(true);
 
   const totalAyats = Math.max(allAyats.length, memEnd - memStart + 1);
@@ -2296,6 +2483,19 @@ function FinalTestScreen({ allAyats, memStart, memEnd, surahName, onBack, onComp
   const guardTimer                              = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isCompleting                            = useRef(false);
   const isRestarting                            = useRef(false);
+
+  // ── passage audio (finalCompare only) ──
+  const passageAyatNumbers = useMemo(
+    () => allAyats.map(a => a.ayahNumber ?? 0).filter(n => n > 0),
+    [allAyats],
+  );
+  const passage = usePassageAudio(surahNumber, passageAyatNumbers);
+
+  // stop passage audio when navigating away from compare
+  useEffect(() => {
+    if (mode !== 'compare') passage.stop();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   // ── restart confirmation state ──
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
@@ -2572,6 +2772,55 @@ function FinalTestScreen({ allAyats, memStart, memEnd, surahName, onBack, onComp
                   <Text style={ft.modeInstruction}>
                     Vérifie si tu as oublié un mot, inversé un passage ou hésité dans l'enchaînement.
                   </Text>
+
+                  {/* ── passage audio control ── */}
+                  {passageAyatNumbers.length > 0 ? (
+                    <View style={ft.passageAudioWrap}>
+                      <Pressable
+                        style={({ pressed }) => [
+                          ft.passageAudioBtn,
+                          passage.isPlaying && ft.passageAudioBtnPlaying,
+                          pressed && !passage.isLoading && ft.passageAudioBtnPressed,
+                        ]}
+                        onPress={() => { hapticLight(); passage.play(); }}
+                        disabled={passage.isLoading || passage.isPlaying}
+                        accessibilityLabel="Écouter le passage"
+                      >
+                        <View style={ft.passageAudioInner}>
+                          {passage.isLoading ? (
+                            <Text style={ft.passageAudioDots}>···</Text>
+                          ) : (
+                            <View style={ft.passageAudioIcon}>
+                              <View style={ft.passageAudioBar1} />
+                              <View style={ft.passageAudioBar2} />
+                              <View style={ft.passageAudioBar3} />
+                            </View>
+                          )}
+                          <View>
+                            <Text style={ft.passageAudioLabel}>
+                              {passage.isLoading
+                                ? 'Chargement…'
+                                : passage.isPlaying
+                                  ? `Lecture du passage… (${passage.currentAyatIndex + 1}/${passage.totalAyats})`
+                                  : 'Écouter le passage'}
+                            </Text>
+                            {!passage.isLoading && !passage.isPlaying ? (
+                              <Text style={ft.passageAudioSub}>Récitateur : Al-Husary</Text>
+                            ) : null}
+                          </View>
+                        </View>
+                      </Pressable>
+                      {passage.hasError ? (
+                        <View style={ft.passageAudioError}>
+                          <Text style={ft.passageAudioErrorText}>{passage.errorMessage}</Text>
+                          <Pressable onPress={() => { hapticLight(); passage.play(); }} style={ft.passageAudioRetry} hitSlop={8}>
+                            <Text style={ft.passageAudioRetryText}>Réessayer</Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : null}
+
                   {allAyats.length > 0 ? allAyats.map((a, idx) => (
                     <View key={a.ayahNumber ?? idx} style={ft.compareAyatBlock}>
                       <View style={ft.compareAyatHeader}>
@@ -2857,6 +3106,24 @@ const ft = StyleSheet.create({
   confirmCancelText: { fontSize: 13, color: colors.muted, fontWeight: '600' },
   confirmOk:      { flex: 1, height: 36, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', shadowColor: colors.primary, shadowOpacity: 0.28, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
   confirmOkText:  { fontSize: 13, color: '#FFF', fontWeight: '800' },
+
+  // passage audio control (finalCompare)
+  passageAudioWrap:      { marginBottom: 14, borderRadius: 16, overflow: 'hidden', borderWidth: 1.5, borderColor: 'rgba(184,150,46,0.30)', backgroundColor: '#FEFCF5', shadowColor: colors.gold, shadowOpacity: 0.10, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
+  passageAudioBtn:       { paddingHorizontal: spacing.lg, paddingVertical: 14 },
+  passageAudioBtnPlaying:{ backgroundColor: 'rgba(22,48,38,0.06)' },
+  passageAudioBtnPressed:{ opacity: 0.80 },
+  passageAudioInner:     { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  passageAudioIcon:      { flexDirection: 'row', alignItems: 'flex-end', gap: 3, height: 18 },
+  passageAudioBar1:      { width: 3, height: 10, borderRadius: 2, backgroundColor: colors.primary },
+  passageAudioBar2:      { width: 3, height: 18, borderRadius: 2, backgroundColor: colors.primary },
+  passageAudioBar3:      { width: 3, height: 12, borderRadius: 2, backgroundColor: colors.primary },
+  passageAudioDots:      { fontSize: 20, color: colors.muted, letterSpacing: 4, lineHeight: 22 },
+  passageAudioLabel:     { fontSize: 14, fontWeight: '800', color: colors.primary, letterSpacing: 0.3 },
+  passageAudioSub:       { fontSize: 10, color: colors.muted, marginTop: 2, letterSpacing: 0.3 },
+  passageAudioError:     { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: spacing.lg, paddingBottom: 10 },
+  passageAudioErrorText: { flex: 1, fontSize: 11, color: colors.muted },
+  passageAudioRetry:     { paddingHorizontal: 10, paddingVertical: 3 },
+  passageAudioRetryText: { fontSize: 11, fontWeight: '700', color: colors.primary, textDecorationLine: 'underline' },
 });
 
 // ─── Validation placeholder ────────────────────────────────────────────────────
@@ -3239,6 +3506,7 @@ export default function SessionScreen() {
   if (phase === 'repetition') {
     return (
       <RepetitionScreen
+        surahNumber={prog.currentSurah!}
         ayatNumber={currentAyatNumber}
         ayat={discoveredAyat}
         onBack={() => { setPhase('decoupage'); }}
@@ -3251,6 +3519,7 @@ export default function SessionScreen() {
   if (phase === 'ayatRecitation') {
     return (
       <AyatRecitationScreen
+        surahNumber={prog.currentSurah!}
         ayat={discoveredAyat}
         ayatNumber={currentAyatNumber}
         totalAyatsToday={totalAyatsToday}
@@ -3267,6 +3536,7 @@ export default function SessionScreen() {
   if (phase === 'finalTest') {
     return (
       <FinalTestScreen
+        surahNumber={prog.currentSurah!}
         allAyats={allTodayAyats}
         memStart={memStart}
         memEnd={memEnd}
