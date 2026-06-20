@@ -1,4 +1,4 @@
-// ─── Session · Steps 1–2 — Ta mission du jour / Découverte ─────────────────
+﻿// ─── Session · Steps 1–2 — Ta mission du jour / Découverte ─────────────────
 // Step 1: mission overview. Step 2: ayat discovery.
 // No DB writes. No review item creation.
 // Reads only from usePlan / useProgress / useDueReviews via getTodayProgramme.
@@ -36,6 +36,8 @@ const PROGRESS_PCT           = 0.13; // Step 1 anchors at ~13%
 const DISCOVERY_PROGRESS_PCT = 0.28; // Step 2 anchors at ~28%
 const DECOUPAGE_PROGRESS_PCT   = 0.44; // Step 3 anchors at ~44%
 const REPETITION_PROGRESS_PCT  = 0.60; // Step 4 anchors at ~60%
+const RECITATION_PROGRESS_PCT  = 0.86; // Step 5 anchors at ~86%
+const FINAL_TEST_PROGRESS_PCT  = 0.96; // Step 6 anchors at ~96%
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -1893,15 +1895,976 @@ const rep = StyleSheet.create({
   ctaHintText:  { fontSize: 12, color: colors.muted, fontStyle: 'italic', letterSpacing: 0.2 },
 });
 
-// ─── Coming-next placeholder ───────────────────────────────────────────────────
 
-function ComingNextScreen({ onBack, onQuit }: { onBack: () => void; onQuit: () => void }) {
-  const mountedRef  = useRef(true);
-  const fadeAnim    = useRef(new Animated.Value(0)).current;
-  const cardAnim    = useRef(new Animated.Value(0)).current;
-  const haloScale   = useRef(new Animated.Value(1)).current;
-  const haloOpacity = useRef(new Animated.Value(0.12)).current;
-  const haloLoop    = useRef<Animated.CompositeAnimation | null>(null);
+// ─── Step 5 · Récitation de l'ayat actuel ────────────────────────────────────
+
+type AyatRecitationMode = 'recite' | 'compare';
+
+type AyatRecitationScreenProps = {
+  ayat:              QuranAyahContent | null;
+  ayatNumber:        number;
+  totalAyatsToday:   number;
+  surahName:         string;
+  isLastAyat:        boolean;
+  onBack:            () => void;
+  onNextAyat:        () => void; // move to next ayat's discovery
+  onFinalTest:       () => void; // move to Step 6
+};
+
+function AyatRecitationScreen({
+  ayat, ayatNumber, totalAyatsToday, surahName, isLastAyat, onBack, onNextAyat, onFinalTest,
+}: AyatRecitationScreenProps) {
+  const mountedRef = useRef(true);
+
+  // ── mode ──
+  const [mode, setMode]                   = useState<AyatRecitationMode>('recite');
+  const [canContinue, setCanContinue]     = useState(false);
+  const isTransitioning                   = useRef(false);
+  const guardTimer                        = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── animation refs ──
+  const mountAnim      = useRef(new Animated.Value(0)).current;
+  const cardAnim       = useRef(new Animated.Value(0)).current;
+  const guideAnim      = useRef(new Animated.Value(0)).current;
+  const ctaAnim        = useRef(new Animated.Value(0)).current;
+  const ctaShine       = useRef(new Animated.Value(-1)).current;
+  const ctaShineLoop   = useRef<Animated.CompositeAnimation | null>(null);
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const contentSlide   = useRef(new Animated.Value(0)).current;
+  const glowAnim       = useRef(new Animated.Value(0.5)).current;
+  const glowLoop       = useRef<Animated.CompositeAnimation | null>(null);
+
+  // ── entrance ──
+  useEffect(() => {
+    mountedRef.current = true;
+
+    Animated.stagger(70, [
+      Animated.timing(mountAnim, { toValue: 1, duration: 360, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(cardAnim,  { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(guideAnim, { toValue: 1, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(ctaAnim,   { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+    ]).start();
+
+    glowLoop.current = Animated.loop(Animated.sequence([
+      Animated.timing(glowAnim, { toValue: 1.0, duration: 2200, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      Animated.timing(glowAnim, { toValue: 0.5, duration: 2200, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+    ]));
+    glowLoop.current.start();
+
+    ctaShineLoop.current = Animated.loop(Animated.sequence([
+      Animated.timing(ctaShine, { toValue: 1, duration: 1400, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
+      Animated.delay(2800),
+      Animated.timing(ctaShine, { toValue: -1, duration: 0, useNativeDriver: false }),
+    ]));
+    ctaShineLoop.current.start();
+
+    // initial guard for recite mode (~6.5s)
+    guardTimer.current = setTimeout(() => {
+      if (mountedRef.current) setCanContinue(true);
+    }, 6500);
+
+    return () => {
+      mountedRef.current = false;
+      glowLoop.current?.stop();
+      ctaShineLoop.current?.stop();
+      if (guardTimer.current) clearTimeout(guardTimer.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── guard timer resets on mode change ──
+  useEffect(() => {
+    setCanContinue(false);
+    if (guardTimer.current) clearTimeout(guardTimer.current);
+    // compare mode unlocks faster — user is just checking
+    const delay = mode === 'recite' ? 6500 : 1200;
+    guardTimer.current = setTimeout(() => {
+      if (mountedRef.current) setCanContinue(true);
+    }, delay);
+    return () => {
+      if (guardTimer.current) clearTimeout(guardTimer.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
+  // ── recite → compare transition ──
+  const handleReciteCta = useCallback(() => {
+    if (!canContinue || isTransitioning.current) return;
+    isTransitioning.current = true;
+    hapticMedium();
+    Animated.parallel([
+      Animated.timing(contentOpacity, { toValue: 0, duration: 200, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(contentSlide,   { toValue: -18, duration: 200, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+    ]).start(() => {
+      if (!mountedRef.current) { isTransitioning.current = false; return; }
+      setMode('compare');
+      contentSlide.setValue(20);
+      Animated.parallel([
+        Animated.timing(contentOpacity, { toValue: 1, duration: 280, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(contentSlide,   { toValue: 0,  duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      ]).start(() => { isTransitioning.current = false; });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canContinue]);
+
+  // ── compare → next ayat or final test ──
+  const handleCompareCta = useCallback(() => {
+    if (!canContinue || isTransitioning.current) return;
+    isTransitioning.current = true;
+    hapticMedium();
+    if (isLastAyat) {
+      onFinalTest();
+    } else {
+      onNextAyat();
+    }
+  }, [canContinue, isLastAyat, onFinalTest, onNextAyat]);
+
+  const ctaShineX = ctaShine.interpolate({ inputRange: [-1, 1], outputRange: ['-60%', '160%'] });
+
+  const ayatLabel = totalAyatsToday === 1
+    ? `Ayat ${ayatNumber}`
+    : `Ayat ${ayatNumber - (ayatNumber - 1) + (ayatNumber - ayatNumber) + 1} sur ${totalAyatsToday}`;
+
+  // compute 1-based index within today's range
+  const ayatIndexLabel = `Ayat ${ayatNumber}`;
+
+  return (
+    <SafeAreaView style={ar.safe}>
+      <PremiumBackground />
+      <View style={ar.halo} pointerEvents="none" />
+      <View style={ar.ornLine} pointerEvents="none" />
+
+      <ScrollView contentContainerStyle={ar.scroll} showsVerticalScrollIndicator={false}>
+
+        {/* ── HEADER ── */}
+        <Animated.View style={[ar.header, {
+          opacity: mountAnim,
+          transform: [{ translateY: mountAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
+        }]}>
+          <Pressable style={ar.backBtn} onPress={() => { hapticLight(); onBack(); }} hitSlop={12}>
+            <Text style={ar.backBtnText}>←</Text>
+          </Pressable>
+          <View style={ar.headerChip}>
+            <View style={ar.headerChipDot} />
+            <Text style={ar.headerChipText}>
+              {mode === 'recite' ? 'ÉTAPE 5 · RÉCITATION' : 'ÉTAPE 5 · COMPARAISON'}
+            </Text>
+          </View>
+          <Text style={ar.headerTitle}>
+            {mode === 'recite' ? 'Récite cet ayat' : 'Compare avec ta récitation'}
+          </Text>
+          <Text style={ar.headerSub}>
+            {mode === 'recite'
+              ? 'Essaie de le retrouver sans regarder.'
+              : 'Regarde si tu as oublié, inversé ou hésité.'}
+          </Text>
+        </Animated.View>
+
+        {/* ── PROGRESS BAR ── */}
+        <Animated.View style={{ opacity: mountAnim }}>
+          <SessionProgressBar
+            pct={RECITATION_PROGRESS_PCT}
+            label="Étape 5 · Récitation"
+            phase="Rappel"
+          />
+        </Animated.View>
+
+        {/* ── CONTEXT CHIP ── */}
+        <Animated.View style={[ar.contextRow, { opacity: cardAnim }]}>
+          {surahName ? <Text style={ar.contextSurah}>{surahName}</Text> : null}
+          <View style={ar.contextBadge}>
+            <Text style={ar.contextBadgeText}>
+              {totalAyatsToday === 1 ? ayatIndexLabel : `${ayatIndexLabel} sur ${totalAyatsToday}`}
+            </Text>
+          </View>
+        </Animated.View>
+
+        {/* ── MAIN CARD ── */}
+        <Animated.View style={[ar.cardWrap, {
+          opacity: cardAnim,
+          transform: [
+            { translateY: cardAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) },
+            { scale: cardAnim.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1.0] }) },
+          ],
+        }]}>
+          <View style={ar.card}>
+
+            {/* mode badge */}
+            <View style={[ar.modeBadge, mode === 'compare' && ar.modeBadgeCompare]}>
+              <Text style={[ar.modeBadgeText, mode === 'compare' && ar.modeBadgeTextCompare]}>
+                {mode === 'recite' ? 'SANS AIDE' : 'RÉVÉLATION'}
+              </Text>
+            </View>
+
+            {/* animated content area */}
+            <Animated.View style={{ opacity: contentOpacity, transform: [{ translateY: contentSlide }] }}>
+              {mode === 'recite' ? (
+                /* ── RECITE MODE ── */
+                <View>
+                  <Text style={ar.modeInstruction}>
+                    Cache les aides.{'\n'}Récite cet ayat sans regarder.
+                  </Text>
+
+                  {/* hidden-memory card */}
+                  <Animated.View style={[ar.hiddenCard, {
+                    opacity: glowAnim.interpolate({ inputRange: [0.5, 1.0], outputRange: [0.85, 1.0] }),
+                  }]}>
+                    <View style={ar.hiddenGlow} />
+                    <Text style={ar.hiddenDots}>•  •  •</Text>
+                    <Text style={ar.hiddenCaption}>Récite l'ayat de mémoire</Text>
+                    <Text style={ar.hiddenHint}>Prends ton temps. Ne cherche pas la vitesse.</Text>
+                  </Animated.View>
+                </View>
+              ) : (
+                /* ── COMPARE MODE ── */
+                <View>
+                  <Text style={ar.modeInstruction}>
+                    Regarde si tu as oublié, inversé ou hésité.
+                  </Text>
+
+                  {ayat ? (
+                    <View style={ar.revealBlock}>
+                      {/* Arabic */}
+                      {ayat.arabic ? (
+                        <Text style={ar.revealArabic} textBreakStrategy="simple">
+                          {ayat.arabic}
+                        </Text>
+                      ) : null}
+
+                      {/* transliteration */}
+                      {ayat.transliteration ? (
+                        <View style={ar.revealDivider}>
+                          <Text style={ar.revealTranslit}>{ayat.transliteration}</Text>
+                        </View>
+                      ) : null}
+
+                      {/* translation */}
+                      {ayat.translationFr ? (
+                        <View style={ar.revealDivider}>
+                          <Text style={ar.revealLabel}>SENS DE L'AYAT</Text>
+                          <Text style={ar.revealTranslation}>{ayat.translationFr}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : (
+                    <Text style={ar.fallbackText}>Contenu non disponible.</Text>
+                  )}
+                </View>
+              )}
+            </Animated.View>
+
+          </View>
+        </Animated.View>
+
+        {/* ── GUIDE LINE ── */}
+        <Animated.View style={[ar.guideLine, {
+          opacity: guideAnim,
+          transform: [{ translateY: guideAnim.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }],
+        }]}>
+          <View style={ar.guideAccent} />
+          <Text style={ar.guideText}>
+            {mode === 'recite'
+              ? 'Prends ton temps. Essaie de retrouver l\'ayat complet.'
+              : 'Réponds honnêtement. C\'est pour renforcer ta mémorisation.'}
+          </Text>
+        </Animated.View>
+
+        <View style={{ height: 86 }} />
+      </ScrollView>
+
+      {/* ── STICKY CTA ── */}
+      <Animated.View style={[ar.stickyBottom, {
+        opacity: ctaAnim,
+        transform: [{ translateY: ctaAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+      }]}>
+        <Pressable
+          style={({ pressed }) => [
+            ar.cta,
+            canContinue ? ar.ctaActive : ar.ctaLocked,
+            pressed && canContinue && ar.ctaPressed,
+          ]}
+          onPress={mode === 'recite' ? handleReciteCta : handleCompareCta}
+        >
+          <Text style={[ar.ctaText, !canContinue && ar.ctaTextLocked]}>
+            {mode === 'recite'
+              ? (canContinue ? 'J\'ai récité l\'ayat →' : 'Récite maintenant…')
+              : (canContinue
+                  ? (isLastAyat ? 'Continuer vers le test final →' : 'Passer à l\'ayat suivant →')
+                  : 'J\'ai comparé…')}
+          </Text>
+          {canContinue ? (
+            <Animated.View pointerEvents="none" style={[ar.ctaShine, { left: ctaShineX }]} />
+          ) : null}
+        </Pressable>
+      </Animated.View>
+    </SafeAreaView>
+  );
+}
+
+const ar = StyleSheet.create({
+  safe:    { flex: 1, backgroundColor: colors.background },
+  scroll:  { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: 20 },
+  halo:    { position: 'absolute', top: -50, right: -70, width: 240, height: 240, borderRadius: 120, backgroundColor: 'rgba(22,48,38,0.07)', zIndex: 0 },
+  ornLine: { position: 'absolute', top: 0, left: 0, right: 0, height: 2, backgroundColor: 'rgba(184,150,46,0.18)', zIndex: 0 },
+
+  // header
+  backBtn:        { alignSelf: 'flex-start', marginBottom: 6, paddingVertical: 2 },
+  backBtnText:    { fontSize: 20, color: colors.primary, fontWeight: '300' },
+  header:         { marginBottom: 12 },
+  headerChip:     { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', backgroundColor: 'rgba(184,150,46,0.13)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(184,150,46,0.28)', marginBottom: 8 },
+  headerChipDot:  { width: 5, height: 5, borderRadius: 2.5, backgroundColor: colors.gold, marginRight: 5 },
+  headerChipText: { fontSize: 10, fontWeight: '700', color: colors.gold, letterSpacing: 1.4 },
+  headerTitle:    { fontSize: 24, fontWeight: '800', color: colors.primary, marginBottom: 4 },
+  headerSub:      { fontSize: 13, color: colors.muted, lineHeight: 20 },
+
+  // context row
+  contextRow:        { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  contextSurah:      { fontSize: 12, color: colors.muted, fontWeight: '600' },
+  contextBadge:      { backgroundColor: 'rgba(22,48,38,0.08)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(22,48,38,0.15)' },
+  contextBadgeText:  { fontSize: 11, fontWeight: '700', color: colors.primary, letterSpacing: 0.6 },
+
+  // card
+  cardWrap:  { marginBottom: 10 },
+  card:      { backgroundColor: '#FEFCF7', borderRadius: 22, borderWidth: 1.5, borderColor: 'rgba(184,150,46,0.22)', paddingHorizontal: spacing.lg, paddingTop: 16, paddingBottom: 16, shadowColor: colors.gold, shadowOpacity: 0.10, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+
+  // mode badge
+  modeBadge:            { alignSelf: 'flex-start', backgroundColor: 'rgba(22,48,38,0.08)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(22,48,38,0.16)', marginBottom: 12 },
+  modeBadgeCompare:     { backgroundColor: 'rgba(45,106,79,0.10)', borderColor: 'rgba(45,106,79,0.28)' },
+  modeBadgeText:        { fontSize: 10, fontWeight: '800', color: colors.primary, letterSpacing: 1.2 },
+  modeBadgeTextCompare: { color: colors.success },
+
+  // mode instruction
+  modeInstruction: { fontSize: 13, color: colors.muted, lineHeight: 20, fontStyle: 'italic', marginBottom: 14 },
+
+  // hidden-memory card
+  hiddenCard:    { backgroundColor: 'rgba(22,48,38,0.04)', borderRadius: 18, borderWidth: 1.5, borderColor: 'rgba(22,48,38,0.10)', alignItems: 'center', paddingVertical: 32, marginBottom: 8, overflow: 'hidden' },
+  hiddenGlow:    { position: 'absolute', top: -30, width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(45,106,79,0.08)' },
+  hiddenDots:    { fontSize: 28, color: colors.primary, opacity: 0.30, letterSpacing: 6, marginBottom: 10 },
+  hiddenCaption: { fontSize: 13, color: colors.primary, fontWeight: '700', marginBottom: 6 },
+  hiddenHint:    { fontSize: 11, color: colors.muted, fontStyle: 'italic', textAlign: 'center', paddingHorizontal: 16 },
+
+  // reveal block (compare mode)
+  revealBlock:      { gap: 0 },
+  revealArabic:     { fontSize: 22, color: colors.primary, fontWeight: '700', textAlign: 'right', writingDirection: 'rtl', lineHeight: 38, marginBottom: 10 },
+  revealDivider:    { borderTopWidth: 1, borderTopColor: 'rgba(184,150,46,0.14)', paddingTop: 10, marginTop: 4, marginBottom: 4 },
+  revealTranslit:   { fontSize: 13, color: colors.muted, lineHeight: 20, fontStyle: 'italic' },
+  revealLabel:      { fontSize: 9, fontWeight: '800', color: colors.gold, letterSpacing: 1.4, marginBottom: 4, textTransform: 'uppercase' },
+  revealTranslation:{ fontSize: 12, color: colors.muted, lineHeight: 18, fontStyle: 'italic' },
+  fallbackText:     { fontSize: 13, color: colors.muted, fontStyle: 'italic' },
+
+  // guide line
+  guideLine:   { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  guideAccent: { width: 3, height: 28, borderRadius: 2, backgroundColor: colors.primary, opacity: 0.50 },
+  guideText:   { flex: 1, fontSize: 12, color: colors.muted, lineHeight: 18, fontStyle: 'italic' },
+
+  // sticky CTA
+  stickyBottom:  { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: 'rgba(184,150,46,0.14)', paddingHorizontal: spacing.lg, paddingTop: 10, paddingBottom: spacing.xl },
+  cta:           { borderRadius: 16, height: 56, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 5 },
+  ctaActive:     { backgroundColor: colors.primary, shadowColor: colors.primary, shadowOpacity: 0.38 },
+  ctaLocked:     { backgroundColor: 'rgba(22,48,38,0.30)', shadowColor: 'transparent', shadowOpacity: 0, elevation: 0 },
+  ctaPressed:    { opacity: 0.82, transform: [{ scale: 0.975 }] },
+  ctaText:       { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.4 },
+  ctaTextLocked: { color: 'rgba(255,255,255,0.55)', fontWeight: '600' },
+  ctaShine:      { position: 'absolute', top: 0, width: '35%', height: '100%', backgroundColor: 'rgba(255,255,255,0.10)', transform: [{ skewX: '-20deg' }] },
+});
+
+// ─── Step 6 · Test final global ────────────────────────────────────────────────
+
+type FinalTestMode = 'recite' | 'compare' | 'evaluate';
+type DifficultyLevel = 'easy' | 'hesitant' | 'hard';
+
+type FinalTestScreenProps = {
+  allAyats:          QuranAyahContent[];
+  memStart:          number;
+  memEnd:            number;
+  surahName:         string;
+  onBack:            () => void;
+  onComplete:        (difficulty: DifficultyLevel) => void;
+  onRestartPassage:  () => void;
+};
+
+function FinalTestScreen({ allAyats, memStart, memEnd, surahName, onBack, onComplete, onRestartPassage }: FinalTestScreenProps) {
+  const mountedRef = useRef(true);
+
+  const totalAyats = Math.max(allAyats.length, memEnd - memStart + 1);
+
+  // ── mode ──
+  const [mode, setMode]                         = useState<FinalTestMode>('recite');
+  const [canContinue, setCanContinue]           = useState(false);
+  const [selectedDifficulty, setSelectedDifficulty] = useState<DifficultyLevel | null>(null);
+  const isTransitioning                         = useRef(false);
+  const guardTimer                              = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isCompleting                            = useRef(false);
+  const isRestarting                            = useRef(false);
+
+  // ── restart confirmation state ──
+  const [showRestartConfirm, setShowRestartConfirm] = useState(false);
+  const confirmAnim = useRef(new Animated.Value(0)).current;
+
+  // ── animation refs ──
+  const mountAnim      = useRef(new Animated.Value(0)).current;
+  const cardAnim       = useRef(new Animated.Value(0)).current;
+  const guideAnim      = useRef(new Animated.Value(0)).current;
+  const ctaAnim        = useRef(new Animated.Value(0)).current;
+  const ctaShine       = useRef(new Animated.Value(-1)).current;
+  const ctaShineLoop   = useRef<Animated.CompositeAnimation | null>(null);
+  const contentOpacity = useRef(new Animated.Value(1)).current;
+  const contentSlide   = useRef(new Animated.Value(0)).current;
+  const glowAnim       = useRef(new Animated.Value(0.5)).current;
+  const glowLoop       = useRef<Animated.CompositeAnimation | null>(null);
+  // evaluation card press scales
+  const evalScales = useRef([
+    new Animated.Value(1),
+    new Animated.Value(1),
+    new Animated.Value(1),
+  ]).current;
+
+  // ── entrance ──
+  useEffect(() => {
+    mountedRef.current = true;
+
+    Animated.stagger(70, [
+      Animated.timing(mountAnim, { toValue: 1, duration: 360, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(cardAnim,  { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(guideAnim, { toValue: 1, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(ctaAnim,   { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+    ]).start();
+
+    glowLoop.current = Animated.loop(Animated.sequence([
+      Animated.timing(glowAnim, { toValue: 1.0, duration: 2200, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      Animated.timing(glowAnim, { toValue: 0.5, duration: 2200, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+    ]));
+    glowLoop.current.start();
+
+    ctaShineLoop.current = Animated.loop(Animated.sequence([
+      Animated.timing(ctaShine, { toValue: 1, duration: 1400, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
+      Animated.delay(2800),
+      Animated.timing(ctaShine, { toValue: -1, duration: 0, useNativeDriver: false }),
+    ]));
+    ctaShineLoop.current.start();
+
+    // initial guard: 8–10s depending on ayat count
+    const delay = totalAyats > 2 ? 10000 : 8000;
+    guardTimer.current = setTimeout(() => {
+      if (mountedRef.current) setCanContinue(true);
+    }, delay);
+
+    return () => {
+      mountedRef.current = false;
+      glowLoop.current?.stop();
+      ctaShineLoop.current?.stop();
+      if (guardTimer.current) clearTimeout(guardTimer.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── guard timer resets on mode change ──
+  useEffect(() => {
+    setCanContinue(false);
+    if (guardTimer.current) clearTimeout(guardTimer.current);
+    let delay = 0;
+    if (mode === 'recite') {
+      delay = totalAyats > 2 ? 10000 : 8000;
+    } else if (mode === 'compare') {
+      delay = 1500;
+    } else {
+      delay = 0; // evaluate: immediately enabled after selection
+    }
+    if (delay > 0) {
+      guardTimer.current = setTimeout(() => {
+        if (mountedRef.current) setCanContinue(true);
+      }, delay);
+    }
+    return () => {
+      if (guardTimer.current) clearTimeout(guardTimer.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
+  // ── smooth mode transition helper ──
+  const transitionTo = useCallback((next: FinalTestMode) => {
+    if (isTransitioning.current) return;
+    isTransitioning.current = true;
+    Animated.parallel([
+      Animated.timing(contentOpacity, { toValue: 0, duration: 200, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(contentSlide,   { toValue: -18, duration: 200, easing: Easing.in(Easing.cubic), useNativeDriver: true }),
+    ]).start(() => {
+      if (!mountedRef.current) { isTransitioning.current = false; return; }
+      setMode(next);
+      contentSlide.setValue(20);
+      Animated.parallel([
+        Animated.timing(contentOpacity, { toValue: 1, duration: 280, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(contentSlide,   { toValue: 0,  duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      ]).start(() => { isTransitioning.current = false; });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleReciteCta = useCallback(() => {
+    if (!canContinue || isTransitioning.current) return;
+    hapticMedium();
+    transitionTo('compare');
+  }, [canContinue, transitionTo]);
+
+  const handleCompareCta = useCallback(() => {
+    if (!canContinue || isTransitioning.current) return;
+    hapticMedium();
+    transitionTo('evaluate');
+  }, [canContinue, transitionTo]);
+
+  const handleEvalSelect = useCallback((level: DifficultyLevel, idx: number) => {
+    hapticSelection();
+    setSelectedDifficulty(level);
+    setCanContinue(true);
+    // hide confirm panel when difficulty changes
+    setShowRestartConfirm(false);
+    confirmAnim.setValue(0);
+    // micro-press animation
+    Animated.sequence([
+      Animated.timing(evalScales[idx], { toValue: 0.96, duration: 90, useNativeDriver: true }),
+      Animated.timing(evalScales[idx], { toValue: 1.00, duration: 130, useNativeDriver: true }),
+    ]).start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [evalScales]);
+
+  const openRestartConfirm = useCallback(() => {
+    if (isRestarting.current) return;
+    hapticMedium();
+    setShowRestartConfirm(true);
+    Animated.timing(confirmAnim, { toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const cancelRestart = useCallback(() => {
+    hapticLight();
+    Animated.timing(confirmAnim, { toValue: 0, duration: 180, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(() => {
+      setShowRestartConfirm(false);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const confirmRestart = useCallback(() => {
+    if (isRestarting.current) return;
+    isRestarting.current = true;
+    hapticMedium();
+    onRestartPassage();
+  }, [onRestartPassage]);
+
+  const handleValidate = useCallback(() => {
+    if (!selectedDifficulty || isCompleting.current) return;
+    isCompleting.current = true;
+    hapticMedium();
+    onComplete(selectedDifficulty);
+  }, [selectedDifficulty, onComplete]);
+
+  const ctaShineX = ctaShine.interpolate({ inputRange: [-1, 1], outputRange: ['-60%', '160%'] });
+
+  const ayatRangeLabel = memStart === memEnd
+    ? `Ayat ${memStart}`
+    : `Ayats ${memStart} à ${memEnd}`;
+
+  const EVAL_OPTIONS: { level: DifficultyLevel; label: string; subtitle: string }[] = [
+    { level: 'easy',     label: 'Facile',     subtitle: 'Je l\'ai récité sans blocage.' },
+    { level: 'hesitant', label: 'Hésitant',   subtitle: 'J\'ai hésité ou dû réfléchir.' },
+    { level: 'hard',     label: 'Difficile',  subtitle: 'J\'ai oublié ou mélangé des passages.' },
+  ];
+
+  return (
+    <SafeAreaView style={ft.safe}>
+      <PremiumBackground />
+      <View style={ft.halo} pointerEvents="none" />
+      <View style={ft.ornLine} pointerEvents="none" />
+
+      <ScrollView contentContainerStyle={ft.scroll} showsVerticalScrollIndicator={false}>
+
+        {/* ── HEADER ── */}
+        <Animated.View style={[ft.header, {
+          opacity: mountAnim,
+          transform: [{ translateY: mountAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
+        }]}>
+          <Pressable style={ft.backBtn} onPress={() => { hapticLight(); onBack(); }} hitSlop={12}>
+            <Text style={ft.backBtnText}>←</Text>
+          </Pressable>
+          <View style={ft.headerChip}>
+            <View style={ft.headerChipDot} />
+            <Text style={ft.headerChipText}>
+              {mode === 'evaluate' ? 'ÉTAPE 6 · ÉVALUATION' : 'ÉTAPE 6 · TEST FINAL'}
+            </Text>
+          </View>
+          <Text style={ft.headerTitle}>
+            {mode === 'recite'   ? 'Récite tout le passage' :
+             mode === 'compare'  ? 'Compare ton passage'    :
+                                   'Évalue ta récitation'}
+          </Text>
+          <Text style={ft.headerSub}>
+            {mode === 'recite'
+              ? 'Enchaîne tous les ayats appris aujourd\'hui.'
+              : mode === 'compare'
+                ? 'Vérifie si tu as oublié un mot, inversé ou hésité dans l\'enchaînement.'
+                : 'Réponds honnêtement. Zainly utilisera cette difficulté pour protéger tes révisions.'}
+          </Text>
+        </Animated.View>
+
+        {/* ── PROGRESS BAR ── */}
+        <Animated.View style={{ opacity: mountAnim }}>
+          <SessionProgressBar
+            pct={FINAL_TEST_PROGRESS_PCT}
+            label="Étape 6 · Test final"
+            phase="Validation"
+          />
+        </Animated.View>
+
+        {/* ── CONTEXT CHIP ── */}
+        <Animated.View style={[ft.contextRow, { opacity: cardAnim }]}>
+          {surahName ? <Text style={ft.contextSurah}>{surahName}</Text> : null}
+          <View style={ft.contextBadge}>
+            <Text style={ft.contextBadgeText}>{ayatRangeLabel}</Text>
+          </View>
+        </Animated.View>
+
+        {/* ── MAIN CARD ── */}
+        <Animated.View style={[ft.cardWrap, {
+          opacity: cardAnim,
+          transform: [
+            { translateY: cardAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) },
+            { scale: cardAnim.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1.0] }) },
+          ],
+        }]}>
+          <View style={ft.card}>
+
+            {/* mode badge */}
+            <View style={[
+              ft.modeBadge,
+              mode === 'compare'  && ft.modeBadgeCompare,
+              mode === 'evaluate' && ft.modeBadgeEval,
+            ]}>
+              <Text style={[
+                ft.modeBadgeText,
+                mode === 'compare'  && ft.modeBadgeTextCompare,
+                mode === 'evaluate' && ft.modeBadgeTextEval,
+              ]}>
+                {mode === 'recite' ? 'SANS AIDE' : mode === 'compare' ? 'RÉVÉLATION' : 'AUTO-ÉVALUATION'}
+              </Text>
+            </View>
+
+            {/* animated content */}
+            <Animated.View style={{ opacity: contentOpacity, transform: [{ translateY: contentSlide }] }}>
+
+              {mode === 'recite' ? (
+                /* ── FINAL RECITE ── */
+                <View>
+                  <Text style={ft.modeInstruction}>
+                    Récite maintenant tous les ayats appris aujourd'hui, dans l'ordre.
+                  </Text>
+                  <Animated.View style={[ft.hiddenCard, {
+                    opacity: glowAnim.interpolate({ inputRange: [0.5, 1.0], outputRange: [0.85, 1.0] }),
+                  }]}>
+                    <View style={ft.hiddenGlow} />
+                    <Text style={ft.hiddenDots}>•  •  •</Text>
+                    <Text style={ft.hiddenCaption}>Récite le passage complet</Text>
+                    <Text style={ft.hiddenRange}>{ayatRangeLabel}</Text>
+                  </Animated.View>
+                </View>
+
+              ) : mode === 'compare' ? (
+                /* ── FINAL COMPARE ── */
+                <View>
+                  <Text style={ft.modeInstruction}>
+                    Vérifie si tu as oublié un mot, inversé un passage ou hésité dans l'enchaînement.
+                  </Text>
+                  {allAyats.length > 0 ? allAyats.map((a, idx) => (
+                    <View key={a.ayahNumber ?? idx} style={ft.compareAyatBlock}>
+                      <View style={ft.compareAyatHeader}>
+                        <Text style={ft.compareAyatNum}>Ayat {a.ayahNumber ?? (memStart + idx)}</Text>
+                      </View>
+                      {a.arabic ? (
+                        <Text style={ft.compareArabic} textBreakStrategy="simple">{a.arabic}</Text>
+                      ) : null}
+                      {a.transliteration ? (
+                        <Text style={ft.compareTranslit}>{a.transliteration}</Text>
+                      ) : null}
+                      {a.translationFr ? (
+                        <View style={ft.compareDivider}>
+                          <Text style={ft.compareLabel}>SENS</Text>
+                          <Text style={ft.compareTranslation}>{a.translationFr}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  )) : (
+                    <Text style={ft.fallbackText}>Contenu non disponible.</Text>
+                  )}
+                </View>
+
+              ) : (
+                /* ── FINAL EVALUATE ── */
+                <View style={ft.evalList}>
+                  {EVAL_OPTIONS.map((opt, idx) => {
+                    const selected = selectedDifficulty === opt.level;
+                    return (
+                      <Animated.View key={opt.level} style={[{ transform: [{ scale: evalScales[idx] }] }]}>
+                        <Pressable
+                          style={[ft.evalCard, selected && ft.evalCardSelected]}
+                          onPress={() => handleEvalSelect(opt.level, idx)}
+                        >
+                          <View style={[ft.evalDot, selected && ft.evalDotSelected]} />
+                          <View style={ft.evalBody}>
+                            <Text style={[ft.evalLabel, selected && ft.evalLabelSelected]}>
+                              {opt.label}
+                            </Text>
+                            <Text style={ft.evalSubtitle}>{opt.subtitle}</Text>
+                            {selected && opt.level === 'hard' ? (
+                              <Text style={ft.evalHint}>On peut reprendre le passage pour l'ancrer vraiment.</Text>
+                            ) : null}
+                          </View>
+                          {selected ? <Text style={ft.evalCheck}>✓</Text> : null}
+                        </Pressable>
+                      </Animated.View>
+                    );
+                  })}
+                </View>
+              )}
+
+            </Animated.View>
+          </View>
+        </Animated.View>
+
+        {/* ── GUIDE LINE (recite + compare only) ── */}
+        {mode !== 'evaluate' ? (
+          <Animated.View style={[ft.guideLine, {
+            opacity: guideAnim,
+            transform: [{ translateY: guideAnim.interpolate({ inputRange: [0, 1], outputRange: [6, 0] }) }],
+          }]}>
+            <View style={ft.guideAccent} />
+            <Text style={ft.guideText}>
+              {mode === 'recite'
+                ? 'Récite l\'enchaînement complet, sans t\'arrêter.'
+                : 'Prends le temps de vérifier chaque ayat.'}
+            </Text>
+          </Animated.View>
+        ) : null}
+
+        <View style={{ height: 160 }} />
+      </ScrollView>
+
+      {/* ── STICKY CTA ── */}
+      <Animated.View style={[ft.stickyBottom, {
+        opacity: ctaAnim,
+        transform: [{ translateY: ctaAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+      }]}>
+        {mode === 'evaluate' ? (
+          <View>
+            {/* ── RESTART CONFIRMATION PANEL ── */}
+            {showRestartConfirm ? (
+              <Animated.View style={[ft.confirmPanel, {
+                opacity: confirmAnim,
+                transform: [{ translateY: confirmAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
+              }]}>
+                <View style={ft.confirmAccent} />
+                <View style={ft.confirmBody}>
+                  <Text style={ft.confirmTitle}>Reprendre le passage ?</Text>
+                  <Text style={ft.confirmDesc}>Tu vas recommencer depuis le premier ayat. Rien ne sera validé pour l'instant.</Text>
+                  <View style={ft.confirmActions}>
+                    <Pressable style={ft.confirmCancel} onPress={cancelRestart}>
+                      <Text style={ft.confirmCancelText}>Annuler</Text>
+                    </Pressable>
+                    <Pressable style={ft.confirmOk} onPress={confirmRestart}>
+                      <Text style={ft.confirmOkText}>Oui, reprendre</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </Animated.View>
+            ) : (
+              <View>
+                {/* helper text for hesitant */}
+                {selectedDifficulty === 'hesitant' ? (
+                  <Text style={ft.helperText}>Tu peux valider, ou reprendre le passage pour le consolider.</Text>
+                ) : selectedDifficulty === 'hard' ? (
+                  <Text style={ft.helperText}>Si c'était difficile, le meilleur choix est de reprendre le passage avant de valider.</Text>
+                ) : null}
+
+                {/* PRIMARY CTA */}
+                <Pressable
+                  style={({ pressed }) => [
+                    ft.cta,
+                    selectedDifficulty ? (selectedDifficulty === 'hard' ? ft.ctaRestart : ft.ctaActive) : ft.ctaLocked,
+                    pressed && !!selectedDifficulty && ft.ctaPressed,
+                  ]}
+                  onPress={() => {
+                    if (!selectedDifficulty) return;
+                    if (selectedDifficulty === 'hard') {
+                      openRestartConfirm();
+                    } else {
+                      handleValidate();
+                    }
+                  }}
+                >
+                  <Text style={[ft.ctaText, !selectedDifficulty && ft.ctaTextLocked]}>
+                    {selectedDifficulty === 'hard'
+                      ? 'Reprendre depuis le début →'
+                      : selectedDifficulty
+                        ? 'Préparer la validation →'
+                        : 'Choisis une difficulté…'}
+                  </Text>
+                  {selectedDifficulty ? (
+                    <Animated.View pointerEvents="none" style={[ft.ctaShine, { left: ctaShineX }]} />
+                  ) : null}
+                </Pressable>
+
+                {/* SECONDARY ACTION */}
+                {selectedDifficulty === 'hard' ? (
+                  <Pressable style={ft.secondaryCta} onPress={handleValidate}>
+                    <Text style={ft.secondaryCtaText}>Préparer la validation quand même</Text>
+                  </Pressable>
+                ) : selectedDifficulty === 'hesitant' ? (
+                  <Pressable style={ft.secondaryCta} onPress={openRestartConfirm}>
+                    <Text style={ft.secondaryCtaText}>Reprendre depuis le début</Text>
+                  </Pressable>
+                ) : selectedDifficulty === 'easy' ? (
+                  <Pressable style={ft.secondaryCtaDiscreet} onPress={openRestartConfirm}>
+                    <Text style={ft.secondaryCtaDiscreetText}>Reprendre depuis le début</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            )}
+          </View>
+        ) : (
+          <Pressable
+            style={({ pressed }) => [
+              ft.cta,
+              canContinue ? ft.ctaActive : ft.ctaLocked,
+              pressed && canContinue && ft.ctaPressed,
+            ]}
+            onPress={mode === 'recite' ? handleReciteCta : handleCompareCta}
+          >
+            <Text style={[ft.ctaText, !canContinue && ft.ctaTextLocked]}>
+              {mode === 'recite'
+                ? (canContinue ? 'J\'ai récité le passage →' : 'Récite tout le passage…')
+                : (canContinue ? 'J\'ai comparé →' : 'Vérifie le passage…')}
+            </Text>
+            {canContinue ? (
+              <Animated.View pointerEvents="none" style={[ft.ctaShine, { left: ctaShineX }]} />
+            ) : null}
+          </Pressable>
+        )}
+      </Animated.View>
+    </SafeAreaView>
+  );
+}
+
+const ft = StyleSheet.create({
+  safe:    { flex: 1, backgroundColor: colors.background },
+  scroll:  { paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: 20 },
+  halo:    { position: 'absolute', top: -50, right: -70, width: 240, height: 240, borderRadius: 120, backgroundColor: 'rgba(22,48,38,0.07)', zIndex: 0 },
+  ornLine: { position: 'absolute', top: 0, left: 0, right: 0, height: 2, backgroundColor: 'rgba(184,150,46,0.18)', zIndex: 0 },
+
+  // header
+  backBtn:        { alignSelf: 'flex-start', marginBottom: 6, paddingVertical: 2 },
+  backBtnText:    { fontSize: 20, color: colors.primary, fontWeight: '300' },
+  header:         { marginBottom: 12 },
+  headerChip:     { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', backgroundColor: 'rgba(184,150,46,0.13)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(184,150,46,0.28)', marginBottom: 8 },
+  headerChipDot:  { width: 5, height: 5, borderRadius: 2.5, backgroundColor: colors.gold, marginRight: 5 },
+  headerChipText: { fontSize: 10, fontWeight: '700', color: colors.gold, letterSpacing: 1.4 },
+  headerTitle:    { fontSize: 24, fontWeight: '800', color: colors.primary, marginBottom: 4 },
+  headerSub:      { fontSize: 13, color: colors.muted, lineHeight: 20 },
+
+  // context row
+  contextRow:        { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  contextSurah:      { fontSize: 12, color: colors.muted, fontWeight: '600' },
+  contextBadge:      { backgroundColor: 'rgba(22,48,38,0.08)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(22,48,38,0.15)' },
+  contextBadgeText:  { fontSize: 11, fontWeight: '700', color: colors.primary, letterSpacing: 0.6 },
+
+  // card
+  cardWrap:  { marginBottom: 10 },
+  card:      { backgroundColor: '#FEFCF7', borderRadius: 22, borderWidth: 1.5, borderColor: 'rgba(184,150,46,0.22)', paddingHorizontal: spacing.lg, paddingTop: 16, paddingBottom: 16, shadowColor: colors.gold, shadowOpacity: 0.10, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+
+  // mode badge
+  modeBadge:           { alignSelf: 'flex-start', backgroundColor: 'rgba(22,48,38,0.08)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(22,48,38,0.16)', marginBottom: 12 },
+  modeBadgeCompare:    { backgroundColor: 'rgba(45,106,79,0.10)', borderColor: 'rgba(45,106,79,0.28)' },
+  modeBadgeEval:       { backgroundColor: 'rgba(184,150,46,0.12)', borderColor: 'rgba(184,150,46,0.32)' },
+  modeBadgeText:       { fontSize: 10, fontWeight: '800', color: colors.primary, letterSpacing: 1.2 },
+  modeBadgeTextCompare:{ color: colors.success },
+  modeBadgeTextEval:   { color: colors.gold },
+
+  // mode instruction
+  modeInstruction: { fontSize: 13, color: colors.muted, lineHeight: 20, fontStyle: 'italic', marginBottom: 14 },
+
+  // hidden card
+  hiddenCard:    { backgroundColor: 'rgba(22,48,38,0.04)', borderRadius: 18, borderWidth: 1.5, borderColor: 'rgba(22,48,38,0.10)', alignItems: 'center', paddingVertical: 32, marginBottom: 8, overflow: 'hidden' },
+  hiddenGlow:    { position: 'absolute', top: -30, width: 120, height: 120, borderRadius: 60, backgroundColor: 'rgba(45,106,79,0.08)' },
+  hiddenDots:    { fontSize: 28, color: colors.primary, opacity: 0.30, letterSpacing: 6, marginBottom: 10 },
+  hiddenCaption: { fontSize: 13, color: colors.primary, fontWeight: '700', marginBottom: 4 },
+  hiddenRange:   { fontSize: 11, color: colors.muted, fontStyle: 'italic' },
+
+  // compare view
+  compareAyatBlock:  { borderTopWidth: 1, borderTopColor: 'rgba(184,150,46,0.14)', paddingTop: 12, marginTop: 8 },
+  compareAyatHeader: { marginBottom: 6 },
+  compareAyatNum:    { fontSize: 10, fontWeight: '800', color: colors.gold, letterSpacing: 1.2, textTransform: 'uppercase' },
+  compareArabic:     { fontSize: 20, color: colors.primary, fontWeight: '700', textAlign: 'right', writingDirection: 'rtl', lineHeight: 34, marginBottom: 6 },
+  compareTranslit:   { fontSize: 12, color: colors.muted, lineHeight: 19, fontStyle: 'italic', marginBottom: 4 },
+  compareDivider:    { borderTopWidth: 1, borderTopColor: 'rgba(184,150,46,0.10)', paddingTop: 6, marginTop: 4 },
+  compareLabel:      { fontSize: 9, fontWeight: '800', color: colors.gold, letterSpacing: 1.2, marginBottom: 3, textTransform: 'uppercase' },
+  compareTranslation:{ fontSize: 12, color: colors.muted, lineHeight: 18, fontStyle: 'italic' },
+  fallbackText:      { fontSize: 13, color: colors.muted, fontStyle: 'italic' },
+
+  // evaluation cards
+  evalList:         { gap: 10 },
+  evalCard:         { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(22,48,38,0.04)', borderRadius: 16, borderWidth: 1.5, borderColor: 'rgba(22,48,38,0.12)', paddingHorizontal: 14, paddingVertical: 14, gap: 12 },
+  evalCardSelected: { backgroundColor: 'rgba(22,48,38,0.10)', borderColor: colors.primary },
+  evalDot:          { width: 12, height: 12, borderRadius: 6, backgroundColor: 'rgba(22,48,38,0.20)', borderWidth: 1.5, borderColor: 'rgba(22,48,38,0.25)' },
+  evalDotSelected:  { backgroundColor: colors.primary, borderColor: colors.primary },
+  evalBody:         { flex: 1 },
+  evalLabel:        { fontSize: 15, fontWeight: '800', color: colors.primary, marginBottom: 2 },
+  evalLabelSelected:{ color: colors.primary },
+  evalSubtitle:     { fontSize: 12, color: colors.muted, lineHeight: 18 },
+  evalCheck:        { fontSize: 16, color: colors.success, fontWeight: '800' },
+  evalHint:         { fontSize: 11, color: colors.muted, lineHeight: 16, fontStyle: 'italic', marginTop: 4 },
+
+  // guide line
+  guideLine:   { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  guideAccent: { width: 3, height: 28, borderRadius: 2, backgroundColor: colors.primary, opacity: 0.50 },
+  guideText:   { flex: 1, fontSize: 12, color: colors.muted, lineHeight: 18, fontStyle: 'italic' },
+
+  // sticky CTA
+  stickyBottom:  { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: 'rgba(184,150,46,0.14)', paddingHorizontal: spacing.lg, paddingTop: 10, paddingBottom: spacing.xl },
+  cta:           { borderRadius: 16, height: 56, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 5 },
+  ctaActive:     { backgroundColor: colors.primary, shadowColor: colors.primary, shadowOpacity: 0.38 },
+  ctaRestart:    { backgroundColor: 'rgba(22,48,38,0.80)', shadowColor: colors.primary, shadowOpacity: 0.25 },
+  ctaLocked:     { backgroundColor: 'rgba(22,48,38,0.30)', shadowColor: 'transparent', shadowOpacity: 0, elevation: 0 },
+  ctaPressed:    { opacity: 0.82, transform: [{ scale: 0.975 }] },
+  ctaText:       { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.4 },
+  ctaTextLocked: { color: 'rgba(255,255,255,0.55)', fontWeight: '600' },
+  ctaShine:      { position: 'absolute', top: 0, width: '35%', height: '100%', backgroundColor: 'rgba(255,255,255,0.10)', transform: [{ skewX: '-20deg' }] },
+
+  // helper text above secondary action
+  helperText:               { fontSize: 11, color: colors.muted, lineHeight: 17, fontStyle: 'italic', textAlign: 'center', marginBottom: 8 },
+
+  // secondary CTA — clearly visible (hesitant restart / hard validate-anyway)
+  secondaryCta:             { marginTop: 8, alignItems: 'center', paddingVertical: 8 },
+  secondaryCtaText:         { fontSize: 13, color: colors.primary, fontWeight: '700', textDecorationLine: 'underline', letterSpacing: 0.2 },
+
+  // secondary CTA — discreet (easy restart)
+  secondaryCtaDiscreet:     { marginTop: 6, alignItems: 'center', paddingVertical: 6 },
+  secondaryCtaDiscreetText: { fontSize: 12, color: colors.muted, fontWeight: '500', textDecorationLine: 'underline' },
+
+  // inline restart confirmation panel
+  confirmPanel:   { flexDirection: 'row', backgroundColor: '#F3EDD8', borderRadius: 18, borderWidth: 1.5, borderColor: 'rgba(22,48,38,0.20)', overflow: 'hidden', marginBottom: 4, shadowColor: colors.primary, shadowOpacity: 0.08, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
+  confirmAccent:  { width: 4, backgroundColor: colors.primary, borderTopLeftRadius: 18, borderBottomLeftRadius: 18 },
+  confirmBody:    { flex: 1, paddingHorizontal: 14, paddingVertical: 12 },
+  confirmTitle:   { fontSize: 14, fontWeight: '800', color: colors.primary, marginBottom: 4 },
+  confirmDesc:    { fontSize: 12, color: colors.muted, lineHeight: 18, marginBottom: 10 },
+  confirmActions: { flexDirection: 'row', gap: 8 },
+  confirmCancel:  { flex: 1, height: 36, borderRadius: 10, borderWidth: 1.5, borderColor: 'rgba(22,48,38,0.22)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(22,48,38,0.05)' },
+  confirmCancelText: { fontSize: 13, color: colors.muted, fontWeight: '600' },
+  confirmOk:      { flex: 1, height: 36, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', shadowColor: colors.primary, shadowOpacity: 0.28, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
+  confirmOkText:  { fontSize: 13, color: '#FFF', fontWeight: '800' },
+});
+
+// ─── Validation placeholder ────────────────────────────────────────────────────
+
+function ValidationPlaceholderScreen({ difficulty, onQuit }: { difficulty: DifficultyLevel | null; onQuit: () => void }) {
+  const mountedRef = useRef(true);
+  const fadeAnim   = useRef(new Animated.Value(0)).current;
+  const cardAnim   = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1909,134 +2872,99 @@ function ComingNextScreen({ onBack, onQuit }: { onBack: () => void; onQuit: () =
       Animated.timing(fadeAnim, { toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       Animated.timing(cardAnim, { toValue: 1, duration: 340, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
     ]).start();
-    haloLoop.current = Animated.loop(Animated.sequence([
-      Animated.parallel([
-        Animated.timing(haloScale,   { toValue: 1.10, duration: 3800, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        Animated.timing(haloOpacity, { toValue: 0.22, duration: 3800, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-      ]),
-      Animated.parallel([
-        Animated.timing(haloScale,   { toValue: 1.00, duration: 3800, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        Animated.timing(haloOpacity, { toValue: 0.12, duration: 3800, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-      ]),
-    ]));
-    haloLoop.current.start();
-    return () => {
-      mountedRef.current = false;
-      haloLoop.current?.stop();
-    };
+    return () => { mountedRef.current = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return (
-    <SafeAreaView style={cn.safe}>
-      {/* background wash */}
-      <View style={cn.washTop} pointerEvents="none" />
-      <Animated.View style={[cn.halo, { transform: [{ scale: haloScale }], opacity: haloOpacity }]} pointerEvents="none" />
+  const diffLabel = difficulty === 'easy' ? 'Facile' : difficulty === 'hesitant' ? 'Hésitant' : difficulty === 'hard' ? 'Difficile' : null;
 
-      <ScrollView contentContainerStyle={cn.scroll} showsVerticalScrollIndicator={false}>
-        {/* header */}
-        <Animated.View style={[cn.header, { opacity: fadeAnim, transform: [{ translateY: fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [18, 0] }) }] }]}>
-          <View style={cn.headerChip}>
-            <View style={cn.headerChipDot} />
-            <Text style={cn.headerChipText}>ÉTAPE 5 · RAPPEL AVEC AIDE</Text>
+  return (
+    <SafeAreaView style={vp.safe}>
+      <PremiumBackground />
+      <View style={vp.halo} pointerEvents="none" />
+
+      <ScrollView contentContainerStyle={vp.scroll} showsVerticalScrollIndicator={false}>
+        <Animated.View style={[vp.header, {
+          opacity: fadeAnim,
+          transform: [{ translateY: fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [18, 0] }) }],
+        }]}>
+          <View style={vp.headerChip}>
+            <View style={vp.headerChipDot} />
+            <Text style={vp.headerChipText}>VALIDATION FINALE</Text>
           </View>
-          <Text style={cn.headerTitle}>Prochaine étape</Text>
-          <Text style={cn.headerSub}>
-            On va maintenant vérifier ce que tu peux rappeler avec un peu d'aide.
+          <Text style={vp.headerTitle}>Validation prête</Text>
+          <Text style={vp.headerSub}>
+            La prochaine étape branchera la validation réelle de la session et les révisions intelligentes.
           </Text>
         </Animated.View>
 
-        {/* preview card */}
-        <Animated.View style={[cn.previewCard, {
+        <Animated.View style={[vp.card, {
           opacity: cardAnim,
           transform: [{ translateY: cardAnim.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
         }]}>
-          <View style={cn.previewAccent} />
-          <View style={cn.previewBody}>
-            <View style={cn.previewChip}>
-              <Text style={cn.previewChipText}>Étape 5 · Rappel avec aide</Text>
-            </View>
-            <Text style={cn.previewTitle}>Rappel avec aide</Text>
-            <Text style={cn.previewDesc}>
-              On va maintenant vérifier ce que tu peux rappeler avec un peu d'aide. Un morceau à la fois.
+          <View style={vp.cardAccent} />
+          <View style={vp.cardBody}>
+            <Text style={vp.cardTitle}>Session terminée</Text>
+            <Text style={vp.cardDesc}>
+              Tu as parcouru toutes les étapes de ta session Zainly.{'\n'}La connexion DB sera ajoutée dans la prochaine étape.
             </Text>
-            {/* step dots preview */}
-            <View style={cn.stepDots}>
-              {['Découvrir', 'Répéter', 'Cacher', 'Réciter'].map((lbl, i) => (
-                <View key={i} style={cn.stepDot}>
-                  <View style={[cn.stepDotCircle, i === 0 && cn.stepDotActive]} />
-                  <Text style={[cn.stepDotLabel, i === 0 && cn.stepDotLabelActive]}>{lbl}</Text>
-                </View>
-              ))}
-            </View>
+            {diffLabel ? (
+              <View style={vp.diffChip}>
+                <Text style={vp.diffChipText}>Difficulté : {diffLabel}</Text>
+              </View>
+            ) : null}
           </View>
         </Animated.View>
 
         <SectionOrnament />
 
-        {/* note card */}
-        <Animated.View style={[cn.noteCard, { opacity: cardAnim }]}>
-          <View style={cn.noteBorder} />
-          <View style={cn.noteInner}>
-            <Text style={cn.noteQuote}>"</Text>
-            <Text style={cn.noteText}>
-              Le rappel avec aide arrive prochainement.{'\n'}
-              Tu as bien ancré l'ayat. Continue demain.
+        <Animated.View style={[vp.noteCard, { opacity: cardAnim }]}>
+          <View style={vp.noteBorder} />
+          <View style={vp.noteInner}>
+            <Text style={vp.noteQuote}>"</Text>
+            <Text style={vp.noteText}>
+              La validation réelle de la session et les révisions intelligentes arrivent prochainement.
             </Text>
           </View>
         </Animated.View>
       </ScrollView>
 
-      {/* sticky bottom */}
-      <View style={cn.stickyBottom}>
-        <Pressable
-          style={({ pressed }) => [cn.ctaBack, pressed && { opacity: 0.85, transform: [{ scale: 0.975 }] }]}
-          onPress={() => { hapticSelection(); onBack(); }}
-        >
-          <Text style={cn.ctaBackLabel}>← Revenir à la mission</Text>
-        </Pressable>
-        <Pressable style={cn.ctaQuit} onPress={() => { hapticLight(); onQuit(); }}>
-          <Text style={cn.ctaQuitLabel}>Quitter</Text>
+      <View style={vp.stickyBottom}>
+        <Pressable style={vp.ctaQuit} onPress={() => { hapticLight(); onQuit(); }}>
+          <Text style={vp.ctaQuitLabel}>Retour au tableau de bord</Text>
         </Pressable>
       </View>
     </SafeAreaView>
   );
 }
-const cn = StyleSheet.create({
+
+const vp = StyleSheet.create({
   safe:           { flex: 1, backgroundColor: colors.background },
   scroll:         { paddingHorizontal: spacing.lg, paddingTop: spacing.xl, paddingBottom: 160 },
-  washTop:        { position: 'absolute', top: 0, left: 0, right: 0, height: 260, backgroundColor: 'rgba(22,48,38,0.05)', zIndex: 0 },
-  halo:           { position: 'absolute', top: -60, right: -80, width: 280, height: 280, borderRadius: 140, backgroundColor: 'rgba(22,48,38,0.12)', zIndex: 0 },
+  halo:           { position: 'absolute', top: -60, right: -80, width: 280, height: 280, borderRadius: 140, backgroundColor: 'rgba(22,48,38,0.07)', zIndex: 0 },
   header:         { marginBottom: spacing.lg },
   headerChip:     { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', backgroundColor: 'rgba(184,150,46,0.14)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(184,150,46,0.30)', marginBottom: spacing.sm },
   headerChipDot:  { width: 5, height: 5, borderRadius: 2.5, backgroundColor: colors.gold, marginRight: 5 },
   headerChipText: { fontSize: 10, fontWeight: '700', color: colors.gold, letterSpacing: 1.4 },
   headerTitle:    { fontSize: 26, fontWeight: '800', color: colors.primary, marginBottom: spacing.sm },
   headerSub:      { fontSize: 14, color: colors.muted, lineHeight: 22 },
-  previewCard:    { flexDirection: 'row', backgroundColor: colors.goldSoft, borderRadius: 22, borderWidth: 1.5, borderColor: 'rgba(184,150,46,0.30)', marginBottom: spacing.md, overflow: 'hidden', shadowColor: colors.gold, shadowOpacity: 0.14, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
-  previewAccent:  { width: 5, backgroundColor: colors.gold, borderTopLeftRadius: 22, borderBottomLeftRadius: 22 },
-  previewBody:    { flex: 1, padding: spacing.lg },
-  previewChip:    { alignSelf: 'flex-start', backgroundColor: 'rgba(184,150,46,0.18)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3, borderWidth: 1, borderColor: 'rgba(184,150,46,0.35)', marginBottom: spacing.sm },
-  previewChipText:{ fontSize: 10, fontWeight: '700', color: colors.gold, letterSpacing: 0.8 },
-  previewTitle:   { fontSize: 18, fontWeight: '800', color: colors.primary, marginBottom: 6 },
-  previewDesc:    { fontSize: 13, color: colors.muted, lineHeight: 20, marginBottom: spacing.md },
-  stepDots:       { flexDirection: 'row', gap: spacing.sm },
-  stepDot:        { alignItems: 'center', gap: 5 },
-  stepDotCircle:  { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.border },
-  stepDotActive:  { backgroundColor: colors.gold, shadowColor: colors.gold, shadowOpacity: 0.6, shadowRadius: 4, shadowOffset: { width: 0, height: 0 }, elevation: 2 },
-  stepDotLabel:   { fontSize: 9, color: colors.muted, fontWeight: '600', letterSpacing: 0.4 },
-  stepDotLabelActive: { color: colors.gold },
+  card:           { flexDirection: 'row', backgroundColor: colors.goldSoft, borderRadius: 22, borderWidth: 1.5, borderColor: 'rgba(184,150,46,0.30)', marginBottom: spacing.md, overflow: 'hidden', shadowColor: colors.gold, shadowOpacity: 0.14, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
+  cardAccent:     { width: 5, backgroundColor: colors.gold, borderTopLeftRadius: 22, borderBottomLeftRadius: 22 },
+  cardBody:       { flex: 1, padding: spacing.lg },
+  cardTitle:      { fontSize: 18, fontWeight: '800', color: colors.primary, marginBottom: 6 },
+  cardDesc:       { fontSize: 13, color: colors.muted, lineHeight: 20, marginBottom: spacing.sm },
+  diffChip:       { alignSelf: 'flex-start', backgroundColor: 'rgba(22,48,38,0.10)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(22,48,38,0.20)' },
+  diffChipText:   { fontSize: 11, fontWeight: '700', color: colors.primary, letterSpacing: 0.6 },
   noteCard:       { flexDirection: 'row', backgroundColor: '#FBF6E9', borderRadius: 22, borderWidth: 1.5, borderColor: 'rgba(184,150,46,0.22)', overflow: 'hidden', shadowColor: colors.gold, shadowOpacity: 0.10, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
   noteBorder:     { width: 5, backgroundColor: colors.gold, borderTopLeftRadius: 22, borderBottomLeftRadius: 22 },
   noteInner:      { flex: 1, padding: spacing.lg, flexDirection: 'row', alignItems: 'flex-start' },
   noteQuote:      { fontSize: 28, color: colors.gold, lineHeight: 30, marginRight: 6, fontWeight: '700' },
   noteText:       { flex: 1, fontSize: 13, color: colors.primary, lineHeight: 22, fontStyle: 'italic' },
   stickyBottom:   { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: colors.border, paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xl },
-  ctaBack:        { backgroundColor: colors.primary, borderRadius: 16, height: 56, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.sm, shadowColor: colors.primary, shadowOpacity: 0.35, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 5 },
-  ctaBackLabel:   { color: '#FFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.4 },
-  ctaQuit:        { alignItems: 'center', paddingVertical: spacing.sm },
-  ctaQuitLabel:   { fontSize: 14, color: colors.muted, fontWeight: '500' },
+  ctaQuit:        { backgroundColor: colors.primary, borderRadius: 16, height: 56, alignItems: 'center', justifyContent: 'center', shadowColor: colors.primary, shadowOpacity: 0.35, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 5 },
+  ctaQuitLabel:   { color: '#FFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.4 },
 });
+
 
 // ─── Loading screen ───────────────────────────────────────────────────────────
 
@@ -2096,10 +3024,16 @@ export default function SessionScreen() {
     today,
   }), [plan.data, progress.data, reviews.data, today]);
 
-  // ── internal phase ──
-  const [phase, setPhase] = useState<'mission' | 'discovery' | 'decoupage' | 'repetition' | 'comingNext'>('mission');
-  // ayat passed from discovery → decoupage → repetition (avoids refetch)
+  // ── internal phase + ayat index ──
+  const [phase, setPhase] = useState<'mission' | 'discovery' | 'decoupage' | 'repetition' | 'ayatRecitation' | 'finalTest' | 'validationPlaceholder'>('mission');
+  // ayat loaded from discovery, passed through steps 3-5
   const [discoveredAyat, setDiscoveredAyat] = useState<QuranAyahContent | null>(null);
+  // per-ayat index within today session
+  const [currentAyatIndex, setCurrentAyatIndex] = useState(0);
+  // all ayats loaded for final test
+  const [allTodayAyats, setAllTodayAyats] = useState<QuranAyahContent[]>([]);
+  // difficulty selected in Step 6 evaluation
+  const [lastDifficulty, setLastDifficulty] = useState<DifficultyLevel | null>(null);
 
   // ── animation refs ──
   const mountedRef  = useRef(true);
@@ -2237,14 +3171,51 @@ export default function SessionScreen() {
     );
   }
 
+  // ── derived values used in phase renders ──
+  const memStart        = prog.memStart ?? 1;
+  const memEnd          = prog.memEnd   ?? memStart;
+  const totalAyatsToday = memEnd - memStart + 1;
+  const currentAyatNumber = memStart + currentAyatIndex;
+  const isLastAyat      = currentAyatIndex >= totalAyatsToday - 1;
+
+  // ── helper: advance to next ayat (reset per-ayat state) ──
+  const goNextAyat = useCallback(() => {
+    hapticMedium();
+    setDiscoveredAyat(null);
+    setCurrentAyatIndex(prev => prev + 1);
+    setPhase('discovery');
+  }, []);
+
+  // ── helper: restart the whole learning passage from ayat 1 ──
+  const restartLearningPassage = useCallback(() => {
+    hapticMedium();
+    setCurrentAyatIndex(0);
+    setDiscoveredAyat(null);
+    setAllTodayAyats([]);
+    setLastDifficulty(null);
+    setPhase('discovery');
+  }, []);
+
+  // ── helper: load all today ayats for final test ──
+  const goFinalTest = useCallback(() => {
+    hapticMedium();
+    if (prog.currentSurah == null) { setPhase('finalTest'); return; }
+    getQuranAyahRange({ surahNumber: prog.currentSurah, fromAyah: memStart, toAyah: memEnd })
+      .then(result => {
+        if (result.ok) setAllTodayAyats(result.ayahs);
+        setPhase('finalTest');
+      })
+      .catch(() => setPhase('finalTest'));
+  }, [prog.currentSurah, memStart, memEnd]);
+
   // ── discovery step 2 ──
   if (phase === 'discovery') {
     return (
       <DiscoveryScreen
         surahNumber={prog.currentSurah!}
         surahName={prog.surahName ?? ''}
-        memStart={prog.memStart!}
-        memEnd={prog.memEnd!}
+        memStart={currentAyatNumber}
+        memEnd={currentAyatNumber}
         onBack={() => { setPhase('mission'); }}
         onNext={(loadedAyat) => { setDiscoveredAyat(loadedAyat); setPhase('decoupage'); }}
       />
@@ -2256,7 +3227,7 @@ export default function SessionScreen() {
     return (
       <DecoupageScreen
         surahNumber={prog.currentSurah!}
-        ayatNumber={prog.memStart!}
+        ayatNumber={currentAyatNumber}
         ayat={discoveredAyat}
         onBack={() => { setPhase('discovery'); }}
         onNext={() => { setPhase('repetition'); }}
@@ -2268,28 +3239,58 @@ export default function SessionScreen() {
   if (phase === 'repetition') {
     return (
       <RepetitionScreen
-        ayatNumber={prog.memStart!}
+        ayatNumber={currentAyatNumber}
         ayat={discoveredAyat}
         onBack={() => { setPhase('decoupage'); }}
-        onNext={() => { setPhase('comingNext'); }}
+        onNext={() => { setPhase('ayatRecitation'); }}
       />
     );
   }
 
-  // ── coming-next step 5 placeholder ──
-  if (phase === 'comingNext') {
+  // ── ayat recitation step 5 ──
+  if (phase === 'ayatRecitation') {
     return (
-      <ComingNextScreen
+      <AyatRecitationScreen
+        ayat={discoveredAyat}
+        ayatNumber={currentAyatNumber}
+        totalAyatsToday={totalAyatsToday}
+        surahName={prog.surahName ?? ''}
+        isLastAyat={isLastAyat}
         onBack={() => { setPhase('repetition'); }}
+        onNextAyat={goNextAyat}
+        onFinalTest={goFinalTest}
+      />
+    );
+  }
+
+  // ── final test step 6 ──
+  if (phase === 'finalTest') {
+    return (
+      <FinalTestScreen
+        allAyats={allTodayAyats}
+        memStart={memStart}
+        memEnd={memEnd}
+        surahName={prog.surahName ?? ''}
+        onBack={() => { setPhase('ayatRecitation'); }}
+        onComplete={(difficulty) => { setLastDifficulty(difficulty); setPhase('validationPlaceholder'); }}
+        onRestartPassage={restartLearningPassage}
+      />
+    );
+  }
+
+  // ── validation placeholder ──
+  if (phase === 'validationPlaceholder') {
+    return (
+      <ValidationPlaceholderScreen
+        difficulty={lastDifficulty}
         onQuit={goDashboard}
       />
     );
   }
 
-  // ── derived display values ──
-  const ayatLabel = prog.memStart === prog.memEnd
-    ? `Ayat ${prog.memStart}`
-    : `Ayats ${prog.memStart}–${prog.memEnd}`;
+  const ayatLabel = (prog.memStart ?? 1) === (prog.memEnd ?? 1)
+    ? `Ayat ${prog.memStart ?? 1}`
+    : `Ayats ${prog.memStart ?? 1}–${prog.memEnd ?? 1}`;
 
   const dur    = estimateDuration(prog.todayAyatCount, prog.dueReviewCount > 0);
   const charge = chargeInfo(prog.todayAyatCount, prog.dueReviewCount);
