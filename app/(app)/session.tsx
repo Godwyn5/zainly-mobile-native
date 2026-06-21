@@ -20,7 +20,7 @@ import { router } from 'expo-router';
 import { PremiumBackground } from '@/components/PremiumBackground';
 import { colors }  from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
-import { hapticLight, hapticMedium, hapticSelection } from '@/utils/haptics';
+import { hapticLight, hapticMedium, hapticSelection, hapticSuccess } from '@/utils/haptics';
 import { getQuranAyahRange } from '@/core/quranContent';
 import type { QuranAyahContent } from '@/core/quranContent';
 import { getAyatAudioUrl } from '@/core/quranAudio';
@@ -31,6 +31,9 @@ import { usePlan }           from '@/hooks/usePlan';
 import { useProgress }       from '@/hooks/useProgress';
 import { useDueReviews }     from '@/hooks/useDueReviews';
 import { getTodayProgramme } from '@/core/dailyPlan';
+import { completeSession }               from '@/db/progress';
+import { createReviewItemsForAyatRange } from '@/db/reviewItems';
+import { useSessionResultStore }         from '@/store/sessionResultStore';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -2454,7 +2457,7 @@ const ar = StyleSheet.create({
   ctaShine:      { position: 'absolute', top: 0, width: '35%', height: '100%', backgroundColor: 'rgba(255,255,255,0.10)', transform: [{ skewX: '-20deg' }] },
 });
 
-// ─── Step 6 · Test final global ────────────────────────────────────────────────
+// ─── Step 6 · Rappel sans aide ─────────────────────────────────────────────────
 
 type FinalTestMode = 'recite' | 'compare' | 'evaluate';
 type DifficultyLevel = 'easy' | 'hesitant' | 'hard';
@@ -2462,18 +2465,32 @@ type DifficultyLevel = 'easy' | 'hesitant' | 'hard';
 type FinalTestScreenProps = {
   surahNumber:       number;
   allAyats:          QuranAyahContent[];
+  currentAyatIndex:  number;
   memStart:          number;
   memEnd:            number;
   surahName:         string;
+  userId:            string;
+  ayahPerDay:        number;
+  newCurrentAyah:    number;
   onBack:            () => void;
   onComplete:        (difficulty: DifficultyLevel) => void;
   onRestartPassage:  () => void;
 };
 
-function FinalTestScreen({ surahNumber, allAyats, memStart, memEnd, surahName, onBack, onComplete, onRestartPassage }: FinalTestScreenProps) {
+function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, memEnd, surahName, userId, ayahPerDay, newCurrentAyah, onBack, onComplete, onRestartPassage }: FinalTestScreenProps) {
   const mountedRef = useRef(true);
 
-  const totalAyats = Math.max(allAyats.length, memEnd - memStart + 1);
+  // Cumulative recall target: only ayats up to and including the current ayat index.
+  // allAyats holds the full session range (fetched memStart..memEnd).
+  // We slice to currentAyatIndex + 1 so future ayats are never tested early.
+  const cumulativeRecallAyats = allAyats.length > 0
+    ? allAyats.slice(0, currentAyatIndex + 1)
+    : [];
+  // Safe fallback: if slice is empty (race / load failure), treat as single.
+  const recallAyats  = cumulativeRecallAyats.length > 0 ? cumulativeRecallAyats : allAyats.slice(0, 1);
+  const isSingleAyat = recallAyats.length <= 1;
+
+  const totalAyats = Math.max(recallAyats.length, 1);
 
   // ── mode ──
   const [mode, setMode]                         = useState<FinalTestMode>('recite');
@@ -2483,11 +2500,18 @@ function FinalTestScreen({ surahNumber, allAyats, memStart, memEnd, surahName, o
   const guardTimer                              = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isCompleting                            = useRef(false);
   const isRestarting                            = useRef(false);
+  const progressValidated                       = useRef(false); // guard: completeSession already succeeded
+
+  // validation UI state
+  const [isValidating, setIsValidating]         = useState(false);
+  const [validationError, setValidationError]   = useState<string | null>(null);
+  const setResult                               = useSessionResultStore(s => s.setResult);
 
   // ── passage audio (finalCompare only) ──
   const passageAyatNumbers = useMemo(
-    () => allAyats.map(a => a.ayahNumber ?? 0).filter(n => n > 0),
-    [allAyats],
+    () => recallAyats.map(a => a.ayahNumber ?? 0).filter(n => n > 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [recallAyats.length, surahNumber],
   );
   const passage = usePassageAudio(surahNumber, passageAyatNumbers);
 
@@ -2650,15 +2674,99 @@ function FinalTestScreen({ surahNumber, allAyats, memStart, memEnd, surahName, o
     onRestartPassage();
   }, [onRestartPassage]);
 
-  const handleValidate = useCallback(() => {
+  const handleValidate = useCallback(async () => {
     if (!selectedDifficulty || isCompleting.current) return;
     isCompleting.current = true;
+    setIsValidating(true);
+    setValidationError(null);
     hapticMedium();
+
+    const newAyatCount = memEnd - memStart + 1;
+
+    // ── Step 1: completeSession (skip if already succeeded on a prior retry) ──
+    if (!progressValidated.current) {
+      const { error: sessionError } = await completeSession({
+        userId,
+        currentSurah:   surahNumber,
+        newCurrentAyah,
+        ayahPerDay,
+        newAyatCount,
+        difficulty:     selectedDifficulty,
+      });
+
+      if (sessionError) {
+        // Tolerate "already validated today" — treat as success so reviews can proceed
+        if (!sessionError.message.includes('déjà validée')) {
+          setIsValidating(false);
+          setValidationError('Impossible de valider pour l’instant. Réessaie.');
+          isCompleting.current = false;
+          return;
+        }
+      }
+      progressValidated.current = true;
+    }
+
+    // ── Step 2: createReviewItemsForAyatRange ──
+    const { error: reviewError } = await createReviewItemsForAyatRange({
+      userId,
+      surahNumber,
+      fromAyah: memStart,
+      toAyah:   memEnd,
+      difficulty: selectedDifficulty,
+    });
+
+    if (reviewError) {
+      // Session is saved but reviews failed — tell the truth
+      setIsValidating(false);
+      setValidationError('Ta session est enregistrée, mais les révisions n’ont pas pu être préparées. Réessaie.');
+      isCompleting.current = false;
+      return;
+    }
+
+    // ── Step 3: store display data ──
+    setResult({
+      surahName,
+      surahNumber,
+      fromAyah:         memStart,
+      toAyah:           memEnd,
+      newAyatCount,
+      reviewsCompleted: 0,
+      difficulty:       selectedDifficulty,
+      streak:           0,
+      completedAt:      new Date().toISOString(),
+    });
+
+    // ── Step 4: navigate ──
+    hapticSuccess();
     onComplete(selectedDifficulty);
-  }, [selectedDifficulty, onComplete]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDifficulty, userId, surahNumber, newCurrentAyah, ayahPerDay, memStart, memEnd, surahName, setResult, onComplete]);
 
   const ctaShineX = ctaShine.interpolate({ inputRange: [-1, 1], outputRange: ['-60%', '160%'] });
 
+  // Build a cross-surah-safe cumulative range label.
+  // surahNumber is always present on QuranAyahContent (non-optional field).
+  const cumulativeRangeLabel = (() => {
+    if (recallAyats.length === 0) return `Ayat ${memStart}`;
+    if (recallAyats.length === 1) {
+      const n = recallAyats[0].ayahNumber;
+      return n > 0 ? `Ayat ${n}` : `Ayat ${memStart}`;
+    }
+    // Check whether all ayats belong to the same surah.
+    const firstSurah = recallAyats[0].surahNumber;
+    const sameSurah  = recallAyats.every(a => a.surahNumber === firstSurah);
+    if (sameSurah) {
+      const first = recallAyats[0].ayahNumber;
+      const last  = recallAyats[recallAyats.length - 1].ayahNumber;
+      return (first > 0 && last > 0)
+        ? `Ayats ${first} à ${last}`
+        : `${recallAyats.length} ayats appris dans cette session`;
+    }
+    // Multiple surahs — avoid misleading "Ayats X à Y" across surah boundary.
+    return `${recallAyats.length} ayats appris dans cette session`;
+  })();
+
+  // ayatRangeLabel stays as a summary for the context chip (full session range).
   const ayatRangeLabel = memStart === memEnd
     ? `Ayat ${memStart}`
     : `Ayats ${memStart} à ${memEnd}`;
@@ -2688,19 +2796,25 @@ function FinalTestScreen({ surahNumber, allAyats, memStart, memEnd, surahName, o
           <View style={ft.headerChip}>
             <View style={ft.headerChipDot} />
             <Text style={ft.headerChipText}>
-              {mode === 'evaluate' ? 'ÉTAPE 6 · ÉVALUATION' : 'ÉTAPE 6 · TEST FINAL'}
+              {mode === 'evaluate' ? 'ÉTAPE 6 · ÉVALUATION' : 'ÉTAPE 6 · RAPPEL SANS AIDE'}
             </Text>
           </View>
           <Text style={ft.headerTitle}>
-            {mode === 'recite'   ? 'Récite tout le passage' :
-             mode === 'compare'  ? 'Compare ton passage'    :
-                                   'Évalue ta récitation'}
+            {mode === 'recite'
+              ? (isSingleAyat ? 'Récite l\'ayat' : 'Récite le passage')
+              : mode === 'compare'
+                ? (isSingleAyat ? 'Compare ton ayat' : 'Compare ton passage')
+                : 'Évalue ta récitation'}
           </Text>
           <Text style={ft.headerSub}>
             {mode === 'recite'
-              ? 'Enchaîne tous les ayats appris aujourd\'hui.'
+              ? (isSingleAyat
+                  ? 'Récite l\'ayat appris dans cette session, sans aide.'
+                  : 'Enchaîne les ayats appris dans cette session.')
               : mode === 'compare'
-                ? 'Vérifie si tu as oublié un mot, inversé ou hésité dans l\'enchaînement.'
+                ? (isSingleAyat
+                    ? 'Vérifie si tu as bien récité l\'ayat correctement.'
+                    : 'Vérifie si tu as oublié un mot, inversé ou hésité dans l\'enchaînement.')
                 : 'Réponds honnêtement. Zainly utilisera cette difficulté pour protéger tes révisions.'}
           </Text>
         </Animated.View>
@@ -2709,7 +2823,7 @@ function FinalTestScreen({ surahNumber, allAyats, memStart, memEnd, surahName, o
         <Animated.View style={{ opacity: mountAnim }}>
           <SessionProgressBar
             pct={FINAL_TEST_PROGRESS_PCT}
-            label="Étape 6 · Test final"
+            label="Étape 6 · Rappel sans aide"
             phase="Validation"
           />
         </Animated.View>
@@ -2754,15 +2868,17 @@ function FinalTestScreen({ surahNumber, allAyats, memStart, memEnd, surahName, o
                 /* ── FINAL RECITE ── */
                 <View>
                   <Text style={ft.modeInstruction}>
-                    Récite maintenant tous les ayats appris aujourd'hui, dans l'ordre.
+                    {isSingleAyat
+                      ? 'Récite maintenant l\'ayat appris dans cette session.'
+                      : 'Récite maintenant tous les ayats appris dans cette session, dans l\'ordre.'}
                   </Text>
                   <Animated.View style={[ft.hiddenCard, {
                     opacity: glowAnim.interpolate({ inputRange: [0.5, 1.0], outputRange: [0.85, 1.0] }),
                   }]}>
                     <View style={ft.hiddenGlow} />
                     <Text style={ft.hiddenDots}>•  •  •</Text>
-                    <Text style={ft.hiddenCaption}>Récite le passage complet</Text>
-                    <Text style={ft.hiddenRange}>{ayatRangeLabel}</Text>
+                    <Text style={ft.hiddenCaption}>{isSingleAyat ? 'Récite l\'ayat complet' : 'Récite le passage complet'}</Text>
+                    <Text style={ft.hiddenRange}>{cumulativeRangeLabel}</Text>
                   </Animated.View>
                 </View>
 
@@ -2770,7 +2886,9 @@ function FinalTestScreen({ surahNumber, allAyats, memStart, memEnd, surahName, o
                 /* ── FINAL COMPARE ── */
                 <View>
                   <Text style={ft.modeInstruction}>
-                    Vérifie si tu as oublié un mot, inversé un passage ou hésité dans l'enchaînement.
+                    {isSingleAyat
+                      ? 'Vérifie si tu as bien récité l\'ayat, mot pour mot.'
+                      : 'Vérifie si tu as oublié un mot ou hésité dans l\'enchaînement.'}
                   </Text>
 
                   {/* ── passage audio control ── */}
@@ -2801,8 +2919,8 @@ function FinalTestScreen({ surahNumber, allAyats, memStart, memEnd, surahName, o
                               {passage.isLoading
                                 ? 'Chargement…'
                                 : passage.isPlaying
-                                  ? `Lecture du passage… (${passage.currentAyatIndex + 1}/${passage.totalAyats})`
-                                  : 'Écouter le passage'}
+                                  ? (isSingleAyat ? 'Lecture…' : `Lecture du passage… (${passage.currentAyatIndex + 1}/${passage.totalAyats})`)
+                                  : (isSingleAyat ? 'Écouter l\'ayat' : 'Écouter le passage')}
                             </Text>
                             {!passage.isLoading && !passage.isPlaying ? (
                               <Text style={ft.passageAudioSub}>Récitateur : Al-Husary</Text>
@@ -2821,7 +2939,7 @@ function FinalTestScreen({ surahNumber, allAyats, memStart, memEnd, surahName, o
                     </View>
                   ) : null}
 
-                  {allAyats.length > 0 ? allAyats.map((a, idx) => (
+                  {recallAyats.length > 0 ? recallAyats.map((a, idx) => (
                     <View key={a.ayahNumber ?? idx} style={ft.compareAyatBlock}>
                       <View style={ft.compareAyatHeader}>
                         <Text style={ft.compareAyatNum}>Ayat {a.ayahNumber ?? (memStart + idx)}</Text>
@@ -2886,7 +3004,7 @@ function FinalTestScreen({ surahNumber, allAyats, memStart, memEnd, surahName, o
             <View style={ft.guideAccent} />
             <Text style={ft.guideText}>
               {mode === 'recite'
-                ? 'Récite l\'enchaînement complet, sans t\'arrêter.'
+                ? (isSingleAyat ? 'Récite l\'ayat sans t\'arrêter.' : 'Récite l\'enchaînement complet, sans t\'arrêter.')
                 : 'Prends le temps de vérifier chaque ayat.'}
             </Text>
           </Animated.View>
@@ -2924,10 +3042,17 @@ function FinalTestScreen({ surahNumber, allAyats, memStart, memEnd, surahName, o
               </Animated.View>
             ) : (
               <View>
-                {/* helper text for hesitant */}
-                {selectedDifficulty === 'hesitant' ? (
+                {/* inline validation error */}
+                {validationError ? (
+                  <View style={ft.validationError}>
+                    <Text style={ft.validationErrorText}>{validationError}</Text>
+                  </View>
+                ) : null}
+
+                {/* helper text */}
+                {!validationError && selectedDifficulty === 'hesitant' ? (
                   <Text style={ft.helperText}>Tu peux valider, ou reprendre le passage pour le consolider.</Text>
-                ) : selectedDifficulty === 'hard' ? (
+                ) : !validationError && selectedDifficulty === 'hard' ? (
                   <Text style={ft.helperText}>Si c'était difficile, le meilleur choix est de reprendre le passage avant de valider.</Text>
                 ) : null}
 
@@ -2935,11 +3060,14 @@ function FinalTestScreen({ surahNumber, allAyats, memStart, memEnd, surahName, o
                 <Pressable
                   style={({ pressed }) => [
                     ft.cta,
-                    selectedDifficulty ? (selectedDifficulty === 'hard' ? ft.ctaRestart : ft.ctaActive) : ft.ctaLocked,
-                    pressed && !!selectedDifficulty && ft.ctaPressed,
+                    selectedDifficulty && !isValidating
+                      ? (selectedDifficulty === 'hard' ? ft.ctaRestart : ft.ctaActive)
+                      : ft.ctaLocked,
+                    pressed && !!selectedDifficulty && !isValidating && ft.ctaPressed,
                   ]}
+                  disabled={!selectedDifficulty || isValidating}
                   onPress={() => {
-                    if (!selectedDifficulty) return;
+                    if (!selectedDifficulty || isValidating) return;
                     if (selectedDifficulty === 'hard') {
                       openRestartConfirm();
                     } else {
@@ -2947,28 +3075,30 @@ function FinalTestScreen({ surahNumber, allAyats, memStart, memEnd, surahName, o
                     }
                   }}
                 >
-                  <Text style={[ft.ctaText, !selectedDifficulty && ft.ctaTextLocked]}>
-                    {selectedDifficulty === 'hard'
-                      ? 'Reprendre depuis le début →'
-                      : selectedDifficulty
-                        ? 'Préparer la validation →'
-                        : 'Choisis une difficulté…'}
+                  <Text style={[ft.ctaText, (!selectedDifficulty || isValidating) && ft.ctaTextLocked]}>
+                    {isValidating
+                      ? 'Validation en cours…'
+                      : selectedDifficulty === 'hard'
+                        ? 'Reprendre depuis le début →'
+                        : selectedDifficulty
+                          ? 'Valider ma session →'
+                          : 'Choisis une difficulté…'}
                   </Text>
-                  {selectedDifficulty ? (
+                  {selectedDifficulty && !isValidating ? (
                     <Animated.View pointerEvents="none" style={[ft.ctaShine, { left: ctaShineX }]} />
                   ) : null}
                 </Pressable>
 
                 {/* SECONDARY ACTION */}
-                {selectedDifficulty === 'hard' ? (
+                {!isValidating && selectedDifficulty === 'hard' ? (
                   <Pressable style={ft.secondaryCta} onPress={handleValidate}>
-                    <Text style={ft.secondaryCtaText}>Préparer la validation quand même</Text>
+                    <Text style={ft.secondaryCtaText}>Valider quand même</Text>
                   </Pressable>
-                ) : selectedDifficulty === 'hesitant' ? (
+                ) : !isValidating && selectedDifficulty === 'hesitant' ? (
                   <Pressable style={ft.secondaryCta} onPress={openRestartConfirm}>
                     <Text style={ft.secondaryCtaText}>Reprendre depuis le début</Text>
                   </Pressable>
-                ) : selectedDifficulty === 'easy' ? (
+                ) : !isValidating && selectedDifficulty === 'easy' ? (
                   <Pressable style={ft.secondaryCtaDiscreet} onPress={openRestartConfirm}>
                     <Text style={ft.secondaryCtaDiscreetText}>Reprendre depuis le début</Text>
                   </Pressable>
@@ -2987,7 +3117,9 @@ function FinalTestScreen({ surahNumber, allAyats, memStart, memEnd, surahName, o
           >
             <Text style={[ft.ctaText, !canContinue && ft.ctaTextLocked]}>
               {mode === 'recite'
-                ? (canContinue ? 'J\'ai récité le passage →' : 'Récite tout le passage…')
+                ? (canContinue
+                    ? (isSingleAyat ? 'J\'ai récité l\'ayat →' : 'J\'ai récité le passage →')
+                    : (isSingleAyat ? 'Récite l\'ayat…' : 'Récite le passage…'))
                 : (canContinue ? 'J\'ai comparé →' : 'Vérifie le passage…')}
             </Text>
             {canContinue ? (
@@ -3084,6 +3216,10 @@ const ft = StyleSheet.create({
   ctaTextLocked: { color: 'rgba(255,255,255,0.55)', fontWeight: '600' },
   ctaShine:      { position: 'absolute', top: 0, width: '35%', height: '100%', backgroundColor: 'rgba(255,255,255,0.10)', transform: [{ skewX: '-20deg' }] },
 
+  // inline validation error
+  validationError:     { backgroundColor: 'rgba(180,35,24,0.07)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(180,35,24,0.20)', paddingHorizontal: 14, paddingVertical: 10, marginBottom: 10 },
+  validationErrorText: { fontSize: 12, color: '#B42318', lineHeight: 18, textAlign: 'center' },
+
   // helper text above secondary action
   helperText:               { fontSize: 11, color: colors.muted, lineHeight: 17, fontStyle: 'italic', textAlign: 'center', marginBottom: 8 },
 
@@ -3126,111 +3262,6 @@ const ft = StyleSheet.create({
   passageAudioRetryText: { fontSize: 11, fontWeight: '700', color: colors.primary, textDecorationLine: 'underline' },
 });
 
-// ─── Validation placeholder ────────────────────────────────────────────────────
-
-function ValidationPlaceholderScreen({ difficulty, onQuit }: { difficulty: DifficultyLevel | null; onQuit: () => void }) {
-  const mountedRef = useRef(true);
-  const fadeAnim   = useRef(new Animated.Value(0)).current;
-  const cardAnim   = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    mountedRef.current = true;
-    Animated.stagger(120, [
-      Animated.timing(fadeAnim, { toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(cardAnim, { toValue: 1, duration: 340, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-    ]).start();
-    return () => { mountedRef.current = false; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const diffLabel = difficulty === 'easy' ? 'Facile' : difficulty === 'hesitant' ? 'Hésitant' : difficulty === 'hard' ? 'Difficile' : null;
-
-  return (
-    <SafeAreaView style={vp.safe}>
-      <PremiumBackground />
-      <View style={vp.halo} pointerEvents="none" />
-
-      <ScrollView contentContainerStyle={vp.scroll} showsVerticalScrollIndicator={false}>
-        <Animated.View style={[vp.header, {
-          opacity: fadeAnim,
-          transform: [{ translateY: fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [18, 0] }) }],
-        }]}>
-          <View style={vp.headerChip}>
-            <View style={vp.headerChipDot} />
-            <Text style={vp.headerChipText}>VALIDATION FINALE</Text>
-          </View>
-          <Text style={vp.headerTitle}>Validation prête</Text>
-          <Text style={vp.headerSub}>
-            La prochaine étape branchera la validation réelle de la session et les révisions intelligentes.
-          </Text>
-        </Animated.View>
-
-        <Animated.View style={[vp.card, {
-          opacity: cardAnim,
-          transform: [{ translateY: cardAnim.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
-        }]}>
-          <View style={vp.cardAccent} />
-          <View style={vp.cardBody}>
-            <Text style={vp.cardTitle}>Session terminée</Text>
-            <Text style={vp.cardDesc}>
-              Tu as parcouru toutes les étapes de ta session Zainly.{'\n'}La connexion DB sera ajoutée dans la prochaine étape.
-            </Text>
-            {diffLabel ? (
-              <View style={vp.diffChip}>
-                <Text style={vp.diffChipText}>Difficulté : {diffLabel}</Text>
-              </View>
-            ) : null}
-          </View>
-        </Animated.View>
-
-        <SectionOrnament />
-
-        <Animated.View style={[vp.noteCard, { opacity: cardAnim }]}>
-          <View style={vp.noteBorder} />
-          <View style={vp.noteInner}>
-            <Text style={vp.noteQuote}>"</Text>
-            <Text style={vp.noteText}>
-              La validation réelle de la session et les révisions intelligentes arrivent prochainement.
-            </Text>
-          </View>
-        </Animated.View>
-      </ScrollView>
-
-      <View style={vp.stickyBottom}>
-        <Pressable style={vp.ctaQuit} onPress={() => { hapticLight(); onQuit(); }}>
-          <Text style={vp.ctaQuitLabel}>Retour au tableau de bord</Text>
-        </Pressable>
-      </View>
-    </SafeAreaView>
-  );
-}
-
-const vp = StyleSheet.create({
-  safe:           { flex: 1, backgroundColor: colors.background },
-  scroll:         { paddingHorizontal: spacing.lg, paddingTop: spacing.xl, paddingBottom: 160 },
-  halo:           { position: 'absolute', top: -60, right: -80, width: 280, height: 280, borderRadius: 140, backgroundColor: 'rgba(22,48,38,0.07)', zIndex: 0 },
-  header:         { marginBottom: spacing.lg },
-  headerChip:     { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', backgroundColor: 'rgba(184,150,46,0.14)', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(184,150,46,0.30)', marginBottom: spacing.sm },
-  headerChipDot:  { width: 5, height: 5, borderRadius: 2.5, backgroundColor: colors.gold, marginRight: 5 },
-  headerChipText: { fontSize: 10, fontWeight: '700', color: colors.gold, letterSpacing: 1.4 },
-  headerTitle:    { fontSize: 26, fontWeight: '800', color: colors.primary, marginBottom: spacing.sm },
-  headerSub:      { fontSize: 14, color: colors.muted, lineHeight: 22 },
-  card:           { flexDirection: 'row', backgroundColor: colors.goldSoft, borderRadius: 22, borderWidth: 1.5, borderColor: 'rgba(184,150,46,0.30)', marginBottom: spacing.md, overflow: 'hidden', shadowColor: colors.gold, shadowOpacity: 0.14, shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
-  cardAccent:     { width: 5, backgroundColor: colors.gold, borderTopLeftRadius: 22, borderBottomLeftRadius: 22 },
-  cardBody:       { flex: 1, padding: spacing.lg },
-  cardTitle:      { fontSize: 18, fontWeight: '800', color: colors.primary, marginBottom: 6 },
-  cardDesc:       { fontSize: 13, color: colors.muted, lineHeight: 20, marginBottom: spacing.sm },
-  diffChip:       { alignSelf: 'flex-start', backgroundColor: 'rgba(22,48,38,0.10)', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 4, borderWidth: 1, borderColor: 'rgba(22,48,38,0.20)' },
-  diffChipText:   { fontSize: 11, fontWeight: '700', color: colors.primary, letterSpacing: 0.6 },
-  noteCard:       { flexDirection: 'row', backgroundColor: '#FBF6E9', borderRadius: 22, borderWidth: 1.5, borderColor: 'rgba(184,150,46,0.22)', overflow: 'hidden', shadowColor: colors.gold, shadowOpacity: 0.10, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2 },
-  noteBorder:     { width: 5, backgroundColor: colors.gold, borderTopLeftRadius: 22, borderBottomLeftRadius: 22 },
-  noteInner:      { flex: 1, padding: spacing.lg, flexDirection: 'row', alignItems: 'flex-start' },
-  noteQuote:      { fontSize: 28, color: colors.gold, lineHeight: 30, marginRight: 6, fontWeight: '700' },
-  noteText:       { flex: 1, fontSize: 13, color: colors.primary, lineHeight: 22, fontStyle: 'italic' },
-  stickyBottom:   { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: colors.background, borderTopWidth: 1, borderTopColor: colors.border, paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.xl },
-  ctaQuit:        { backgroundColor: colors.primary, borderRadius: 16, height: 56, alignItems: 'center', justifyContent: 'center', shadowColor: colors.primary, shadowOpacity: 0.35, shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 5 },
-  ctaQuitLabel:   { color: '#FFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.4 },
-});
 
 
 // ─── Loading screen ───────────────────────────────────────────────────────────
@@ -3292,15 +3323,14 @@ export default function SessionScreen() {
   }), [plan.data, progress.data, reviews.data, today]);
 
   // ── internal phase + ayat index ──
-  const [phase, setPhase] = useState<'mission' | 'discovery' | 'decoupage' | 'repetition' | 'ayatRecitation' | 'finalTest' | 'validationPlaceholder'>('mission');
+  const [phase, setPhase] = useState<'mission' | 'discovery' | 'decoupage' | 'repetition' | 'ayatRecitation' | 'finalTest'>('mission');
   // ayat loaded from discovery, passed through steps 3-5
   const [discoveredAyat, setDiscoveredAyat] = useState<QuranAyahContent | null>(null);
   // per-ayat index within today session
   const [currentAyatIndex, setCurrentAyatIndex] = useState(0);
   // all ayats loaded for final test
   const [allTodayAyats, setAllTodayAyats] = useState<QuranAyahContent[]>([]);
-  // difficulty selected in Step 6 evaluation
-  const [lastDifficulty, setLastDifficulty] = useState<DifficultyLevel | null>(null);
+
 
   // ── animation refs ──
   const mountedRef  = useRef(true);
@@ -3459,7 +3489,6 @@ export default function SessionScreen() {
     setCurrentAyatIndex(0);
     setDiscoveredAyat(null);
     setAllTodayAyats([]);
-    setLastDifficulty(null);
     setPhase('discovery');
   }, []);
 
@@ -3538,22 +3567,16 @@ export default function SessionScreen() {
       <FinalTestScreen
         surahNumber={prog.currentSurah!}
         allAyats={allTodayAyats}
+        currentAyatIndex={currentAyatIndex}
         memStart={memStart}
         memEnd={memEnd}
         surahName={prog.surahName ?? ''}
+        userId={userId!}
+        ayahPerDay={prog.ayahPerDay ?? 1}
+        newCurrentAyah={memEnd + 1}
         onBack={() => { setPhase('ayatRecitation'); }}
-        onComplete={(difficulty) => { setLastDifficulty(difficulty); setPhase('validationPlaceholder'); }}
+        onComplete={() => { router.replace('/(app)/done'); }}
         onRestartPassage={restartLearningPassage}
-      />
-    );
-  }
-
-  // ── validation placeholder ──
-  if (phase === 'validationPlaceholder') {
-    return (
-      <ValidationPlaceholderScreen
-        difficulty={lastDifficulty}
-        onQuit={goDashboard}
       />
     );
   }
