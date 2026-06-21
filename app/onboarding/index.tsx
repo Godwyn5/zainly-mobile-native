@@ -38,16 +38,10 @@ const F_BODY     = 'Lora_400Regular';
 const HAPTIC_EVERY_N_CHARS   = 4;
 const HAPTIC_MIN_INTERVAL_MS = 85;
 
-// ─── rhythm options (module-scope — never recreated) ─────────────────────────
-const RHYTHM_OPTIONS = [
-  { ayahs: 1,  label: '1 ayat / jour',  desc: 'Parfait pour commencer en douceur' },
-  { ayahs: 2,  label: '2 ayats / jour', desc: 'Un rythme stable et durable' },
-  { ayahs: 3,  label: '3 ayats / jour', desc: 'Un excellent équilibre' },
-  { ayahs: 4,  label: '4 ayats / jour', desc: 'Tu progresses rapidement' },
-  { ayahs: 5,  label: '5 ayats / jour', desc: 'Très engagé — résultats visibles' },
-  { ayahs: 6,  label: '6 ayats / jour', desc: 'Niveau avancé — forte discipline' },
-  { ayahs: 10, label: '10 ayats / jour', desc: 'Très ambitieux — à choisir seulement si tu peux tenir' },
-];
+// ─── Daily ayat goal — Zainly Free always starts at 1 ayat / day ─────────────
+// Future Zainly+ may expose this as a user setting, but it is not user-facing in
+// onboarding for now. Do NOT delete this constant or the DB field it maps to.
+const DEFAULT_DAILY_AYAT_GOAL = 1;
 
 // ─── storage key ──────────────────────────────────────────────────────────────
 const personalKey = (uid: string) => `zainly:onboardingPersonalAnswers:${uid}`;
@@ -82,7 +76,6 @@ type PersonalStep =
   | 'startSurahPicker'
   | 'customOrderPicker'
   | 'knownSurahs'
-  | 'rhythm'
   | 'planSummary'
   | 'creating';
 
@@ -633,16 +626,15 @@ function CreatingPlanScreen({ backendDone, onFinished }: CreatingProps) {
 }
 
 // ─── SeriousQuestionnaire ─────────────────────────────────────────────────────
-// Covers steps: startMode → startSurahPicker/customOrderPicker → knownSurahs → rhythm → planSummary → creating
+// Covers steps: startMode → startSurahPicker/customOrderPicker → knownSurahs → planSummary → creating
 
-type SeriousStep = 'startMode' | 'startSurahPicker' | 'customOrderPicker' | 'knownSurahs' | 'rhythm' | 'planSummary' | 'creating';
+type SeriousStep = 'startMode' | 'startSurahPicker' | 'customOrderPicker' | 'knownSurahs' | 'planSummary' | 'creating';
 
-const TOTAL_SERIOUS_STEPS = 3; // mode, known, rhythm (pickers are sub-steps of mode)
+const TOTAL_SERIOUS_STEPS = 2; // mode (+ optional picker sub-step), known surahs
 
 function seriousStepIndex(step: SeriousStep): number {
   if (step === 'startMode' || step === 'startSurahPicker' || step === 'customOrderPicker') return 1;
-  if (step === 'knownSurahs') return 2;
-  if (step === 'rhythm' || step === 'planSummary' || step === 'creating') return 3;
+  if (step === 'knownSurahs' || step === 'planSummary' || step === 'creating') return 2;
   return 1;
 }
 
@@ -775,45 +767,6 @@ const SurahRow = memo(function SurahRow({ entry, selected, orderIndex, onPress, 
   );
 });
 
-// ── RhythmCard ──
-interface RhythmCardProps { ayahs: number; label: string; desc: string; selected: boolean; onPress: (n: number) => void; delay: number; recommended?: boolean; }
-const RhythmCard = memo(function RhythmCard({ ayahs, label, desc, selected, onPress, delay, recommended }: RhythmCardProps) {
-  const opacAnim   = useRef(new Animated.Value(0)).current;
-  const scaleAnim  = useRef(new Animated.Value(0.96)).current;
-  const pressScale = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(opacAnim,  { toValue: 1, duration: 280, delay, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.spring(scaleAnim, { toValue: 1, delay, friction: 8, tension: 60, useNativeDriver: true }),
-    ]).start();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useEffect(() => {
-    Animated.spring(pressScale, { toValue: selected ? 0.975 : 1, friction: 7, tension: 80, useNativeDriver: true }).start();
-  }, [selected, pressScale]);
-  return (
-    <Animated.View style={{ opacity: opacAnim, transform: [{ scale: scaleAnim }, { scale: pressScale }] }}>
-      <TouchableOpacity
-        activeOpacity={0.82}
-        onPress={() => { hapticSelection(); onPress(ayahs); }}
-        style={[s.card, selected && s.cardSelected]}
-      >
-        <View style={s.cardInner}>
-          <View style={[s.cardDot, selected && s.cardDotSelected]} />
-          <View style={s.cardText}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <Text style={[s.cardLabel, selected && s.cardLabelSelected]}>{label}</Text>
-              {recommended && <View style={s.rhythmBadge}><Text style={s.rhythmBadgeText}>Recommandé</Text></View>}
-            </View>
-            <Text style={s.cardSub}>{desc}</Text>
-          </View>
-        </View>
-        {selected && <View style={s.cardCheck}><Text style={s.cardCheckText}>✓</Text></View>}
-      </TouchableOpacity>
-    </Animated.View>
-  );
-});
-
 // ── Main SeriousQuestionnaire ──
 interface SQProps {
   step: SeriousStep;
@@ -828,7 +781,7 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
   const [customOrder,      setCustomOrder]      = useState<number[]>([]);
   const [continueWithRest, setContinueWithRest] = useState<boolean>(true);
   const [knownSurahs,      setKnownSurahs]      = useState<number[]>([]);
-  const [ayahPerDay,       setAyahPerDay]       = useState<number>(2);
+  const ayahPerDay = DEFAULT_DAILY_AYAT_GOAL;
   const [surahSearch,      setSurahSearch]      = useState('');
   const [submitError,          setSubmitError]          = useState<string | null>(null);
   const [creationBackendDone,  setCreationBackendDone]  = useState(false);
@@ -1245,49 +1198,11 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
               onPress={() => {
                 if (allKnownSelected) { hapticWarning(); return; }
                 hapticLight();
-                onStepChange('rhythm');
+                onStepChange('planSummary');
               }}>
               <Text style={s.ctaBtnText}>
                 {knownSurahs.length > 0 ? `Continuer (${knownSurahs.length} connues)` : 'Continuer'}
               </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </PageShell>
-    );
-  }
-
-  // ── Step: rhythm ──
-  if (step === 'rhythm') {
-    return (
-      <PageShell stepKey="rhythm">
-        <View style={[s.qRoot, { paddingTop: Platform.OS === 'ios' ? 54 : 36 }]}>
-          <StatusBar barStyle="dark-content" backgroundColor={BG} />
-          <SeriousProgressBar current={3} total={TOTAL_SERIOUS_STEPS} />
-          <ScrollView style={s.qScroll} contentContainerStyle={s.qScrollContent} showsVerticalScrollIndicator={false}>
-            <View style={s.qHeader}>
-              <Text style={s.qEyebrow}>RYTHME</Text>
-              <Text style={s.qTitle}>{'Quel rythme veux-tu suivre ?'}</Text>
-              <Text style={s.qSubtitle}>{'Choisis une quantité que tu peux tenir régulièrement. La régularité est plus importante que la vitesse.'}</Text>
-            </View>
-            <View style={s.qOptions}>
-              {RHYTHM_OPTIONS.map((opt, i) => (
-                <RhythmCard key={opt.ayahs} ayahs={opt.ayahs} label={opt.label} desc={opt.desc}
-                  selected={ayahPerDay === opt.ayahs}
-                  recommended={opt.ayahs === 2 || opt.ayahs === 3}
-                  onPress={setAyahPerDay}
-                  delay={60 + i * 45} />
-              ))}
-            </View>
-          </ScrollView>
-          <View style={s.ctaWrap}>
-            <TouchableOpacity style={s.backBtn} activeOpacity={0.8}
-              onPress={() => { hapticLight(); onStepChange('knownSurahs'); }}>
-              <Text style={s.backBtnText}>← Retour</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={s.ctaBtn} activeOpacity={0.85}
-              onPress={() => { hapticLight(); onStepChange('planSummary'); }}>
-              <Text style={s.ctaBtnText}>Continuer</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1317,8 +1232,6 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
     const previewContinueWithRest  = previewOk ? previewResult!.computed.continueWithRest : continueWithRest;
     const startSurahWasSkipped     = planMode === 'start_surah' && startingSurah != null
       && skipped.includes(startingSurah);
-    const showHighPaceWarning      = ayahPerDay >= 7;
-
     return (
       <PageShell stepKey="planSummary">
         <View style={[s.qRoot, { paddingTop: Platform.OS === 'ios' ? 64 : 48 }]}>
@@ -1327,13 +1240,6 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
             <Text style={s.qEyebrow}>RÉCAPITULATIF</Text>
             <Text style={s.qTitle}>{'Ton programme\nest prêt.'}</Text>
             <Text style={[s.qSubtitle, { marginBottom: 24 }]}>{'Vérifie tes choix avant de créer ton parcours.'}</Text>
-
-            {showHighPaceWarning && (
-              <View style={s.ambitiousCard}>
-                <Text style={s.ambitiousTitle}>Rythme très ambitieux</Text>
-                <Text style={s.ambitiousText}>{'Ce rythme peut fonctionner si tu as déjà une routine solide. Les révisions deviendront plus importantes avec le temps.'}</Text>
-              </View>
-            )}
 
             {startSurahWasSkipped && (
               <View style={s.warningCard}>
@@ -1373,8 +1279,8 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
               </View>
               <View style={s.summaryDivider} />
               <View style={s.summaryRow}>
-                <Text style={s.summaryRowLabel}>Rythme</Text>
-                <Text style={s.summaryRowValue}>{ayahPerDay} ayat{ayahPerDay > 1 ? 's' : ''} / jour</Text>
+                <Text style={s.summaryRowLabel}>Mission quotidienne</Text>
+                <Text style={s.summaryRowValue}>Avance ayat par ayat, chaque jour.</Text>
               </View>
               {planMode === 'custom_order' && (
                 <>
@@ -1402,7 +1308,7 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
                     ? 'Estimation pour mémoriser le Coran restant, en commençant par ton ordre personnalisé.'
                     : planMode === 'custom_order'
                     ? 'Estimation pour terminer ton ordre personnalisé.'
-                    : 'Estimation pour mémoriser le Coran restant, selon ton rythme actuel.'}
+                    : 'Estimation pour mémoriser le Coran restant, à raison d\'un ayat par jour.'}
                 </Text>
                 <Text style={s.estimateHelperLine}>{'La fourchette tient compte des révisions et des semaines plus lentes.'}</Text>
               </View>
@@ -1410,7 +1316,7 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
           </ScrollView>
           <View style={s.ctaWrap}>
             <TouchableOpacity style={s.backBtn} activeOpacity={0.8}
-              onPress={() => { hapticLight(); onStepChange('rhythm'); }}>
+              onPress={() => { hapticLight(); onStepChange('knownSurahs'); }}>
               <Text style={s.backBtnText}>← Modifier mes réponses</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.ctaBtn} activeOpacity={0.85} onPress={handleCreatePlan}>
@@ -1710,10 +1616,6 @@ const s = StyleSheet.create({
   modeBadge:     { backgroundColor: 'rgba(198,161,91,0.15)', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 },
   modeBadgeText: { fontFamily: F_BODY, fontSize: 10, fontWeight: '700', color: GOLD, letterSpacing: 0.5 },
 
-  // ── rhythm badge (Recommandé) ──
-  rhythmBadge:     { backgroundColor: 'rgba(198,161,91,0.15)', borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 },
-  rhythmBadgeText: { fontFamily: F_BODY, fontSize: 10, fontWeight: '700', color: GOLD, letterSpacing: 0.5 },
-
   // ── custom order quick helpers ──
   quickHelpersWrap:  { marginBottom: 10 },
   quickHelpersLabel: { fontFamily: F_BODY, fontSize: 10, fontWeight: '700', color: MUTED, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8 },
@@ -1735,15 +1637,6 @@ const s = StyleSheet.create({
     paddingHorizontal: 12, paddingVertical: 4, marginTop: 6,
   },
   selectedCountText: { fontFamily: F_BODY, fontSize: 11, fontWeight: '700', color: GOLD },
-
-  // ── ambitious pace card ──
-  ambitiousCard: {
-    backgroundColor: 'rgba(198,161,91,0.08)',
-    borderRadius: 10, borderWidth: 1, borderColor: GOLD_B,
-    padding: 14, marginBottom: 12,
-  },
-  ambitiousTitle: { fontFamily: F_BODY, fontSize: 12, fontWeight: '700', color: TITLE, marginBottom: 4 },
-  ambitiousText:  { fontFamily: F_BODY, fontSize: 12, color: MUTED, lineHeight: 18 },
 
   // ── estimate helper text ──
   estimateHelperWrap: { paddingHorizontal: 4, marginBottom: 20, gap: 4 },
