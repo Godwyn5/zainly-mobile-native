@@ -411,11 +411,15 @@ export default function TodayScreen() {
   })();
 
   const coachText = (() => {
+    if (prog.dueReviewCount >= 6)
+      return "Aujourd'hui, la priorité est la consolidation. Ajouter du nouveau maintenant risquerait de fragiliser ton Hifz.";
+    if (prog.dueReviewCount >= 2)
+      return "Ta charge est légère aujourd'hui. On révise d'abord, puis tu pourras avancer.";
+    if (prog.dueReviewCount === 1)
+      return "Avant d'ajouter du nouveau, Zainly protège ce que tu as déjà mémorisé.";
     if (prog.sessionDoneToday)
       return "Tu as terminé ta session du jour. Reviens demain pour continuer avec régularité.";
-    if (prog.dueReviewCount > 0)
-      return "Zainly commence par tes révisions pour renforcer ta mémoire, puis ajoute les nouveaux ayats.";
-    return "Aujourd'hui, ta charge est légère. Concentre-toi sur ta nouvelle mémorisation.";
+    return "Aujourd'hui, ton Hifz est à jour. Concentre-toi sur ta nouvelle mémorisation.";
   })();
 
   const nextStepText = (() => {
@@ -530,9 +534,23 @@ export default function TodayScreen() {
           <View style={s.sessionCardHeader}>
             <View style={{ flex: 1 }}>
               <Text style={s.cardTitle}>
-                {prog.sessionDoneToday ? 'Session terminée' : 'Prête à commencer'}
+                {prog.dueReviewCount >= 6
+                  ? 'Journée consolidation'
+                  : prog.dueReviewCount >= 2
+                    ? `${prog.dueReviewCount} ayats à consolider`
+                    : prog.dueReviewCount === 1
+                      ? '1 ayat à consolider'
+                      : prog.sessionDoneToday
+                        ? 'Session terminée'
+                        : 'Prête à commencer'}
               </Text>
-              <Text style={s.cardSubtitle}>Zainly te guide étape par étape.</Text>
+              <Text style={s.cardSubtitle}>
+                {prog.dueReviewCount >= 6
+                  ? 'Zainly recommande de consolider avant d’avancer.'
+                  : prog.dueReviewCount > 0
+                    ? 'Zainly protège d’abord ce que tu as mémorisé.'
+                    : 'Zainly te guide étape par étape.'}
+              </Text>
             </View>
             {/* Charge chip with pulse dot */}
             <View style={[
@@ -635,8 +653,12 @@ export default function TodayScreen() {
 
           <View style={s.sessionDivider} />
 
-          {/* CTA */}
-          {prog.sessionDoneToday ? (
+          {/* CTA — four cases:
+               A) 0 due → new session (or done-today)
+               B) 1 due → review (also allowed after sessionDoneToday)
+               C) 2–5 due → review
+               D) 6+ due → review (consolidation day) */}
+          {prog.dueReviewCount === 0 && prog.sessionDoneToday ? (
             <View style={s.ctaDone}>
               <Text style={s.ctaDoneText}>Session terminée aujourd'hui ✓</Text>
             </View>
@@ -649,13 +671,23 @@ export default function TodayScreen() {
                   if (isPushing.current) return;
                   isPushing.current = true;
                   hapticLight();
-                  router.push('/(app)/session');
-                  // reset after mount so back-navigation can re-trigger
+                  if (prog.dueReviewCount > 0) {
+                    router.push('/(app)/revision');
+                  } else {
+                    router.push('/(app)/session');
+                  }
                   setTimeout(() => { isPushing.current = false; }, 1000);
                 }}
               >
-                <Text style={s.ctaText}>Commencer la session →</Text>
-                {/* gold shine sweep */}
+                <Text style={s.ctaText}>
+                  {prog.dueReviewCount >= 6
+                    ? 'Consolider mon Hifz →'
+                    : prog.dueReviewCount >= 2
+                      ? 'Commencer mes révisions →'
+                      : prog.dueReviewCount === 1
+                        ? 'Réviser maintenant →'
+                        : 'Commencer la session →'}
+                </Text>
                 <Animated.View
                   pointerEvents="none"
                   style={[s.ctaShine, { left: ctaShineX }]}

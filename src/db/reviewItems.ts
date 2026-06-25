@@ -6,6 +6,9 @@ import type { SessionDifficulty } from './progress';
 
 export const REVIEW_OFFSETS = [1, 3, 7, 14, 30] as const;
 
+// Maximum review items served per session (V1).
+export const REVIEW_BATCH_CAP = 8;
+
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
 function localDateStr(d: Date = new Date()): string {
@@ -42,6 +45,42 @@ export async function fetchDueItems(userId: string, today: string, startTodayISO
     .lt('created_at', startTodayISO);
   if (error) throw error;
   return data ?? [];
+}
+
+// ─── fetchDueReviewItems ──────────────────────────────────────────────────────
+// Fetches up to `limit` due review rows, ordered by oldest due first.
+// Excludes mastered rows and items created today (same filter as fetchDueCount).
+// Default limit = REVIEW_BATCH_CAP (8).
+
+export type DueReviewItem = {
+  id:                 string;
+  surah_number:       number;
+  ayah:               number;
+  review_cycle:       number;
+  next_review:        string;
+  mastered:           boolean;
+  final_test_status:  string | null;
+  created_at:         string;
+};
+
+export async function fetchDueReviewItems(
+  userId:       string,
+  today:        string,
+  startTodayISO:string,
+  limit:        number = REVIEW_BATCH_CAP,
+): Promise<DueReviewItem[]> {
+  const { data, error } = await supabase
+    .from('review_items')
+    .select('id, surah_number, ayah, review_cycle, next_review, mastered, final_test_status, created_at')
+    .eq('user_id', userId)
+    .eq('mastered', false)
+    .lte('next_review', today)
+    .lt('created_at', startTodayISO)
+    .order('next_review', { ascending: true })
+    .order('created_at',  { ascending: true })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []) as DueReviewItem[];
 }
 
 // ─── createReviewItemsForAyatRange ────────────────────────────────────────────

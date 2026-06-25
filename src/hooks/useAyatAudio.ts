@@ -46,11 +46,18 @@ export function useAyatAudio(
   url: string,
   onFinish: () => void,
 ): AyatAudioState {
-  const mountedRef         = useRef(true);
-  const finishFiredRef     = useRef(false);
-  const loadTimerRef       = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const preparedUrlRef     = useRef<string | null>(null);  // URL currently loaded into native player
-  const intendingTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef            = useRef(true);
+  const finishFiredRef        = useRef(false);
+  const loadTimerRef          = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const preparedUrlRef        = useRef<string | null>(null);  // URL currently loaded into native player
+  const intendingTimerRef     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // interactionIntentRef: blocks native status from overwriting optimistic UI
+  // during the short lag between tap and native player confirmation.
+  // 'pause'  → we just called pause(); ignore status.playing=true until native settles
+  // 'resume' → we just called resume(); ignore status.playing=false until native confirms
+  // null     → no pending interaction; native status drives UI normally
+  const interactionIntentRef  = useRef<'pause' | 'resume' | null>(null);
+  const intentClearTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [isLoading,         setIsLoading]         = useState(false);
   const [isLoadingVisible,  setIsLoadingVisible]  = useState(false);
@@ -108,10 +115,32 @@ export function useAyatAudio(
     const loading = !status.isLoaded && !status.didJustFinish;
     setIsLoading(loading && !hasError);
     setLoadingWithDelay(loading && !hasError);
-    setIsPlaying(status.playing);
+
+    // Only update isPlaying from native status when no pending interaction intent.
+    // This prevents native lag from overwriting the optimistic pause/resume state.
+    if (interactionIntentRef.current === null) {
+      setIsPlaying(status.playing);
+    } else if (interactionIntentRef.current === 'pause') {
+      // We intend to be paused — if native confirms not-playing, clear intent
+      if (!status.playing) {
+        interactionIntentRef.current = null;
+        if (intentClearTimerRef.current) { clearTimeout(intentClearTimerRef.current); intentClearTimerRef.current = null; }
+        setIsPlaying(false);
+      }
+    } else if (interactionIntentRef.current === 'resume') {
+      // We intend to be playing — if native confirms playing, clear intent
+      if (status.playing) {
+        interactionIntentRef.current = null;
+        if (intentClearTimerRef.current) { clearTimeout(intentClearTimerRef.current); intentClearTimerRef.current = null; }
+        setIsPlaying(true);
+      }
+    }
 
     if (status.didJustFinish && !finishFiredRef.current) {
       finishFiredRef.current = true;
+      // Clear intent on completion
+      interactionIntentRef.current = null;
+      if (intentClearTimerRef.current) { clearTimeout(intentClearTimerRef.current); intentClearTimerRef.current = null; }
       // Clear preparedUrlRef: player is at EOF — next play() must replace/seek
       preparedUrlRef.current = null;
       if (mountedRef.current) {
@@ -134,6 +163,7 @@ export function useAyatAudio(
       mountedRef.current = false;
       if (loadTimerRef.current) clearTimeout(loadTimerRef.current);
       if (intendingTimerRef.current) clearTimeout(intendingTimerRef.current);
+      if (intentClearTimerRef.current) clearTimeout(intentClearTimerRef.current);
       try { playerRef.current.remove(); } catch { /* ignore */ }
     };
   }, []);
@@ -200,6 +230,13 @@ export function useAyatAudio(
   const pause = useCallback(() => {
     if (!mountedRef.current) return;
     if (intendingTimerRef.current) { clearTimeout(intendingTimerRef.current); intendingTimerRef.current = null; }
+    // Set intent BEFORE calling native pause so status effect won't override
+    interactionIntentRef.current = 'pause';
+    if (intentClearTimerRef.current) clearTimeout(intentClearTimerRef.current);
+    intentClearTimerRef.current = setTimeout(() => {
+      interactionIntentRef.current = null;
+      intentClearTimerRef.current = null;
+    }, 600);
     try { playerRef.current.pause(); } catch { /* ignore */ }
     if (mountedRef.current) {
       setIsPlaying(false);
@@ -213,6 +250,13 @@ export function useAyatAudio(
   // ── resume (from paused position) ──
   const resume = useCallback(() => {
     if (!mountedRef.current) return;
+    // Set intent BEFORE calling native play so status effect won't snap back to paused
+    interactionIntentRef.current = 'resume';
+    if (intentClearTimerRef.current) clearTimeout(intentClearTimerRef.current);
+    intentClearTimerRef.current = setTimeout(() => {
+      interactionIntentRef.current = null;
+      intentClearTimerRef.current = null;
+    }, 600);
     setIsPaused(false);
     setIsPlaying(true);
     try { playerRef.current.play(); } catch { /* ignore */ }
@@ -222,6 +266,8 @@ export function useAyatAudio(
   const stop = useCallback(() => {
     if (!mountedRef.current) return;
     if (intendingTimerRef.current) { clearTimeout(intendingTimerRef.current); intendingTimerRef.current = null; }
+    interactionIntentRef.current = null;
+    if (intentClearTimerRef.current) { clearTimeout(intentClearTimerRef.current); intentClearTimerRef.current = null; }
     // Clear preparedUrlRef so next play() forces a replace (clean start)
     preparedUrlRef.current = null;
     try { playerRef.current.pause(); } catch { /* ignore */ }
