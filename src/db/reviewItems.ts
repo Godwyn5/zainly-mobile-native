@@ -46,7 +46,8 @@ export async function fetchDueItems(userId: string, today: string, startTodayISO
 
 // ─── createReviewItemsForAyatRange ────────────────────────────────────────────
 // Creates one review_item per ayah in the given range.
-// Skips ayahs that already have an active (non-mastered) review item.
+// Skips ayahs that already have ANY existing row (mastered or active).
+// Idempotent: safe to call multiple times — second call is always a no-op.
 // final_test_status: DB column accepts 'validated' | 'reinforce' | null.
 // We map: easy→'validated', hesitant→'reinforce', hard→'reinforce'.
 
@@ -63,13 +64,13 @@ export async function createReviewItemsForAyatRange(params: {
     return { error: new Error(`Plage d'ayats invalide: ${fromAyah}–${toAyah}.`) };
   }
 
-  // Fetch any existing active items for this surah range to avoid duplicates.
+  // Fetch ALL existing rows (active or mastered) for this range to avoid duplicates.
+  // Do NOT filter by mastered — a mastered row must also block re-insertion.
   const { data: existing, error: fetchError } = await supabase
     .from('review_items')
     .select('ayah')
     .eq('user_id', userId)
     .eq('surah_number', surahNumber)
-    .eq('mastered', false)
     .gte('ayah', fromAyah)
     .lte('ayah', toAyah);
 
@@ -104,6 +105,37 @@ export async function createReviewItemsForAyatRange(params: {
 
   if (insertError) return { error: new Error(insertError.message) };
   return { error: null };
+}
+
+// ─── fetchLearnedItems ────────────────────────────────────────────────────────
+// Returns ALL learned ayats for the user, including mastered ones.
+// mastered=true means the SRS cycle completed — the ayat is still in the Hifz.
+// There is no separate archived/deleted flag in this schema.
+//
+// Deduplication: if the same (surah_number, ayah) appears multiple times
+// (e.g. a mastered row and a fresh re-insert), we keep only the most recent row
+// per unique ayat. The query orders by created_at DESC so the first occurrence
+// of each key encountered in the JS loop is always the most recent.
+
+export async function fetchLearnedItems(userId: string) {
+  const { data, error } = await supabase
+    .from('review_items')
+    .select('id, surah_number, ayah, review_cycle, next_review, mastered, final_test_status, created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+
+  const rows = data ?? [];
+  const seen = new Set<string>();
+  const deduped: typeof rows = [];
+  for (const row of rows) {
+    const key = `${row.surah_number}:${row.ayah}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(row);
+    }
+  }
+  return deduped;
 }
 
 // ─── advanceReviewItem ────────────────────────────────────────────────────────

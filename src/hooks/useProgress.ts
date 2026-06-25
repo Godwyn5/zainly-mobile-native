@@ -6,6 +6,6 @@ export function useProgress(userId: string | undefined) {
     queryKey: ['progress', userId],
     queryFn: () => fetchProgress(userId!),
     enabled: !!userId,
-    staleTime: 30_000,
+    staleTime: 5 * 60_000,
   });
 }

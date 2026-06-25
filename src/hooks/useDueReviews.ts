@@ -19,6 +19,6 @@ export function useDueReviews(userId: string | undefined) {
     queryKey: ['dueReviews', userId, today],
     queryFn: () => fetchDueCount(userId!, today, startTodayISO),
     enabled: !!userId,
-    staleTime: 30_000,
+    staleTime: 5 * 60_000,
   });
 }

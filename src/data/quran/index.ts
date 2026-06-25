@@ -189,6 +189,15 @@ export function validateQuranDataset(riwaya: QuranRiwaya): QuranDatasetValidatio
   };
 }
 
+// ─── Public: get surah name ──────────────────────────────────────────────────
+// Returns the transliteration name (e.g. "Al-Fatihah") from the bundled JSON.
+// Synchronous — no network, uses the existing in-memory cache.
+
+export function getSurahName(surahNumber: number): string | null {
+  const surah = loadHafsSurah(surahNumber);
+  return surah?.surahName ?? null;
+}
+
 // ─── Re-export types for consumers ────────────────────────────────────────────
 
 export type { QuranRiwaya, QuranAyahContent, QuranSurahContent, QuranContentResult, QuranDatasetValidation } from './types';

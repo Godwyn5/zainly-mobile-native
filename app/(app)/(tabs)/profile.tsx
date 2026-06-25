@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Screen } from '@/components/ui/Screen';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { useLogout } from '@/hooks/useLogout';
@@ -58,16 +58,19 @@ export default function ProfileScreen() {
       {/* ── Compte section ── */}
       <SectionLabel text="Compte" style={styles.sectionLabel} />
       <View style={styles.card}>
-        <TouchableOpacity
-          style={[styles.logoutRow, isLoggingOut && styles.logoutRowDisabled]}
+        <Pressable
+          style={({ pressed }) => [
+            styles.logoutRow,
+            isLoggingOut && styles.logoutRowDisabled,
+            pressed && !isLoggingOut && styles.logoutRowPressed,
+          ]}
           onPress={confirmLogout}
           disabled={isLoggingOut}
-          activeOpacity={0.7}
         >
           <Text style={[styles.logoutText, isLoggingOut && styles.logoutTextDim]}>
             {isLoggingOut ? 'Déconnexion…' : 'Se déconnecter'}
           </Text>
-        </TouchableOpacity>
+        </Pressable>
       </View>
     </Screen>
   );
@@ -138,6 +141,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   logoutRowDisabled: { opacity: 0.5 },
+  logoutRowPressed:   { opacity: 0.65 },
   logoutText: {
     fontSize: 15,
     fontWeight: '600',

@@ -14,18 +14,19 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 
 import { PremiumBackground } from '@/components/PremiumBackground';
 import { colors }  from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
 import { hapticLight, hapticMedium, hapticSelection, hapticSuccess } from '@/utils/haptics';
-import { getQuranAyahRange } from '@/core/quranContent';
+import { getQuranAyahRange, getQuranAyahSync } from '@/core/quranContent';
 import type { QuranAyahContent } from '@/core/quranContent';
 import { getAyatAudioUrl } from '@/core/quranAudio';
 import { useAyatAudio } from '@/hooks/useAyatAudio';
 import { usePassageAudio } from '@/hooks/usePassageAudio';
+import { useQueryClient }    from '@tanstack/react-query';
 import { useAuthStore }      from '@/store/authStore';
 import { usePlan }           from '@/hooks/usePlan';
 import { useProgress }       from '@/hooks/useProgress';
@@ -342,6 +343,11 @@ function AyatAudioControl({ surahNumber, ayatNumber, label, onCompleted, compact
   const barsLoop = useRef<Animated.CompositeAnimation | null>(null);
   const btnScale = useRef(new Animated.Value(1)).current;
 
+  // Stop on unmount — prevents orphaned playback
+  useEffect(() => () => { audio.stop(); },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  []);
+
   useEffect(() => {
     if (audio.isPlaying) {
       barsLoop.current = Animated.loop(Animated.parallel([
@@ -369,17 +375,31 @@ function AyatAudioControl({ surahNumber, ayatNumber, label, onCompleted, compact
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audio.isPlaying]);
 
+  // Tap handler — routes through full state machine
   const handlePress = useCallback(() => {
     hapticLight();
-    audio.play();
+    Animated.sequence([
+      Animated.timing(btnScale, { toValue: 0.93, duration: 80,  useNativeDriver: true }),
+      Animated.timing(btnScale, { toValue: 1.00, duration: 110, useNativeDriver: true }),
+    ]).start();
+    if (audio.hasError)         { audio.reset(); audio.play(); }
+    else if (audio.isPlaying)   { audio.pause();  }
+    else if (audio.isPaused)    { audio.resume(); }
+    else if (audio.hasCompleted){ audio.replay(); }
+    else                        { audio.play();   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audio.play]);
+  }, [audio.hasError, audio.isPlaying, audio.isPaused, audio.hasCompleted, audio.reset, audio.play, audio.pause, audio.resume, audio.replay]);
 
-  const btnLabel = audio.isLoading
-    ? 'Chargement…'
-    : audio.isPlaying
-      ? 'Lecture en cours…'
-      : label ?? "Écouter l'ayat";
+  // Optimistic: treat tap as playing instantly
+  const isEffectivePlaying = audio.isPlaying || audio.isIntendingToPlay;
+
+  const btnLabel = audio.hasError
+    ? "Réessayer"
+    : audio.isPaused
+      ? 'Reprendre'
+      : isEffectivePlaying
+        ? 'Pause'
+        : label ?? "Écouter l'ayat";
 
   return (
     <View>
@@ -389,55 +409,56 @@ function AyatAudioControl({ surahNumber, ayatNumber, label, onCompleted, compact
             aco.btn,
             compact && aco.btnCompact,
             audio.isPlaying && aco.btnPlaying,
-            pressed && !audio.isLoading && aco.btnPressed,
+            audio.isPaused  && aco.btnPaused,
+            pressed && !audio.isLoadingVisible && aco.btnPressed,
           ]}
           onPress={handlePress}
-          disabled={audio.isLoading}
           accessibilityLabel={btnLabel}
         >
           <View style={aco.inner}>
-            {audio.isLoading ? (
-              <Text style={aco.loadingDots}>···</Text>
-            ) : (
+            {audio.isLoadingVisible ? (
+              <View style={aco.spinner} />
+            ) : audio.isPaused ? (
+              <View style={aco.playTriangle} />
+            ) : isEffectivePlaying ? (
               <View style={aco.icon}>
                 <Animated.View style={[aco.bar1, { transform: [{ scaleY: bar1 }] }]} />
                 <Animated.View style={[aco.bar2, { transform: [{ scaleY: bar2 }] }]} />
                 <Animated.View style={[aco.bar3, { transform: [{ scaleY: bar3 }] }]} />
               </View>
+            ) : (
+              <View style={aco.playTriangle} />
             )}
-            <Text style={[aco.label, audio.isPlaying && aco.labelPlaying]}>{btnLabel}</Text>
+            <Text style={[
+              aco.label,
+              isEffectivePlaying && aco.labelPlaying,
+              audio.isPaused     && aco.labelPaused,
+              audio.hasError     && aco.labelError,
+            ]}>{btnLabel}</Text>
           </View>
         </Pressable>
       </Animated.View>
-      {audio.hasError ? (
-        <View style={aco.errorRow}>
-          <Text style={aco.errorText}>{audio.errorMessage}</Text>
-          <Pressable onPress={handlePress} style={aco.retryBtn} hitSlop={8}>
-            <Text style={aco.retryText}>Réessayer</Text>
-          </Pressable>
-        </View>
-      ) : null}
     </View>
   );
 }
 
 const aco = StyleSheet.create({
-  btn:         { backgroundColor: colors.surface, borderRadius: 12, borderWidth: 1.5, borderColor: 'rgba(22,48,38,0.18)', paddingVertical: 9, paddingHorizontal: spacing.md, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
-  btnCompact:  { paddingVertical: 7, paddingHorizontal: 12 },
-  btnPlaying:  { backgroundColor: 'rgba(22,48,38,0.07)', borderColor: colors.primary },
-  btnPressed:  { opacity: 0.80, transform: [{ scale: 0.97 }] },
-  inner:       { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  icon:        { flexDirection: 'row', alignItems: 'flex-end', gap: 2.5, height: 16 },
-  bar1:        { width: 2.5, height: 9,  borderRadius: 2, backgroundColor: colors.primary },
-  bar2:        { width: 2.5, height: 16, borderRadius: 2, backgroundColor: colors.primary },
-  bar3:        { width: 2.5, height: 11, borderRadius: 2, backgroundColor: colors.primary },
-  label:       { fontSize: 12, fontWeight: '700', color: colors.primary, letterSpacing: 0.3 },
-  labelPlaying:{ color: colors.primary, opacity: 0.85 },
-  loadingDots: { fontSize: 18, color: colors.muted, letterSpacing: 4, lineHeight: 20 },
-  errorRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 5 },
-  errorText:   { fontSize: 11, color: colors.muted, flex: 1 },
-  retryBtn:    { paddingHorizontal: 10, paddingVertical: 3 },
-  retryText:   { fontSize: 11, fontWeight: '700', color: colors.primary, textDecorationLine: 'underline' },
+  btn:          { backgroundColor: colors.surface, borderRadius: 12, borderWidth: 1.5, borderColor: 'rgba(22,48,38,0.18)', paddingVertical: 9, paddingHorizontal: spacing.md, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 1 },
+  btnCompact:   { paddingVertical: 7, paddingHorizontal: 12 },
+  btnPlaying:   { backgroundColor: 'rgba(22,48,38,0.07)', borderColor: colors.primary },
+  btnPaused:    { backgroundColor: 'rgba(22,48,38,0.05)', borderColor: 'rgba(22,48,38,0.40)' },
+  btnPressed:   { opacity: 0.80, transform: [{ scale: 0.97 }] },
+  inner:        { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  icon:         { flexDirection: 'row', alignItems: 'flex-end', gap: 2.5, height: 16 },
+  bar1:         { width: 2.5, height: 9,  borderRadius: 2, backgroundColor: colors.primary },
+  bar2:         { width: 2.5, height: 16, borderRadius: 2, backgroundColor: colors.primary },
+  bar3:         { width: 2.5, height: 11, borderRadius: 2, backgroundColor: colors.primary },
+  label:        { fontSize: 12, fontWeight: '700', color: colors.primary, letterSpacing: 0.3 },
+  labelPlaying: { color: colors.primary, opacity: 0.85 },
+  labelPaused:  { color: colors.primary, opacity: 0.70 },
+  labelError:   { color: colors.danger, fontSize: 11 },
+  spinner:      { width: 12, height: 12, borderRadius: 6, borderWidth: 1.5, borderColor: colors.primary, borderTopColor: 'transparent' },
+  playTriangle: { width: 0, height: 0, borderTopWidth: 5, borderTopColor: 'transparent', borderBottomWidth: 5, borderBottomColor: 'transparent', borderLeftWidth: 9, borderLeftColor: colors.primary, marginLeft: 2 },
 });
 
 // ─── Step 2: Découverte de l'ayat ─────────────────────────────────────────────
@@ -452,27 +473,16 @@ interface DiscoveryScreenProps {
 }
 
 function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: DiscoveryScreenProps) {
+  const insets = useSafeAreaInsets();
   const mountedRef = useRef(true);
 
-  // ── Quran content ──
-  const [ayat, setAyat] = useState<QuranAyahContent | null>(null);
-  const [contentError, setContentError] = useState<string | null>(null);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    getQuranAyahRange({ surahNumber, fromAyah: memStart, toAyah: memStart })
-      .then(result => {
-        if (!mountedRef.current) return;
-        if (result.ok && result.ayahs.length > 0) {
-          setAyat(result.ayahs[0]);
-        } else {
-          setContentError(!result.ok ? result.error : 'Contenu introuvable.');
-        }
-      })
-      .catch(() => {
-        if (mountedRef.current) setContentError('Impossible de charger l\'ayat.');
-      });
-    return () => { mountedRef.current = false; };
+  // ── Quran content — synchronous (local bundled JSON, no network) ──
+  const { ayat, contentError } = useMemo(() => {
+    const result = getQuranAyahSync({ surahNumber, fromAyah: memStart, toAyah: memStart });
+    if (result.ok && result.ayahs.length > 0) {
+      return { ayat: result.ayahs[0], contentError: null };
+    }
+    return { ayat: null, contentError: result.ok ? 'Contenu introuvable.' : result.error };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surahNumber, memStart]);
 
@@ -592,11 +602,25 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [audio.isPlaying]);
 
+  // Stop on unmount — prevents orphaned playback
+  useEffect(() => () => { audio.stop(); },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  []);
+
+  // Preload audio silently — native player buffers before the user taps
+  useEffect(() => { audio.preload(); },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  []);
+
   const onAudioPress = useCallback(() => {
     hapticMedium();
-    audio.play();
+    if (audio.hasError)         { audio.reset(); audio.play(); }
+    else if (audio.isPlaying)   { audio.pause();  }
+    else if (audio.isPaused)    { audio.resume(); }
+    else if (audio.hasCompleted){ audio.replay(); }
+    else                        { audio.play();   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [audio.play]);
+  }, [audio.hasError, audio.isPlaying, audio.isPaused, audio.hasCompleted, audio.reset, audio.play, audio.pause, audio.resume, audio.replay]);
 
   const ctaLabel = !unlocked
     ? (listenCount === 0 ? 'Écoute 3 fois pour continuer' : listenCount === MIN_LISTENS - 1 ? 'Encore 1 écoute' : `Encore ${MIN_LISTENS - listenCount} écoutes`)
@@ -698,7 +722,7 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
               </>
             ) : (
               <View style={ds.loadingAyat}>
-                <Text style={ds.loadingAyatText}>Chargement…</Text>
+                <Text style={ds.loadingAyatText}>{contentError ?? 'Contenu introuvable.'}</Text>
               </View>
             )}
 
@@ -720,44 +744,53 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
                 )}
               </Animated.View>
 
-              {/* reciter label */}
-              <Text style={ds.reciterLabel}>Récitateur : Al-Husary</Text>
-
               {/* audio button */}
               <Animated.View style={{ transform: [{ scale: audioPulse }] }}>
                 <Pressable
                   style={({ pressed }) => [
                     ds.audioBtn,
-                    audio.isPlaying && ds.audioBtnPlaying,
-                    pressed && !audio.isLoading && ds.audioBtnPressed,
+                    (audio.isPlaying || audio.isIntendingToPlay) && ds.audioBtnPlaying,
+                    audio.isPaused  && ds.audioBtnPaused,
+                    pressed && !audio.isLoadingVisible && ds.audioBtnPressed,
                   ]}
                   onPress={onAudioPress}
-                  disabled={audio.isLoading}
                   accessibilityLabel={
-                    audio.isLoading ? 'Chargement…'
-                    : audio.isPlaying ? 'Lecture en cours…'
+                    audio.hasError ? "Réessayer"
+                    : audio.isPaused ? 'Reprendre'
+                    : (audio.isPlaying || audio.isIntendingToPlay) ? 'Pause'
                     : listenCount > 0 ? "Réécouter l'ayat"
                     : "Écouter l'ayat"
                   }
                 >
                   <View style={ds.audioBtnInner}>
-                    {audio.isLoading ? (
-                      <Text style={ds.audioBtnLoadingDots}>···</Text>
-                    ) : (
+                    {audio.isLoadingVisible ? (
+                      <View style={ds.audioBtnSpinner} />
+                    ) : audio.isPaused ? (
+                      <View style={ds.audioBtnPlayTriangle} />
+                    ) : (audio.isPlaying || audio.isIntendingToPlay) ? (
                       <View style={ds.audioIcon}>
                         <Animated.View style={[ds.audioIconBar1, { transform: [{ scaleY: bar1Anim }] }]} />
                         <Animated.View style={[ds.audioIconBar2, { transform: [{ scaleY: bar2Anim }] }]} />
                         <Animated.View style={[ds.audioIconBar3, { transform: [{ scaleY: bar3Anim }] }]} />
                       </View>
+                    ) : (
+                      <View style={ds.audioBtnPlayTriangle} />
                     )}
-                    <Text style={[ds.audioBtnText, audio.isPlaying && ds.audioBtnTextPlaying]}>
-                      {audio.isLoading
-                        ? 'Chargement…'
-                        : audio.isPlaying
-                          ? 'Lecture en cours…'
-                          : listenCount > 0
-                            ? "Réécouter l'ayat"
-                            : "Écouter l'ayat"}
+                    <Text style={[
+                      ds.audioBtnText,
+                      (audio.isPlaying || audio.isIntendingToPlay) && ds.audioBtnTextPlaying,
+                      audio.isPaused  && ds.audioBtnTextPaused,
+                      audio.hasError  && ds.audioBtnTextError,
+                    ]}>
+                      {audio.hasError
+                        ? "Réessayer"
+                        : audio.isPaused
+                          ? 'Reprendre'
+                          : (audio.isPlaying || audio.isIntendingToPlay)
+                            ? 'Pause'
+                            : listenCount > 0
+                              ? "Réécouter l'ayat"
+                              : "Écouter l'ayat"}
                     </Text>
                   </View>
                 </Pressable>
@@ -803,7 +836,7 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
       </ScrollView>
 
       {/* ── STICKY CTA ── */}
-      <View style={ds.stickyBottom}>
+      <View style={[ds.stickyBottom, { paddingBottom: Math.max(spacing.xl, insets.bottom + 16) }]}>
         <View style={ds.ctaWrap}>
           <Pressable
             style={({ pressed }) => [ds.cta, !unlocked && ds.ctaLocked, unlocked && pressed && ds.ctaPressed]}
@@ -922,8 +955,12 @@ const ds = StyleSheet.create({
 
   // audio button states
   audioBtnPlaying:      { backgroundColor: 'rgba(22,48,38,0.10)', borderColor: colors.primary, borderWidth: 1.5 },
+  audioBtnPaused:       { backgroundColor: 'rgba(22,48,38,0.05)', borderColor: 'rgba(22,48,38,0.40)', borderWidth: 1.5 },
   audioBtnTextPlaying:  { color: colors.primary },
-  audioBtnLoadingDots:  { fontSize: 20, color: colors.muted, letterSpacing: 4, lineHeight: 22 },
+  audioBtnTextPaused:   { color: colors.primary, opacity: 0.70 },
+  audioBtnTextError:    { color: colors.danger, fontSize: 12 },
+  audioBtnSpinner:      { width: 14, height: 14, borderRadius: 7, borderWidth: 2, borderColor: colors.primary, borderTopColor: 'transparent' },
+  audioBtnPlayTriangle: { width: 0, height: 0, borderTopWidth: 6, borderTopColor: 'transparent', borderBottomWidth: 6, borderBottomColor: 'transparent', borderLeftWidth: 11, borderLeftColor: colors.primary, marginLeft: 2 },
 
   // audio error inline
   audioError:     { backgroundColor: 'rgba(184,150,46,0.08)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(184,150,46,0.22)', paddingHorizontal: 12, paddingVertical: 8, alignItems: 'center', gap: 6 },
@@ -943,6 +980,7 @@ interface DecoupageScreenProps {
 }
 
 function DecoupageScreen({ surahNumber, ayatNumber, ayat, onBack, onNext }: DecoupageScreenProps) {
+  const insets = useSafeAreaInsets();
   const mountedRef = useRef(true);
 
   // ── compute chunks once ──
@@ -1312,7 +1350,7 @@ function DecoupageScreen({ surahNumber, ayatNumber, ayat, onBack, onNext }: Deco
       </ScrollView>
 
       {/* ── STICKY CTA ── */}
-      <View style={dec.stickyBottom}>
+      <View style={[dec.stickyBottom, { paddingBottom: Math.max(spacing.xl, insets.bottom + 16) }]}>
         <Pressable
           style={({ pressed }) => [
             dec.cta,
@@ -1473,6 +1511,7 @@ type RepetitionScreenProps = {
 };
 
 function RepetitionScreen({ surahNumber, ayatNumber, ayat, onBack, onNext }: RepetitionScreenProps) {
+  const insets = useSafeAreaInsets();
   const mountedRef = useRef(true);
 
   // ── chunks ──
@@ -1921,7 +1960,7 @@ function RepetitionScreen({ surahNumber, ayatNumber, ayat, onBack, onNext }: Rep
       </ScrollView>
 
       {/* ── STICKY CTA ── */}
-      <View style={rep.stickyBottom}>
+      <View style={[rep.stickyBottom, { paddingBottom: Math.max(spacing.xl, insets.bottom + 16) }]}>
         {/* main CTA — only shown when chunk is anchored or navigating */}
         {(isAnchored || !isAtFrontier || allAnchored) ? (
           <Pressable
@@ -2092,6 +2131,7 @@ type AyatRecitationScreenProps = {
 function AyatRecitationScreen({
   surahNumber, ayat, ayatNumber, totalAyatsToday, surahName, isLastAyat, onBack, onNextAyat, onFinalTest,
 }: AyatRecitationScreenProps) {
+  const insets = useSafeAreaInsets();
   const mountedRef = useRef(true);
 
   // ── mode ──
@@ -2364,6 +2404,7 @@ function AyatRecitationScreen({
       <Animated.View style={[ar.stickyBottom, {
         opacity: ctaAnim,
         transform: [{ translateY: ctaAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+        paddingBottom: Math.max(spacing.xl, insets.bottom + 16),
       }]}>
         <Pressable
           style={({ pressed }) => [
@@ -2478,6 +2519,8 @@ type FinalTestScreenProps = {
 };
 
 function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, memEnd, surahName, userId, ayahPerDay, newCurrentAyah, onBack, onComplete, onRestartPassage }: FinalTestScreenProps) {
+  const queryClient = useQueryClient();
+  const insets = useSafeAreaInsets();
   const mountedRef = useRef(true);
 
   // Cumulative recall target: only ayats up to and including the current ayat index.
@@ -2723,7 +2766,13 @@ function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, me
       return;
     }
 
-    // ── Step 3: store display data ──
+    // ── Step 3: invalidate stale queries so Dashboard + Mon Hifz update immediately ──
+    const today = localDateStr();
+    void queryClient.invalidateQueries({ queryKey: ['progress',     userId] });
+    void queryClient.invalidateQueries({ queryKey: ['dueReviews',   userId, today] });
+    void queryClient.invalidateQueries({ queryKey: ['learnedItems', userId] });
+
+    // ── Step 4: store display data ──
     setResult({
       surahName,
       surahNumber,
@@ -2790,7 +2839,7 @@ function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, me
           opacity: mountAnim,
           transform: [{ translateY: mountAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
         }]}>
-          <Pressable style={ft.backBtn} onPress={() => { hapticLight(); onBack(); }} hitSlop={12}>
+          <Pressable style={ft.backBtn} onPress={() => { if (isValidating) return; hapticLight(); onBack(); }} hitSlop={12} disabled={isValidating}>
             <Text style={ft.backBtnText}>←</Text>
           </Pressable>
           <View style={ft.headerChip}>
@@ -2894,40 +2943,46 @@ function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, me
                   {/* ── passage audio control ── */}
                   {passageAyatNumbers.length > 0 ? (
                     <View style={ft.passageAudioWrap}>
-                      <Pressable
-                        style={({ pressed }) => [
-                          ft.passageAudioBtn,
-                          passage.isPlaying && ft.passageAudioBtnPlaying,
-                          pressed && !passage.isLoading && ft.passageAudioBtnPressed,
-                        ]}
-                        onPress={() => { hapticLight(); passage.play(); }}
-                        disabled={passage.isLoading || passage.isPlaying}
-                        accessibilityLabel="Écouter le passage"
-                      >
-                        <View style={ft.passageAudioInner}>
-                          {passage.isLoading ? (
-                            <Text style={ft.passageAudioDots}>···</Text>
-                          ) : (
-                            <View style={ft.passageAudioIcon}>
-                              <View style={ft.passageAudioBar1} />
-                              <View style={ft.passageAudioBar2} />
-                              <View style={ft.passageAudioBar3} />
+                      {(() => {
+                        const passageEffectivePlaying = passage.isPlaying || passage.isIntendingToPlay;
+                        const passageLabel = passage.hasError
+                          ? 'Réessayer'
+                          : passageEffectivePlaying
+                            ? (passage.isPlaying
+                                ? (isSingleAyat ? 'Arrêter la lecture' : `Arrêter (${passage.currentAyatIndex + 1}/${passage.totalAyats})`)
+                                : (isSingleAyat ? 'Arrêter la lecture' : 'Arrêter la lecture'))
+                            : (isSingleAyat ? 'Écouter l\'ayat' : 'Écouter le passage');
+                        return (
+                          <Pressable
+                            style={({ pressed }) => [
+                              ft.passageAudioBtn,
+                              passageEffectivePlaying && ft.passageAudioBtnPlaying,
+                              pressed && !passage.isLoadingVisible && ft.passageAudioBtnPressed,
+                            ]}
+                            onPress={() => {
+                              hapticLight();
+                              if (passageEffectivePlaying) { passage.stop(); }
+                              else { passage.play(); }
+                            }}
+                            accessibilityLabel={passageLabel}
+                          >
+                            <View style={ft.passageAudioInner}>
+                              {passage.isLoadingVisible ? (
+                                <View style={ft.passageAudioSpinner} />
+                              ) : passageEffectivePlaying ? (
+                                <View style={ft.passageAudioIcon}>
+                                  <View style={ft.passageAudioBar1} />
+                                  <View style={ft.passageAudioBar2} />
+                                  <View style={ft.passageAudioBar3} />
+                                </View>
+                              ) : (
+                                <View style={ft.passageAudioPlayTriangle} />
+                              )}
+                              <Text style={ft.passageAudioLabel}>{passageLabel}</Text>
                             </View>
-                          )}
-                          <View>
-                            <Text style={ft.passageAudioLabel}>
-                              {passage.isLoading
-                                ? 'Chargement…'
-                                : passage.isPlaying
-                                  ? (isSingleAyat ? 'Lecture…' : `Lecture du passage… (${passage.currentAyatIndex + 1}/${passage.totalAyats})`)
-                                  : (isSingleAyat ? 'Écouter l\'ayat' : 'Écouter le passage')}
-                            </Text>
-                            {!passage.isLoading && !passage.isPlaying ? (
-                              <Text style={ft.passageAudioSub}>Récitateur : Al-Husary</Text>
-                            ) : null}
-                          </View>
-                        </View>
-                      </Pressable>
+                          </Pressable>
+                        );
+                      })()}
                       {passage.hasError ? (
                         <View style={ft.passageAudioError}>
                           <Text style={ft.passageAudioErrorText}>{passage.errorMessage}</Text>
@@ -3017,6 +3072,7 @@ function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, me
       <Animated.View style={[ft.stickyBottom, {
         opacity: ctaAnim,
         transform: [{ translateY: ctaAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
+        paddingBottom: Math.max(spacing.xl, insets.bottom + 16),
       }]}>
         {mode === 'evaluate' ? (
           <View>
@@ -3091,7 +3147,7 @@ function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, me
 
                 {/* SECONDARY ACTION */}
                 {!isValidating && selectedDifficulty === 'hard' ? (
-                  <Pressable style={ft.secondaryCta} onPress={handleValidate}>
+                  <Pressable style={ft.secondaryCta} onPress={handleValidate} disabled={isValidating}>
                     <Text style={ft.secondaryCtaText}>Valider quand même</Text>
                   </Pressable>
                 ) : !isValidating && selectedDifficulty === 'hesitant' ? (
@@ -3253,7 +3309,8 @@ const ft = StyleSheet.create({
   passageAudioBar1:      { width: 3, height: 10, borderRadius: 2, backgroundColor: colors.primary },
   passageAudioBar2:      { width: 3, height: 18, borderRadius: 2, backgroundColor: colors.primary },
   passageAudioBar3:      { width: 3, height: 12, borderRadius: 2, backgroundColor: colors.primary },
-  passageAudioDots:      { fontSize: 20, color: colors.muted, letterSpacing: 4, lineHeight: 22 },
+  passageAudioSpinner:      { width: 14, height: 14, borderRadius: 7, borderWidth: 1.5, borderColor: colors.gold, borderTopColor: 'transparent' },
+  passageAudioPlayTriangle: { width: 0, height: 0, borderTopWidth: 6, borderTopColor: 'transparent', borderBottomWidth: 6, borderBottomColor: 'transparent', borderLeftWidth: 11, borderLeftColor: colors.primary, marginLeft: 2 },
   passageAudioLabel:     { fontSize: 14, fontWeight: '800', color: colors.primary, letterSpacing: 0.3 },
   passageAudioSub:       { fontSize: 10, color: colors.muted, marginTop: 2, letterSpacing: 0.3 },
   passageAudioError:     { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: spacing.lg, paddingBottom: 10 },
@@ -3305,6 +3362,7 @@ const ls = StyleSheet.create({
 // ─── MAIN SCREEN ─────────────────────────────────────────────────────────────
 
 export default function SessionScreen() {
+  const insets = useSafeAreaInsets();
   const user   = useAuthStore(s => s.user);
   const userId = user?.id;
   const today  = useMemo(() => localDateStr(), []);
@@ -3424,9 +3482,14 @@ export default function SessionScreen() {
     router.replace('/(app)/(tabs)/');
   }, []);
 
+  const isAdvancing = useRef(false);
   const onCta = useCallback(() => {
+    if (isAdvancing.current) return;
+    isAdvancing.current = true;
     hapticLight();
     setPhase('discovery');
+    // reset after render cycle so it can fire again if user navigates back to mission
+    setTimeout(() => { isAdvancing.current = false; }, 600);
   }, []);
 
   // ── loading ──
@@ -3750,7 +3813,7 @@ export default function SessionScreen() {
       </ScrollView>
 
       {/* ── STICKY CTA ──────────────────────────────────────────────── */}
-      <View style={s.stickyBottom}>
+      <View style={[s.stickyBottom, { paddingBottom: Math.max(spacing.xl, insets.bottom + 16) }]}>
         <View style={s.ctaWrap}>
           <Animated.View style={[s.ctaGlow, { opacity: ctaGlow }]} />
           <Pressable

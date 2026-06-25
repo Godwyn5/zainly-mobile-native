@@ -17,6 +17,7 @@ import { spacing } from '@/theme/spacing';
 import { hapticSuccess, hapticLight, hapticMedium } from '@/utils/haptics';
 import { useSessionResultStore } from '@/store/sessionResultStore';
 import type { SessionDifficulty } from '@/db/progress';
+import { REVIEW_OFFSETS } from '@/db/reviewItems';
 
 // SW/SH: used only for particle/firework absolute positioning — never for layout
 const { width: SW, height: SH } = Dimensions.get('window');
@@ -36,23 +37,22 @@ type ParticleConfig = {
   rise: number;    // px to travel upward
 };
 
+// B18: 20 particles (was 31). Wide-spread (9) + center-burst (7) + secondary (4).
+// Trimmed the densest part of the secondary spread. All use useNativeDriver:true.
+// Visual quality preserved: wide edges + seal burst are the most perceptually
+// impactful zones. Secondary spread adds depth but is least visible on mid-range.
 const PARTICLES: ParticleConfig[] = [
-  // wide spread — ambient float
+  // wide spread — ambient float (9, kept all edge + far-side particles)
   { x: 0.06, startY: 0.88, delay:    0, duration: 3200, size: 5, color: '#D4AF37', shape: 'circle',  rise: 480 },
   { x: 0.14, startY: 0.82, delay:  220, duration: 3600, size: 3, color: '#E8D5A3', shape: 'diamond', rise: 520 },
   { x: 0.24, startY: 0.90, delay:  440, duration: 3000, size: 4, color: '#C9A227', shape: 'circle',  rise: 460 },
-  { x: 0.34, startY: 0.85, delay:  110, duration: 3800, size: 3, color: '#D4AF37', shape: 'diamond', rise: 500 },
   { x: 0.76, startY: 0.87, delay:  330, duration: 3400, size: 4, color: '#C9A227', shape: 'circle',  rise: 470 },
   { x: 0.86, startY: 0.83, delay:  170, duration: 3700, size: 3, color: '#E8D5A3', shape: 'diamond', rise: 510 },
   { x: 0.92, startY: 0.89, delay:  560, duration: 3100, size: 5, color: '#D4AF37', shape: 'circle',  rise: 490 },
-  { x: 0.04, startY: 0.78, delay:  780, duration: 3300, size: 3, color: '#F0E6C0', shape: 'diamond', rise: 440 },
-  { x: 0.96, startY: 0.80, delay:  390, duration: 3500, size: 4, color: '#C9A227', shape: 'circle',  rise: 465 },
   { x: 0.18, startY: 0.92, delay:  640, duration: 2900, size: 6, color: '#F0E6C0', shape: 'circle',  rise: 530 },
   { x: 0.82, startY: 0.91, delay:  280, duration: 3200, size: 5, color: '#D4AF37', shape: 'circle',  rise: 500 },
-  { x: 0.68, startY: 0.86, delay:  720, duration: 3600, size: 3, color: '#E8D5A3', shape: 'diamond', rise: 480 },
   { x: 0.56, startY: 0.93, delay:  160, duration: 2800, size: 4, color: '#C9A227', shape: 'circle',  rise: 550 },
-  { x: 0.46, startY: 0.84, delay:  510, duration: 3400, size: 3, color: '#D4AF37', shape: 'diamond', rise: 460 },
-  // center burst — launch from seal area (startY 0.28–0.40, spread outward)
+  // center burst — launch from seal area (7, kept intact — most impactful)
   { x: 0.38, startY: 0.34, delay:  850, duration: 2200, size: 5, color: '#D4AF37', shape: 'circle',  rise: 320 },
   { x: 0.42, startY: 0.30, delay:  900, duration: 2000, size: 4, color: '#F0E6C0', shape: 'circle',  rise: 290 },
   { x: 0.50, startY: 0.28, delay:  820, duration: 2400, size: 6, color: '#C9A227', shape: 'circle',  rise: 350 },
@@ -60,18 +60,11 @@ const PARTICLES: ParticleConfig[] = [
   { x: 0.62, startY: 0.36, delay:  940, duration: 2300, size: 5, color: '#E8D5A3', shape: 'diamond', rise: 330 },
   { x: 0.44, startY: 0.38, delay: 1000, duration: 1900, size: 3, color: '#F0E6C0', shape: 'diamond', rise: 280 },
   { x: 0.55, startY: 0.40, delay:  960, duration: 2500, size: 4, color: '#C9A227', shape: 'diamond', rise: 340 },
-  // secondary spread
+  // secondary spread (4, best-spread survivors for depth)
   { x: 0.10, startY: 0.70, delay:  480, duration: 3100, size: 4, color: '#D4AF37', shape: 'circle',  rise: 400 },
-  { x: 0.30, startY: 0.72, delay:  600, duration: 3300, size: 3, color: '#C9A227', shape: 'diamond', rise: 420 },
-  { x: 0.70, startY: 0.71, delay:  420, duration: 3000, size: 4, color: '#D4AF37', shape: 'circle',  rise: 415 },
   { x: 0.90, startY: 0.74, delay:  740, duration: 3400, size: 3, color: '#E8D5A3', shape: 'diamond', rise: 430 },
-  { x: 0.20, startY: 0.65, delay:  130, duration: 3200, size: 5, color: '#F0E6C0', shape: 'circle',  rise: 380 },
-  { x: 0.78, startY: 0.67, delay:  360, duration: 3600, size: 4, color: '#C9A227', shape: 'circle',  rise: 390 },
   { x: 0.50, startY: 0.75, delay:  200, duration: 3000, size: 3, color: '#D4AF37', shape: 'diamond', rise: 440 },
-  { x: 0.64, startY: 0.68, delay:  680, duration: 3200, size: 5, color: '#D4AF37', shape: 'circle',  rise: 400 },
-  { x: 0.26, startY: 0.77, delay:  520, duration: 2900, size: 3, color: '#E8D5A3', shape: 'diamond', rise: 410 },
   { x: 0.72, startY: 0.80, delay:  300, duration: 3500, size: 4, color: '#C9A227', shape: 'circle',  rise: 450 },
-  { x: 0.36, startY: 0.76, delay:  840, duration: 3100, size: 3, color: '#D4AF37', shape: 'diamond', rise: 395 },
 ];
 
 // ─── Particle component ───────────────────────────────────────────────────────
@@ -228,7 +221,7 @@ function difficultyContent(d: SessionDifficulty | null | undefined, isSingle: bo
   return                       { title: 'Progression enregistrée', body: 'Zainly préparera la suite de ton apprentissage.',           accent: colors.primary };
 }
 
-const CHIPS = ['J+1', 'J+3', 'J+7', 'J+14', 'J+30'];
+const CHIPS = REVIEW_OFFSETS.map((n: number) => `J+${n}`);
 
 // ─── Main screen ─────────────────────────────────────────────────────────────
 

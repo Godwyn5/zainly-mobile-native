@@ -6,6 +6,6 @@ export function usePlan(userId: string | undefined) {
     queryKey: ['plan', userId],
     queryFn: () => fetchPlan(userId!),
     enabled: !!userId,
-    staleTime: 30_000,
+    staleTime: 5 * 60_000,
   });
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useMemo } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Animated, Easing, Pressable, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, Animated, Easing, Pressable, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuthStore } from '@/store/authStore';
@@ -144,6 +144,49 @@ const pb = StyleSheet.create({
   },
 });
 
+// ─── DashboardSkeleton ────────────────────────────────────────────────────────
+
+function DashboardSkeleton() {
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(pulse, { toValue: 1, duration: 850, useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 0, duration: 850, useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const op = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.7] });
+
+  function Line({ w, h = 11 }: { w: `${number}%` | number; h?: number }) {
+    return <View style={[s.skeletonLine, { width: w, height: h }]} />;
+  }
+
+  return (
+    <View style={s.skeletonWrap}>
+      {/* hero card */}
+      <Animated.View style={[s.skeletonHero, { opacity: op }]}>
+        <Line w="55%" h={13} />
+        <Line w="80%" h={10} />
+        <Line w="40%" h={10} />
+      </Animated.View>
+      {/* info card 1 */}
+      <Animated.View style={[s.skeletonCard, { opacity: op }]}>
+        <Line w="45%" h={10} />
+        <Line w="70%" h={10} />
+      </Animated.View>
+      {/* info card 2 */}
+      <Animated.View style={[s.skeletonCard, { opacity: op }]}>
+        <Line w="35%" h={10} />
+        <Line w="60%" h={10} />
+      </Animated.View>
+      {/* CTA button shape */}
+      <Animated.View style={[s.skeletonCta, { opacity: op }]} />
+    </View>
+  );
+}
+
 // ─── TodayScreen ──────────────────────────────────────────────────────────────
 
 export default function TodayScreen() {
@@ -173,6 +216,7 @@ export default function TodayScreen() {
   const ctaShineAnim = useRef(new Animated.Value(-1)).current;
   const ctaGlowLoop  = useRef<Animated.CompositeAnimation | null>(null);
   const ctaShineLoop = useRef<Animated.CompositeAnimation | null>(null);
+  const isPushing    = useRef(false);
   const haloScale    = useRef(new Animated.Value(1)).current;
   const haloOpacity  = useRef(new Animated.Value(0.14)).current;
   const haloLoop     = useRef<Animated.CompositeAnimation | null>(null);
@@ -307,8 +351,7 @@ export default function TodayScreen() {
   if (isLoading) {
     return (
       <SafeAreaView style={s.centered}>
-        <ActivityIndicator color={colors.gold} size="large" />
-        <Text style={s.loadingText}>Préparation de ton tableau de bord…</Text>
+        <DashboardSkeleton />
       </SafeAreaView>
     );
   }
@@ -394,7 +437,7 @@ export default function TodayScreen() {
   const ctaShineX = ctaShineAnim.interpolate({ inputRange: [-1, 1], outputRange: ['-60%', '160%'] });
 
   return (
-    <Screen contentStyle={s.screenContent}>
+    <Screen>
 
       {/* ══ BACKGROUND LAYER ══════════════════════════════════════ */}
 
@@ -602,7 +645,14 @@ export default function TodayScreen() {
               <Animated.View style={[s.ctaGlow, { opacity: ctaGlowAnim }]} />
               <Pressable
                 style={({ pressed }) => [s.cta, pressed && s.ctaPressed]}
-                onPress={() => { hapticLight(); router.push('/(app)/session'); }}
+                onPress={() => {
+                  if (isPushing.current) return;
+                  isPushing.current = true;
+                  hapticLight();
+                  router.push('/(app)/session');
+                  // reset after mount so back-navigation can re-trigger
+                  setTimeout(() => { isPushing.current = false; }, 1000);
+                }}
               >
                 <Text style={s.ctaText}>Commencer la session →</Text>
                 {/* gold shine sweep */}
@@ -750,15 +800,16 @@ export default function TodayScreen() {
 
 const s = StyleSheet.create({
 
-  // ── screen content inset ──
-  screenContent: { paddingBottom: 160 },
-
   // ── states ──
   centered: {
     flex: 1, backgroundColor: colors.background,
     alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.lg,
   },
-  loadingText: { marginTop: spacing.md, fontSize: 14, color: colors.muted, textAlign: 'center' },
+  skeletonWrap: { width: '100%', gap: 14, paddingHorizontal: 4 },
+  skeletonHero: { height: 130, borderRadius: 18, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, gap: 10 },
+  skeletonCard: { height: 72, borderRadius: 14, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: spacing.md, gap: 8 },
+  skeletonCta:  { height: 58, borderRadius: 14, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
+  skeletonLine: { borderRadius: 6, backgroundColor: 'rgba(184,150,46,0.18)' },
   stateCard: {
     width: '100%', backgroundColor: colors.surface,
     borderRadius: 22, borderWidth: 1, borderColor: colors.border,

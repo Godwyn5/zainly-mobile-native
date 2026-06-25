@@ -7,8 +7,8 @@ import {
   Easing,
   PanResponder,
   StyleSheet,
-  Dimensions,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
@@ -17,20 +17,20 @@ import { hapticSelection } from '@/utils/haptics';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
-const SW        = Dimensions.get('window').width;
 const H_MARGIN  = 20;
-const BAR_WIDTH = SW - H_MARGIN * 2;
 const TAB_COUNT = 3;
-const TAB_W     = BAR_WIDTH / TAB_COUNT;
-// Bubble spans exactly one tab slot
-const BUBBLE_W  = TAB_W - 10;
 const BAR_H     = 64;
 const BUBBLE_H  = 48;
 
-// bubble left edge for each tab index
-const BUBBLE_MIN_X = 5;
-const BUBBLE_MAX_X = (TAB_COUNT - 1) * TAB_W + 5;
-function bubbleTargetX(idx: number) { return idx * TAB_W + 5; }
+function makeDims(sw: number) {
+  const BAR_WIDTH    = sw - H_MARGIN * 2;
+  const TAB_W        = BAR_WIDTH / TAB_COUNT;
+  const BUBBLE_W     = TAB_W - 10;
+  const BUBBLE_MIN_X = 5;
+  const BUBBLE_MAX_X = (TAB_COUNT - 1) * TAB_W + 5;
+  const bubbleTargetX = (idx: number) => idx * TAB_W + 5;
+  return { BAR_WIDTH, TAB_W, BUBBLE_W, BUBBLE_MIN_X, BUBBLE_MAX_X, bubbleTargetX };
+}
 
 const TABS = [
   { name: 'index',   label: "Aujourd'hui" },
@@ -185,6 +185,8 @@ function TabContent({
 
 export function PremiumTabBar({ state, navigation }: BottomTabBarProps) {
   const insets      = useSafeAreaInsets();
+  const { width: sw } = useWindowDimensions();
+  const { BAR_WIDTH, TAB_W, BUBBLE_W, BUBBLE_MIN_X, BUBBLE_MAX_X, bubbleTargetX } = makeDims(sw);
   const visibleRoutes = state.routes;
   const safeIdx     = Math.min(state.index, TABS.length - 1);
 
@@ -209,6 +211,15 @@ export function PremiumTabBar({ state, navigation }: BottomTabBarProps) {
     return () => bubbleX.removeListener(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // B11: re-snap bubble to active slot when screen width changes (rotation / split-screen)
+  useEffect(() => {
+    if (isDragging.current) return;
+    const target = bubbleTargetX(safeIdx);
+    bubbleX.setValue(target);
+    bubbleXVal.current = target;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [TAB_W, safeIdx]);
 
   // ── magnetic spring snap ──────────────────────────────────────────────────
 
@@ -394,7 +405,7 @@ export function PremiumTabBar({ state, navigation }: BottomTabBarProps) {
           return (
             <Pressable
               key={tab.name}
-              style={t.tabItem}
+              style={[t.tabItem, { width: TAB_W }]}
               onPress={() => handlePress(route.name, i, i === safeIdx)}
               accessibilityRole="button"
               accessibilityLabel={tab.label}
@@ -416,6 +427,7 @@ export function PremiumTabBar({ state, navigation }: BottomTabBarProps) {
           style={[
             t.bubble,
             {
+              width: BUBBLE_W,
               transform: [
                 { translateX: bubbleX },
                 { scale: bubbleScale },
@@ -440,11 +452,11 @@ export function PremiumTabBar({ state, navigation }: BottomTabBarProps) {
           <Animated.View
             style={[
               t.lensStrip,
-              { transform: [{ translateX: lensStripX }] },
+              { width: BAR_WIDTH, transform: [{ translateX: lensStripX }] },
             ]}
           >
             {TABS.map((tab, i) => (
-              <View key={tab.name} style={t.tabItem}>
+              <View key={tab.name} style={[t.tabItem, { width: TAB_W }]}>
                 <TabContent
                   idx={i}
                   label={tab.label}
@@ -454,7 +466,7 @@ export function PremiumTabBar({ state, navigation }: BottomTabBarProps) {
               </View>
             ))}
             {/* gold accent dot centered under current active label */}
-            <View style={t.lensActiveDot} />
+            <View style={[t.lensActiveDot, { left: BUBBLE_W / 2 - 2 }]} />
           </Animated.View>
         </Animated.View>
 
@@ -491,9 +503,8 @@ const t = StyleSheet.create({
     elevation: 14,
   },
 
-  // ── tab slot (used by both base and lens strip) ──
+  // ── tab slot (used by both base and lens strip) ── width applied inline
   tabItem: {
-    width: TAB_W,
     height: BAR_H,
     alignItems: 'center',
     justifyContent: 'center',
@@ -524,7 +535,6 @@ const t = StyleSheet.create({
     position: 'absolute',
     top: (BAR_H - BUBBLE_H) / 2,
     left: 0,
-    width: BUBBLE_W,
     height: BUBBLE_H,
     borderRadius: 999,
     overflow: 'hidden',
@@ -557,7 +567,6 @@ const t = StyleSheet.create({
     position: 'absolute',
     top: -(BAR_H - BUBBLE_H) / 2,  // cancel bubble's vertical centering offset
     left: 0,
-    width: BAR_WIDTH,
     height: BAR_H,
     flexDirection: 'row',
   },
@@ -566,7 +575,6 @@ const t = StyleSheet.create({
   lensActiveDot: {
     position: 'absolute',
     bottom: (BAR_H - BUBBLE_H) / 2 + 3,
-    left: BUBBLE_W / 2 - 2,
     width: 4, height: 4,
     borderRadius: 2,
     backgroundColor: colors.gold,

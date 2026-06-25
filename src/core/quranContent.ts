@@ -7,6 +7,7 @@ import {
   isRiwayaAvailable as _isAvailable,
   getAvailableRiwayat as _getAvailable,
   validateQuranDataset as _validate,
+  getSurahName as _getSurahName,
 } from '@/data/quran';
 
 import type {
@@ -50,4 +51,25 @@ export function getAvailableRiwayat(): QuranRiwaya[] {
 
 export function validateQuranDataset(riwaya: QuranRiwaya): QuranDatasetValidation {
   return _validate(riwaya);
+}
+
+// ─── getSurahName ──────────────────────────────────────────────────────────────────
+// Synchronously returns the surah transliteration name from bundled local data.
+
+export function getSurahName(surahNumber: number): string | null {
+  return _getSurahName(surahNumber);
+}
+
+// ─── getQuranAyahSync ─────────────────────────────────────────────────────────
+// Synchronous convenience wrapper — same result as getQuranAyahRange but
+// returns immediately. Safe to call in useMemo / component initializers.
+// Only use when surahNumber / ayah range are known at render time.
+
+export function getQuranAyahSync(params: {
+  riwaya?: QuranRiwaya;
+  surahNumber: number;
+  fromAyah: number;
+  toAyah: number;
+}): QuranContentResult {
+  return _getRange(params);
 }
