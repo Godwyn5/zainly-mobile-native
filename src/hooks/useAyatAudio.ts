@@ -103,7 +103,11 @@ export function useAyatAudio(
     try {
       playerRef.current.replace({ uri: url });
       playerRef.current.pause();
-      preparedUrlRef.current = url;
+      // Do NOT set preparedUrlRef here — the native player may still be buffering
+      // from the replace() call. Marking it prepared now would cause play() to take
+      // the fast path (no replace, no delay) on a mid-buffer player, which silently
+      // fails on expo-audio. Only an explicit preload() call sets preparedUrlRef.
+      preparedUrlRef.current = null;
     } catch { /* ignore */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);  // setLoadingWithDelay is stable (useCallback [])

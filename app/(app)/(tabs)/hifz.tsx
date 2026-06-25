@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
-  Modal, Platform, Pressable, ScrollView, StyleSheet,
+  ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet,
   Text, View, Animated, Easing, LayoutAnimation, UIManager,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -222,9 +222,18 @@ function AudioPlayBtn({
   };
 
   const isEffectivePlaying = audio.isPlaying || audio.isIntendingToPlay;
-  const bg     = isEffectivePlaying ? 'rgba(184,150,46,0.18)' : 'rgba(22,48,38,0.07)';
-  const border = isEffectivePlaying ? GOLD : 'rgba(22,48,38,0.18)';
-  const showSpinner = audio.isLoadingVisible;
+  // Only show spinner when the user has intentionally started audio — prevents
+  // the static partial-border circle appearing on mount due to replace() briefly
+  // setting isLoaded=false in the native player before the user taps anything.
+  const showSpinner = audio.isLoadingVisible && (audio.isIntendingToPlay || audio.isPlaying || audio.isPaused);
+
+  const bg     = isEffectivePlaying ? 'rgba(184,150,46,0.18)'
+    : audio.isPaused               ? 'rgba(22,48,38,0.07)'
+    : 'rgba(22,48,38,0.07)';
+  const border = isEffectivePlaying ? GOLD
+    : audio.isPaused               ? GREEN + 'AA'
+    : 'rgba(22,48,38,0.18)';
+  const iconColor = audio.hasError ? colors.danger : GREEN;
 
   return (
     <Pressable onPress={handlePress} hitSlop={10}>
@@ -235,18 +244,19 @@ function AudioPlayBtn({
         transform: [{ scale }],
       }}>
         {showSpinner ? (
-          <View style={{ width: 10, height: 10, borderRadius: 5, borderWidth: 1.5, borderColor: GREEN, borderTopColor: 'transparent' }} />
+          <ActivityIndicator size="small" color={GREEN} style={{ width: 12, height: 12 }} />
         ) : isEffectivePlaying ? (
           <View style={{ flexDirection: 'row', gap: 2.5 }}>
             <View style={{ width: 2.5, height: 10, borderRadius: 1.5, backgroundColor: GOLD }} />
             <View style={{ width: 2.5, height: 10, borderRadius: 1.5, backgroundColor: GOLD }} />
           </View>
         ) : (
+          // idle / paused / completed / error → all show clean play triangle
           <View style={{
             width: 0, height: 0,
             borderTopWidth: 5,    borderTopColor: 'transparent',
             borderBottomWidth: 5, borderBottomColor: 'transparent',
-            borderLeftWidth: 9,   borderLeftColor: audio.hasError ? colors.danger : GREEN,
+            borderLeftWidth: 9,   borderLeftColor: iconColor,
             marginLeft: 2,
           }} />
         )}
@@ -286,40 +296,45 @@ function AyatRow({
       opacity: anim,
       transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }],
     }}>
-      <Pressable
-        style={sr.ayatRow}
-        onPress={() => {
-          hapticLight();
-          onPress({ surahNumber: row.surah_number, surahName, ayahNumber: row.ayah, content });
-        }}
-      >
-        {/* Ayat number badge */}
-        <View style={sr.ayatNumBadge}>
-          <Text style={sr.ayatNumText}>{row.ayah}</Text>
-        </View>
-
-        {/* Arabic preview + status */}
-        <View style={sr.ayatMid}>
-          {arabic ? (
-            <Text style={sr.arabicPreview} numberOfLines={1} allowFontScaling={false}>{arabic}</Text>
-          ) : (
-            <Skeleton w={140} h={13} />
-          )}
-          <View style={[sr.statusPill, { borderColor: dc + '50', backgroundColor: dc + '14' }]}>
-            <View style={[sr.statusDot, { backgroundColor: dc }]} />
-            <Text style={[sr.statusText, { color: dc }]}>{dl}</Text>
+      {/* Row is a plain View — AudioPlayBtn must be a sibling Pressable, not nested
+          inside the detail-open Pressable, to avoid touch interception on RN. */}
+      <View style={sr.ayatRow}>
+        {/* Tappable area: badge + text + chevron → opens detail sheet */}
+        <Pressable
+          style={sr.ayatRowTap}
+          onPress={() => {
+            hapticLight();
+            onPress({ surahNumber: row.surah_number, surahName, ayahNumber: row.ayah, content });
+          }}
+        >
+          {/* Ayat number badge */}
+          <View style={sr.ayatNumBadge}>
+            <Text style={sr.ayatNumText}>{row.ayah}</Text>
           </View>
-        </View>
 
-        {/* Play button */}
+          {/* Arabic preview + status */}
+          <View style={sr.ayatMid}>
+            {arabic ? (
+              <Text style={sr.arabicPreview} numberOfLines={1} allowFontScaling={false}>{arabic}</Text>
+            ) : (
+              <Skeleton w={140} h={13} />
+            )}
+            <View style={[sr.statusPill, { borderColor: dc + '50', backgroundColor: dc + '14' }]}>
+              <View style={[sr.statusDot, { backgroundColor: dc }]} />
+              <Text style={[sr.statusText, { color: dc }]}>{dl}</Text>
+            </View>
+          </View>
+
+          {/* Chevron */}
+          <View style={sr.chevronWrap}>
+            <View style={sr.chev1} />
+            <View style={sr.chev2} />
+          </View>
+        </Pressable>
+
+        {/* Play button — sibling, not nested, so its Pressable fires correctly */}
         <AudioPlayBtn surahNumber={row.surah_number} ayahNumber={row.ayah} size={30} />
-
-        {/* Chevron */}
-        <View style={sr.chevronWrap}>
-          <View style={sr.chev1} />
-          <View style={sr.chev2} />
-        </View>
-      </Pressable>
+      </View>
     </Animated.View>
   );
 }
@@ -1043,7 +1058,8 @@ const sc = StyleSheet.create({
 });
 
 const sr = StyleSheet.create({
-  ayatRow:      { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, gap: 10 },
+  ayatRow:      { flexDirection: 'row', alignItems: 'center', paddingLeft: 14, paddingRight: 10, paddingVertical: 0 },
+  ayatRowTap:   { flex: 1, flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: 10, paddingRight: 6 },
   ayatNumBadge: { width: 30, height: 30, borderRadius: 15, borderWidth: 1.5, borderColor: 'rgba(22,48,38,0.18)', backgroundColor: 'rgba(22,48,38,0.05)', alignItems: 'center', justifyContent: 'center' },
   ayatNumText:  { fontSize: 11, fontWeight: '800', color: GREEN },
   ayatMid:      { flex: 1, gap: 4 },
