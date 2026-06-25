@@ -11,6 +11,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { supabase }              from '@/db/client';
 import { useAuthStore }          from '@/store/authStore';
 import { useSessionResultStore } from '@/store/sessionResultStore';
+import { cancelUserHifzNotifications } from '@/notifications/scheduler';
+import { clearNotificationData }       from '@/notifications/storage';
 
 export function useLogout() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -37,6 +39,11 @@ export function useLogout() {
 
       // 4. Wipe user-scoped AsyncStorage keys
       if (userId) {
+        // Cancel scheduled Hifz reminders for this user — prevents stale
+        // notifications firing for a different account after re-login.
+        await cancelUserHifzNotifications(userId).catch(() => {});
+        await clearNotificationData(userId).catch(() => {});
+
         const keys = [
           `zainly:onboardingIntroSeen:${userId}`,
           `zainly:onboardingPersonalAnswers:${userId}`,

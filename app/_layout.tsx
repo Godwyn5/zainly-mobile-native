@@ -2,8 +2,22 @@ import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
+import * as Notifications from 'expo-notifications';
 import { supabase } from '@/db/client';
 import { useAuthStore } from '@/store/authStore';
+
+// ── Foreground notification handler ──────────────────────────────────────────
+// Must be called once at module level (outside any component).
+// Without this, expo-notifications silently discards every foreground
+// notification — the SDK default is to NOT show them.
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList:   true,
+    shouldPlaySound:  true,
+    shouldSetBadge:   false,
+  }),
+});
 
 const queryClient = new QueryClient({
   defaultOptions: {
