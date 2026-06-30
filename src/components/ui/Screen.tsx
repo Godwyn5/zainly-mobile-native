@@ -40,8 +40,14 @@ export function Screen({ children, scroll = true, contentStyle }: ScreenProps) {
       </SafeAreaView>
     );
   }
+  // No-scroll: still need padding for the floating pill tab bar.
+  // SafeAreaView handles device insets (notch/home bar) but not the
+  // custom floating tab bar, so we add bottomPad manually.
+  // noScrollStyle is placed last so bottomPad cannot be overridden by contentStyle.
+  // The floating tab bar clearance must always be preserved for no-scroll screens.
+  const noScrollStyle: ViewStyle = { paddingBottom: bottomPad };
   return (
-    <SafeAreaView style={[styles.safe, styles.content, contentStyle]}>
+    <SafeAreaView style={[styles.safe, styles.content, contentStyle, noScrollStyle]}>
       {children}
     </SafeAreaView>
   );

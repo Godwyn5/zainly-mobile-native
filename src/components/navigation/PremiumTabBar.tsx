@@ -18,7 +18,7 @@ import { hapticSelection } from '@/utils/haptics';
 // ─── constants ────────────────────────────────────────────────────────────────
 
 const H_MARGIN  = 20;
-const TAB_COUNT = 3;
+const TAB_COUNT = 4;
 const BAR_H     = 64;
 const BUBBLE_H  = 48;
 
@@ -33,9 +33,10 @@ function makeDims(sw: number) {
 }
 
 const TABS = [
-  { name: 'index',   label: "Aujourd'hui" },
-  { name: 'hifz',    label: 'Mon Hifz'    },
-  { name: 'profile', label: 'Profil'      },
+  { name: 'index',       label: "Aujourd'hui" },
+  { name: 'hifz',       label: 'Mon Hifz'    },
+  { name: 'progression', label: 'Progression' },
+  { name: 'profile',    label: 'Profil'      },
 ] as const;
 
 // ─── Refined Line Icons ────────────────────────────────────────────────────────
@@ -99,12 +100,39 @@ function IconPerson({ color }: { color: string }) {
   );
 }
 
+function IconChart({ color }: { color: string }) {
+  // Three ascending bars (left short, mid medium, right tall)
+  return (
+    <View style={ic.root}>
+      {/* baseline */}
+      <View style={[ic.chartBase, { backgroundColor: color }]} />
+      {/* bar 1 — short */}
+      <View style={[ic.chartBar, { backgroundColor: color, height: 7,  left: '10%' }]} />
+      {/* bar 2 — medium */}
+      <View style={[ic.chartBar, { backgroundColor: color, height: 11, left: '42%' }]} />
+      {/* bar 3 — tall */}
+      <View style={[ic.chartBar, { backgroundColor: color, height: 15, right: '10%' }]} />
+    </View>
+  );
+}
+
 // shared icon styles (computed once)
 const IC_SIZE = 20;
+// label font must shrink for 4 tabs
+const LABEL_SIZE = 8;
 const ic = StyleSheet.create({
   root: {
     width: IC_SIZE, height: IC_SIZE,
     alignItems: 'center', justifyContent: 'center',
+  },
+  // chart
+  chartBase: {
+    position: 'absolute', bottom: 1, left: '8%', right: '8%',
+    height: 1.7, borderRadius: 1,
+  },
+  chartBar: {
+    position: 'absolute', bottom: 3,
+    width: '18%', borderRadius: 2,
   },
   // calendar
   calBody: {
@@ -173,9 +201,10 @@ function TabContent({
 }) {
   return (
     <View style={t.itemInner}>
-      {idx === 0 && <IconCalendar color={color} />}
-      {idx === 1 && <IconBookOpen color={color} />}
-      {idx === 2 && <IconPerson   color={color} />}
+      {idx === 0 && <IconCalendar  color={color} />}
+      {idx === 1 && <IconBookOpen  color={color} />}
+      {idx === 2 && <IconChart     color={color} />}
+      {idx === 3 && <IconPerson    color={color} />}
       <Text style={[t.label, labelStyle]} numberOfLines={1}>{label}</Text>
     </View>
   );
@@ -517,8 +546,8 @@ const t = StyleSheet.create({
     gap: 3,
   },
   label: {
-    fontSize: 9,
-    letterSpacing: 0.15,
+    fontSize: LABEL_SIZE,
+    letterSpacing: 0.1,
   },
   labelInactive: {
     fontWeight: '500',
