@@ -1,11 +1,42 @@
 import { ActivityIndicator, View, Text, StyleSheet, Pressable } from 'react-native';
+import { router } from 'expo-router';
 import { Screen } from '@/components/ui/Screen';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { useLogout } from '@/hooks/useLogout';
 import { useNotificationSettings } from '@/hooks/useNotificationSettings';
 import { PRESETS, NotificationPreset } from '@/notifications/types';
+import { useAuthStore } from '@/store/authStore';
+import { usePlan } from '@/hooks/usePlan';
+import type { PlanMode } from '@/core/planEngine';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
+
+// ─── Mode label helper ────────────────────────────────────────────────────────
+
+function planModeLabel(mode: PlanMode | null | undefined): string {
+  if (mode === 'recommended') return 'Recommandé par Zainly';
+  if (mode === 'start_surah') return 'Choisir ma sourate de départ';
+  if (mode === 'custom_order') return 'Liberté totale';
+  return 'Mode actuel indisponible';
+}
+
+// ─── ProgrammeRow ─────────────────────────────────────────────────────────────
+
+function ProgrammeRow({ mode }: { mode: PlanMode | null | undefined }) {
+  const modeLabel = planModeLabel(mode);
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+      onPress={() => router.push('/(app)/programme')}
+    >
+      <View style={styles.rowContent}>
+        <Text style={styles.rowTitle}>Programme</Text>
+        <Text style={styles.rowDesc}>Mode actuel : {modeLabel}</Text>
+      </View>
+      <Text style={styles.rowChevron}>›</Text>
+    </Pressable>
+  );
+}
 
 // ─── ProfileRow – "Bientôt" placeholder row ───────────────────────────────────
 
@@ -171,6 +202,8 @@ function NotificationsCard() {
 
 export default function ProfileScreen() {
   const { confirmLogout, isLoggingOut } = useLogout();
+  const userId = useAuthStore(s => s.user?.id);
+  const { data: plan } = usePlan(userId);
 
   return (
     <Screen>
@@ -182,7 +215,7 @@ export default function ProfileScreen() {
       <SectionLabel text="Notifications" style={styles.sectionLabel} />
       <NotificationsCard />
 
-      {/* ── Bientôt ── */}
+      {/* ── Personnalisation ── */}
       <SectionLabel text="Personnalisation" style={styles.sectionLabel} />
       <View style={styles.card}>
         <ProfileRow
@@ -190,10 +223,7 @@ export default function ProfileScreen() {
           description="Choisir la voix qui accompagnera tes sessions."
         />
         <View style={styles.divider} />
-        <ProfileRow
-          title="Programme"
-          description="Modifier ton rythme ou ton objectif."
-        />
+        <ProgrammeRow mode={plan?.plan_mode} />
         <View style={styles.divider} />
         <ProfileRow
           title="Abonnement"
@@ -267,6 +297,13 @@ const styles = StyleSheet.create({
     color: colors.muted,
     lineHeight: 17,
   },
+  rowChevron: {
+    fontSize: 22,
+    color: colors.muted,
+    marginLeft: spacing.sm,
+    lineHeight: 26,
+  },
+  rowPressed: { opacity: 0.6 },
   soonBadge: {
     backgroundColor: colors.goldSoft,
     borderRadius: 20,
