@@ -70,46 +70,6 @@ export async function fetchProgress(userId: string) {
   return data;
 }
 
-// ─── updateProgressPointer ────────────────────────────────────────────────────
-// Updates ONLY the future-session pointer: current_surah + current_ayah.
-// Preserves: streak, total_memorized, session_dates, last_session_date,
-//            ayah_per_day, and all other history fields.
-// Used by programme reorganisation — changing where future sessions will start
-// is a pointer change, not a history rewrite.
-
-export async function updateProgressPointer(params: {
-  userId:        string;
-  currentSurah:  number;
-  currentAyah:   number;
-}): Promise<{ error: Error | null }> {
-  const { userId, currentSurah, currentAyah } = params;
-
-  if (!userId)                                        return { error: new Error('Utilisateur non identifié.') };
-  if (!Number.isInteger(currentSurah) || currentSurah < 1 || currentSurah > 114)
-    return { error: new Error('Numéro de sourate invalide.') };
-  if (!Number.isInteger(currentAyah) || currentAyah < 0)
-    return { error: new Error('Numéro d\'ayat invalide.') };
-
-  const { data: existing, error: fetchError } = await supabase
-    .from('progress')
-    .select('id')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (fetchError) return { error: new Error(fetchError.message) };
-  if (!existing)  return { error: new Error('Aucune progression trouvée pour cet utilisateur.') };
-
-  const { error: updateError } = await supabase
-    .from('progress')
-    .update({ current_surah: currentSurah, current_ayah: currentAyah })
-    .eq('id', existing.id);
-
-  if (updateError) return { error: new Error(updateError.message) };
-  return { error: null };
-}
-
 // ─── completeSession ──────────────────────────────────────────────────────────
 // Writes all session-completion fields atomically by row id.
 // Guards against duplicate completion for the same calendar day.
