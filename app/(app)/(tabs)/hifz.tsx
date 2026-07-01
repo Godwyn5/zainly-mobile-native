@@ -22,6 +22,7 @@ import { useAuthStore }    from '@/store/authStore';
 import { useProgress }     from '@/hooks/useProgress';
 import { useLearnedItems } from '@/hooks/useLearnedItems';
 import { useAyatAudio }    from '@/hooks/useAyatAudio';
+import { useReciterStore } from '@/store/reciterStore';
 import { REVIEW_OFFSETS }  from '@/db/reviewItems';
 import { getQuranAyahRange, getSurahName } from '@/core/quranContent';
 import { getAyatAudioUrl } from '@/core/quranAudio';
@@ -190,7 +191,8 @@ function FloatDot({ d }: { d: PDot }) {
 function AudioPlayBtn({
   surahNumber, ayahNumber, size = 32,
 }: { surahNumber: number; ayahNumber: number; size?: number }) {
-  const url    = getAyatAudioUrl({ surahNumber, ayahNumber });
+  const reciterId = useReciterStore(s => s.reciterId);
+  const url    = getAyatAudioUrl({ surahNumber, ayahNumber, reciter: reciterId });
   const onDone = useCallback(() => {}, []);
   const audio  = useAyatAudio(url, onDone);
 
@@ -452,7 +454,8 @@ function AyatDetailSheet({ target, onClose }: { target: DetailTarget; onClose: (
   const slideY = useRef(new Animated.Value(80)).current;
   const fadeV  = useRef(new Animated.Value(0)).current;
 
-  const url    = getAyatAudioUrl({ surahNumber: target.surahNumber, ayahNumber: target.ayahNumber });
+  const reciterId = useReciterStore(s => s.reciterId);
+  const url    = getAyatAudioUrl({ surahNumber: target.surahNumber, ayahNumber: target.ayahNumber, reciter: reciterId });
   const onDone = useCallback(() => {}, []);
   const audio  = useAyatAudio(url, onDone);
 

@@ -5,20 +5,18 @@
 //   SSS = zero-padded surah  (3 digits)
 //   AAA = zero-padded ayah   (3 digits)
 //
-// Al-Husary reciter directory on everyayah.com: "Husary_128kbps"
-//   Full name: Mahmoud Khalil Al-Husary (murattal)
-//   Bitrate: 128 kbps
-//   Chosen for Zainly learning sessions: slow, clear, word-by-word regularity.
+// Reciter catalogue lives in src/core/reciters.ts.
+// Default reciter: Al-Husary (free, always available).
 //
 // NOTE: everyayah.com is a well-known public Quran audio repository used by
 // many Quran apps. Zainly does not claim any specific licensing endorsement.
 // Use neutral copy in the UI ("Récitateur : Al-Husary").
 
-export type QuranAudioReciter = 'husary';
+import { RECITERS, DEFAULT_RECITER, type ReciterId } from './reciters';
 
-const RECITER_DIRS: Record<QuranAudioReciter, string> = {
-  husary: 'Husary_128kbps',
-};
+// QuranAudioReciter is kept as a re-export alias for full backwards compatibility
+// with all existing call sites that import this type from quranAudio.
+export type QuranAudioReciter = ReciterId;
 
 const BASE_URL = 'https://everyayah.com/data';
 
@@ -27,18 +25,19 @@ const BASE_URL = 'https://everyayah.com/data';
  *
  * @param surahNumber  1–114
  * @param ayahNumber   1–286 (varies by surah)
- * @param reciter      Defaults to 'husary'
+ * @param reciter      Defaults to DEFAULT_RECITER ('husary')
  */
 export function getAyatAudioUrl({
   surahNumber,
   ayahNumber,
-  reciter = 'husary',
+  reciter = DEFAULT_RECITER,
 }: {
   surahNumber: number;
   ayahNumber:  number;
-  reciter?:    QuranAudioReciter;
+  reciter?:    ReciterId;
 }): string {
-  const s = String(surahNumber).padStart(3, '0');
-  const a = String(ayahNumber).padStart(3, '0');
-  return `${BASE_URL}/${RECITER_DIRS[reciter]}/${s}${a}.mp3`;
+  const s   = String(surahNumber).padStart(3, '0');
+  const a   = String(ayahNumber).padStart(3, '0');
+  const dir = RECITERS[reciter].dir;
+  return `${BASE_URL}/${dir}/${s}${a}.mp3`;
 }

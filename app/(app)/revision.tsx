@@ -24,6 +24,7 @@ import type { SessionDifficulty } from '@/db/progress';
 import { getQuranAyahSync, getSurahName } from '@/core/quranContent';
 import { getAyatAudioUrl } from '@/core/quranAudio';
 import { useAyatAudio } from '@/hooks/useAyatAudio';
+import { useReciterStore } from '@/store/reciterStore';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -285,7 +286,8 @@ const dib = StyleSheet.create({
 // ─── ReviewAudioBtn ───────────────────────────────────────────────────────────
 
 function ReviewAudioBtn({ surahNumber, ayahNumber }: { surahNumber: number; ayahNumber: number }) {
-  const url   = getAyatAudioUrl({ surahNumber, ayahNumber });
+  const reciterId = useReciterStore(s => s.reciterId);
+  const url   = getAyatAudioUrl({ surahNumber, ayahNumber, reciter: reciterId });
   const audio = useAyatAudio(url, () => {});
   const isEffective = audio.isPlaying || audio.isIntendingToPlay;
 

@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // Note: clearTimeout/setTimeout are global in React Native — no import needed.
 import { createAudioPlayer, useAudioPlayerStatus } from 'expo-audio';
 import { getAyatAudioUrl } from '@/core/quranAudio';
+import { useReciterStore } from '@/store/reciterStore';
 
 export type PassageAudioState = {
   isPlaying:          boolean;
@@ -38,6 +39,7 @@ export function usePassageAudio(
   ayatNumbers:  number[],
   onAllFinished?: () => void,
 ): PassageAudioState {
+  const reciterId = useReciterStore(s => s.reciterId);
   const mountedRef        = useRef(true);
   const playingRef         = useRef(false);
   const currentIdxRef      = useRef(0);
@@ -112,7 +114,7 @@ export function usePassageAudio(
     const ayahNumber = ayatNumbers[idx];
     if (!ayahNumber) return;
 
-    const url = getAyatAudioUrl({ surahNumber, ayahNumber });
+    const url = getAyatAudioUrl({ surahNumber, ayahNumber, reciter: reciterId });
     didJustFinishRef.current = false;
 
     if (mountedRef.current) {
@@ -143,7 +145,7 @@ export function usePassageAudio(
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [surahNumber, ayatNumbers, setLoadingWithDelay]);
+  }, [surahNumber, ayatNumbers, reciterId, setLoadingWithDelay]);
 
   // ── react to player status changes ──
   useEffect(() => {

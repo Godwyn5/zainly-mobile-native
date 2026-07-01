@@ -28,6 +28,7 @@ import { useAyatAudio } from '@/hooks/useAyatAudio';
 import { usePassageAudio } from '@/hooks/usePassageAudio';
 import { useQueryClient }    from '@tanstack/react-query';
 import { useAuthStore }      from '@/store/authStore';
+import { useReciterStore }   from '@/store/reciterStore';
 import { usePlan }           from '@/hooks/usePlan';
 import { useProgress }       from '@/hooks/useProgress';
 import { useDueReviews }     from '@/hooks/useDueReviews';
@@ -333,7 +334,8 @@ type AyatAudioControlProps = {
 };
 
 function AyatAudioControl({ surahNumber, ayatNumber, label, onCompleted, compact }: AyatAudioControlProps) {
-  const url    = getAyatAudioUrl({ surahNumber, ayahNumber: ayatNumber });
+  const reciterId = useReciterStore(s => s.reciterId);
+  const url    = getAyatAudioUrl({ surahNumber, ayahNumber: ayatNumber, reciter: reciterId });
   const onDone = useCallback(() => { if (onCompleted) onCompleted(); }, [onCompleted]);
   const audio  = useAyatAudio(url, onDone);
 
@@ -492,7 +494,8 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
   const unlocked = listenCount >= MIN_LISTENS;
 
   // ── audio ──
-  const audioUrl = getAyatAudioUrl({ surahNumber, ayahNumber: memStart });
+  const reciterId = useReciterStore(s => s.reciterId);
+  const audioUrl = getAyatAudioUrl({ surahNumber, ayahNumber: memStart, reciter: reciterId });
   const onAudioFinish = useCallback(() => {
     if (!mountedRef.current) return;
     setListenCount(prev => prev + 1);
