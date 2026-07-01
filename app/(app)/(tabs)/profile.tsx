@@ -1,5 +1,4 @@
-import React, { useState } from 'react';
-import { ActivityIndicator, Alert, Modal, View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
+import { ActivityIndicator, View, Text, StyleSheet, Pressable } from 'react-native';
 import { Screen } from '@/components/ui/Screen';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { useLogout } from '@/hooks/useLogout';
@@ -7,10 +6,6 @@ import { useNotificationSettings } from '@/hooks/useNotificationSettings';
 import { PRESETS, NotificationPreset } from '@/notifications/types';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
-import { useAuthStore }    from '@/store/authStore';
-import { useProfile }      from '@/hooks/useProfile';
-import { useReciterStore } from '@/store/reciterStore';
-import { RECITERS, type ReciterId } from '@/core/reciters';
 
 // ─── ProfileRow – "Bientôt" placeholder row ───────────────────────────────────
 
@@ -30,96 +25,6 @@ function ProfileRow({ title, description }: ProfileRowProps) {
         <Text style={styles.soonText}>Bientôt</Text>
       </View>
     </View>
-  );
-}
-
-// ─── ReciterRow ───────────────────────────────────────────────────────────────
-
-function ReciterRow({ isPremium }: { isPremium: boolean }) {
-  const { reciterId, setReciter } = useReciterStore();
-  const [modalVisible, setModalVisible] = useState(false);
-
-  const currentName = RECITERS[reciterId].displayName;
-
-  const RECITER_IDS: ReciterId[] = ['husary', 'alafasy', 'muaiqly', 'minshawi', 'sudais'];
-
-  function handleSelect(id: ReciterId) {
-    const profile = RECITERS[id];
-    if (profile.isPremium && !isPremium) {
-      Alert.alert(
-        'Zainly+',
-        'Le choix des récitateurs premium nécessite l\'abonnement Zainly+. (Paywall en cours de construction)',
-      );
-      return;
-    }
-    setReciter(id);
-    setModalVisible(false);
-  }
-
-  return (
-    <>
-      <Pressable
-        style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-        onPress={() => setModalVisible(true)}
-      >
-        <View style={styles.rowContent}>
-          <Text style={styles.rowTitle}>Récitateur</Text>
-          <Text style={styles.rowDesc}>Voix utilisée pendant tes sessions.</Text>
-        </View>
-        <View style={styles.reciterValueWrap}>
-          <Text style={styles.reciterValue}>{currentName}</Text>
-          <Text style={styles.reciterChevron}>›</Text>
-        </View>
-      </Pressable>
-
-      <Modal
-        visible={modalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <Pressable style={styles.modalOverlay} onPress={() => setModalVisible(false)}>
-          <Pressable style={styles.modalSheet} onPress={() => {}/* block tap-through */}>
-            <View style={styles.modalHandle} />
-            <Text style={styles.modalTitle}>Choisir un récitateur</Text>
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {RECITER_IDS.map((id, idx) => {
-                const r        = RECITERS[id];
-                const isActive = reciterId === id;
-                const locked   = r.isPremium && !isPremium;
-                return (
-                  <Pressable
-                    key={id}
-                    style={[styles.reciterOption, isActive && styles.reciterOptionActive, idx > 0 && styles.reciterOptionBorder]}
-                    onPress={() => handleSelect(id)}
-                  >
-                    <View style={styles.reciterOptionLeft}>
-                      <Text style={[styles.reciterOptionName, isActive && styles.reciterOptionNameActive]}>
-                        {r.displayName}
-                      </Text>
-                      {!r.isPremium && (
-                        <Text style={styles.reciterOptionSub}>Gratuit · Inclus dans Zainly</Text>
-                      )}
-                    </View>
-                    <View style={styles.reciterOptionRight}>
-                      {r.isPremium && (
-                        <View style={[styles.premiumBadge, locked && styles.premiumBadgeLocked]}>
-                          <Text style={styles.premiumBadgeText}>ZAINLY+</Text>
-                        </View>
-                      )}
-                      {isActive && <Text style={styles.reciterCheck}>✓</Text>}
-                    </View>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-            <Pressable style={styles.modalClose} onPress={() => setModalVisible(false)}>
-              <Text style={styles.modalCloseText}>Fermer</Text>
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
-    </>
   );
 }
 
@@ -266,9 +171,6 @@ function NotificationsCard() {
 
 export default function ProfileScreen() {
   const { confirmLogout, isLoggingOut } = useLogout();
-  const userId    = useAuthStore(s => s.user?.id);
-  const { data: profile } = useProfile(userId);
-  const isPremium = profile?.is_premium === true;
 
   return (
     <Screen>
@@ -280,10 +182,13 @@ export default function ProfileScreen() {
       <SectionLabel text="Notifications" style={styles.sectionLabel} />
       <NotificationsCard />
 
-      {/* ── Personnalisation ── */}
+      {/* ── Bientôt ── */}
       <SectionLabel text="Personnalisation" style={styles.sectionLabel} />
       <View style={styles.card}>
-        <ReciterRow isPremium={isPremium} />
+        <ProfileRow
+          title="Récitateur"
+          description="Choisir la voix qui accompagnera tes sessions."
+        />
         <View style={styles.divider} />
         <ProfileRow
           title="Programme"
@@ -391,106 +296,6 @@ const styles = StyleSheet.create({
     color: colors.danger,
   },
   logoutTextDim: { color: colors.muted },
-
-  // ── ReciterRow: tappable row ──────────────────────────────────────────────
-  rowPressed:       { opacity: 0.65 },
-  reciterValueWrap: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  reciterValue:     { fontSize: 13, fontWeight: '600', color: colors.gold },
-  reciterChevron:   { fontSize: 18, color: colors.muted, lineHeight: 22 },
-
-  // ── ReciterRow: modal sheet ────────────────────────────────────────────────
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.40)',
-    justifyContent: 'flex-end',
-  },
-  modalSheet: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingTop: 12,
-    paddingBottom: 32,
-    paddingHorizontal: spacing.lg,
-    maxHeight: '80%',
-  },
-  modalHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.border,
-    alignSelf: 'center',
-    marginBottom: spacing.md,
-  },
-  modalTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: colors.primary,
-    marginBottom: spacing.md,
-    textAlign: 'center',
-  },
-  reciterOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 4,
-  },
-  reciterOptionBorder: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  reciterOptionActive: {
-    backgroundColor: colors.goldSoft,
-    borderRadius: 12,
-    paddingHorizontal: spacing.sm,
-    marginHorizontal: -spacing.sm,
-  },
-  reciterOptionLeft:  { flex: 1 },
-  reciterOptionRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  reciterOptionName: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.primary,
-    marginBottom: 2,
-  },
-  reciterOptionNameActive: { color: colors.gold },
-  reciterOptionSub: {
-    fontSize: 11,
-    color: colors.muted,
-  },
-  premiumBadge: {
-    backgroundColor: colors.gold,
-    borderRadius: 20,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  premiumBadgeLocked: {
-    backgroundColor: colors.muted,
-  },
-  premiumBadgeText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#FFF',
-    letterSpacing: 0.4,
-  },
-  reciterCheck: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.gold,
-  },
-  modalClose: {
-    marginTop: spacing.md,
-    borderRadius: 14,
-    backgroundColor: colors.background,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: 13,
-    alignItems: 'center',
-  },
-  modalCloseText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.primary,
-  },
 });
 
 // ─── Styles: notifications card ───────────────────────────────────────────────
