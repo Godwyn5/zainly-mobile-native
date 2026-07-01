@@ -27,7 +27,10 @@ import { getQuranAyahRange, getSurahName } from '@/core/quranContent';
 import { getAyatAudioUrl } from '@/core/quranAudio';
 import type { QuranAyahContent } from '@/core/quranContent';
 
-// Enable LayoutAnimation on Android
+// Required Android prerequisite for the single LayoutAnimation.configureNext call in
+// SurahCard.toggle(). Without this, configureNext is silently ignored on Android.
+// Usage is scoped: only SurahCard.toggle() calls configureNext — no other setState
+// fires in the same frame, so cross-component animation bleed is not a risk here.
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }

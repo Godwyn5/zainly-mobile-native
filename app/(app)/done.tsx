@@ -346,6 +346,26 @@ export default function DoneScreen() {
   const onPrimaryPress = () => { hapticMedium(); router.replace('/(app)/(tabs)/'); };
   const onHifzPress    = () => { hapticLight();  router.replace('/(app)/(tabs)/hifz'); };
 
+  // ── Fallback: no session result (direct nav or stale state) ──
+  if (!result) {
+    return (
+      <SafeAreaView style={s.safeArea}>
+        <View style={s.fallbackRoot}>
+          <View style={s.fallbackCard}>
+            <View style={s.fallbackDot} />
+            <Text style={s.fallbackTitle}>Aucune session terminée</Text>
+            <Text style={s.fallbackBody}>
+              Reviens à Aujourd'hui pour lancer ta prochaine session.
+            </Text>
+          </View>
+          <Pressable style={s.fallbackBtn} onPress={() => { hapticLight(); router.replace('/(app)/(tabs)/'); }}>
+            <Text style={s.fallbackBtnText}>Retour à Aujourd'hui</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   // responsive sizing — compact phones get reduced dimensions
   const sealSz   = isCompact ? 82  : SEAL_SIZE;
   const halo1Sz  = isCompact ? 148 : HALO1_SIZE;
@@ -415,34 +435,29 @@ export default function DoneScreen() {
           {/* CARDS — shrink if needed, never grow past natural size */}
           <View style={s.cardsZone}>
 
-            {/* result card */}
+            {/* result card — result is guaranteed non-null here (early return above handles null) */}
             <Animated.View style={[s.card, isCompact && s.cardCompact, slide(cardAnim)]}>
-              {result ? (
-                <>
-                  <View style={[s.cardHeader, isCompact && { marginBottom: 5 }]}>
-                    <View style={s.cardDot} />
-                    <Text style={s.cardHeaderText}>CE QUE TU AS APPRIS</Text>
+              <>
+                <View style={[s.cardHeader, isCompact && { marginBottom: 5 }]}>
+                  <View style={s.cardDot} />
+                  <Text style={s.cardHeaderText}>CE QUE TU AS APPRIS</Text>
+                </View>
+                <View style={s.cardBodyRow}>
+                  <View style={s.cardBodyLeft}>
+                    <Text style={[s.ayatCountLabel, isCompact && { fontSize: 15 }]}>{ayatLabel}</Text>
+                    {rangeLabel ? <Text style={s.rangeLabel}>{rangeLabel}</Text> : null}
                   </View>
-                  <View style={s.cardBodyRow}>
-                    <View style={s.cardBodyLeft}>
-                      <Text style={[s.ayatCountLabel, isCompact && { fontSize: 15 }]}>{ayatLabel}</Text>
-                      {rangeLabel ? <Text style={s.rangeLabel}>{rangeLabel}</Text> : null}
-                    </View>
-                    <View style={[s.diffBadge, { borderColor: diff.accent + '55', backgroundColor: diff.accent + '12' }]}>
-                      <View style={[s.diffBadgeDot, { backgroundColor: diff.accent }]} />
-                      <Text style={[s.diffBadgeText, { color: diff.accent }]}>{diff.title}</Text>
-                    </View>
+                  <View style={[s.diffBadge, { borderColor: diff.accent + '55', backgroundColor: diff.accent + '12' }]}>
+                    <View style={[s.diffBadgeDot, { backgroundColor: diff.accent }]} />
+                    <Text style={[s.diffBadgeText, { color: diff.accent }]}>{diff.title}</Text>
                   </View>
-                  <Text style={[s.diffBody, isCompact && { lineHeight: 15 }]}>{diff.body}</Text>
-                </>
-              ) : (
-                <Text style={s.fallbackText}>Session terminée.{'\n'}Retourne à Aujourd'hui pour continuer.</Text>
-              )}
+                </View>
+                <Text style={[s.diffBody, isCompact && { lineHeight: 15 }]}>{diff.body}</Text>
+              </>
             </Animated.View>
 
             {/* hifz card */}
-            {result ? (
-              <Animated.View style={[s.hifzCard, slide(hifzAnim)]}>
+            <Animated.View style={[s.hifzCard, slide(hifzAnim)]}>
                 <View style={s.hifzAccent} />
                 <View style={[s.hifzBody, isCompact && { paddingVertical: 7 }]}>
                   <Text style={[s.hifzConfirm, isCompact && { lineHeight: 16 }]}>{isSingleAyat ? 'Ton ayat appris est dans ' : 'Tes ayats appris sont dans '}<Text style={s.hifzBold}>Mon Hifz</Text>.</Text>
@@ -458,7 +473,6 @@ export default function DoneScreen() {
                   </View>
                 </View>
               </Animated.View>
-            ) : null}
 
           </View>{/* /cardsZone */}
 
@@ -637,8 +651,14 @@ const s = StyleSheet.create({
   chipCompact: { paddingHorizontal: 6,  paddingVertical: 2 },
   chipText:    { fontSize: 10, fontWeight: '700', color: colors.gold, letterSpacing: 0.4 },
 
-  // fallback
-  fallbackText: { fontSize: 13, color: colors.muted, textAlign: 'center', lineHeight: 20 },
+  // ── fallback screen (result === null) ─────────────────────────────────────
+  fallbackRoot:    { flex: 1, justifyContent: 'center', paddingHorizontal: spacing.lg },
+  fallbackCard:    { backgroundColor: colors.surface, borderRadius: 22, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, marginBottom: spacing.lg, alignItems: 'center' },
+  fallbackDot:     { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.gold, marginBottom: spacing.md },
+  fallbackTitle:   { fontSize: 20, fontWeight: '800', color: colors.primary, textAlign: 'center', marginBottom: spacing.sm },
+  fallbackBody:    { fontSize: 14, color: colors.muted, lineHeight: 22, textAlign: 'center' },
+  fallbackBtn:     { backgroundColor: colors.primary, borderRadius: 16, height: 56, alignItems: 'center', justifyContent: 'center' },
+  fallbackBtnText: { color: '#FFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.4 },
 
   // ── spacer: distributes leftover space but capped so CTA stays near cards ──
   spacer: { flex: 1, minHeight: 8, maxHeight: 32 },

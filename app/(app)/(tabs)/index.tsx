@@ -727,7 +727,7 @@ export default function TodayScreen() {
             </View>
             <View style={s.progressFooter}>
               <Text style={s.progressFraction}>
-                {prog.currentAyah} / {prog.surahTotalAyats} ayats
+                Prochaine session : ayat {prog.memStart ?? prog.currentAyah + 1}
               </Text>
               <Text style={s.progressHelper}>
                 {prog.sessionFinishesSurah

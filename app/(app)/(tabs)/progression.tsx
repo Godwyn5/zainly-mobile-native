@@ -301,12 +301,18 @@ export default function ProgressionScreen() {
 
   // Current position — current_ayah is the NEXT ayat to learn (pointer), not a memorized count.
   // Never used as a learned-count numerator.
-  const hasSurahNum = typeof data.current_surah === 'number'
+  const hasSurahNum   = typeof data.current_surah === 'number'
     && data.current_surah >= 1 && data.current_surah <= 114;
-  const hasNextAyah = typeof data.current_ayah === 'number' && data.current_ayah >= 1;
-  const surahNum    = hasSurahNum ? data.current_surah as number : null;
-  const nextAyah    = hasNextAyah ? data.current_ayah as number : null;
-  const surahName   = surahNum !== null ? (getSurahName(surahNum) ?? `Sourate ${surahNum}`) : null;
+  const hasNextAyah   = typeof data.current_ayah === 'number' && data.current_ayah >= 1;
+  // Fresh user: current_ayah = 0 but a surah is already configured via the plan.
+  const isFreshStart  = hasSurahNum && !hasNextAyah && learnedWithZainlyAyats === 0;
+  const surahNum      = hasSurahNum ? data.current_surah as number : null;
+  const nextAyah      = hasNextAyah ? data.current_ayah as number : null;
+  // For a fresh user, fall back to plan.start_ayah (or 1) as the starting ayah display.
+  const startAyah     = isFreshStart
+    ? (typeof plan?.start_ayah === 'number' && plan.start_ayah >= 1 ? plan.start_ayah : 1)
+    : null;
+  const surahName     = surahNum !== null ? (getSurahName(surahNum) ?? `Sourate ${surahNum}`) : null;
 
   // Next step text — plain spaces, no unicode escape sequences
   const nextStepText =
@@ -396,7 +402,17 @@ export default function ProgressionScreen() {
       </Animated.View>
 
       {/* ══ 3. POSITION ACTUELLE ════════════════════════════════════ */}
-      {surahName !== null && nextAyah !== null && (
+      {isFreshStart && surahName !== null ? (
+        <Animated.View style={fadeIn(posAnim, 10)}>
+          <View style={s.card}>
+            <Text style={s.cardEyebrow}>POINT DE DÉPART</Text>
+            <Text style={s.posMain}>Ton parcours commence ici</Text>
+            <Text style={s.posSub}>
+              {`Première session : ${surahName} — Ayat ${startAyah}`}
+            </Text>
+          </View>
+        </Animated.View>
+      ) : surahName !== null && nextAyah !== null ? (
         <Animated.View style={fadeIn(posAnim, 10)}>
           <View style={s.card}>
             <Text style={s.cardEyebrow}>POSITION ACTUELLE</Text>
@@ -404,7 +420,7 @@ export default function ProgressionScreen() {
             <Text style={s.posSub}>{nextStepText}</Text>
           </View>
         </Animated.View>
-      )}
+      ) : null}
 
       {/* ══ 4. CE MOIS-CI — compact monthly calendar ════════════════ */}
       <Animated.View style={[{ flex: 1 }, fadeIn(calAnim, 10)]}>
