@@ -1,8 +1,9 @@
 import { useEffect, useRef, useMemo } from 'react';
-import { View, Text, StyleSheet, Animated, Easing, Pressable, Dimensions } from 'react-native';
+import { Alert, View, Text, StyleSheet, Animated, Easing, Pressable, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuthStore } from '@/store/authStore';
+import { useProfile }   from '@/hooks/useProfile';
 import { usePlan } from '@/hooks/usePlan';
 import { useProgress } from '@/hooks/useProgress';
 import { useDueReviews } from '@/hooks/useDueReviews';
@@ -193,6 +194,9 @@ export default function TodayScreen() {
   const user   = useAuthStore((s) => s.user);
   const userId = user?.id;
   const today  = localDateStr();
+
+  const { data: profile } = useProfile(userId);
+  const isPremium = profile?.is_premium === true;
 
   const plan     = usePlan(userId);
   const progress = useProgress(userId);
@@ -653,48 +657,65 @@ export default function TodayScreen() {
 
           <View style={s.sessionDivider} />
 
-          {/* CTA — four cases:
-               A) 0 due → new session (or done-today)
-               B) 1 due → review (also allowed after sessionDoneToday)
-               C) 2–5 due → review
-               D) 6+ due → review (consolidation day) */}
-          {prog.dueReviewCount === 0 && prog.sessionDoneToday ? (
-            <View style={s.ctaDone}>
-              <Text style={s.ctaDoneText}>Session terminée aujourd'hui ✓</Text>
-            </View>
-          ) : (
-            <View style={s.ctaWrap}>
-              <Animated.View style={[s.ctaGlow, { opacity: ctaGlowAnim }]} />
-              <Pressable
-                style={({ pressed }) => [s.cta, pressed && s.ctaPressed]}
-                onPress={() => {
-                  if (isPushing.current) return;
-                  isPushing.current = true;
-                  hapticLight();
-                  if (prog.dueReviewCount > 0) {
-                    router.push('/(app)/revision');
-                  } else {
-                    router.push('/(app)/session');
-                  }
-                  setTimeout(() => { isPushing.current = false; }, 1000);
-                }}
-              >
-                <Text style={s.ctaText}>
-                  {prog.dueReviewCount >= 6
-                    ? 'Consolider mon Hifz →'
-                    : prog.dueReviewCount >= 2
-                      ? 'Commencer mes révisions →'
-                      : prog.dueReviewCount === 1
-                        ? 'Réviser maintenant →'
-                        : 'Commencer la session →'}
-                </Text>
-                <Animated.View
-                  pointerEvents="none"
-                  style={[s.ctaShine, { left: ctaShineX }]}
-                />
-              </Pressable>
-            </View>
-          )}
+          {/* CTA — five cases:
+               A) reviews due → revision
+               B) no reviews + session not done → new session
+               C) no reviews + session done + premium → next ayat (Premium)
+               D) no reviews + session done + free → paywall upsell
+          */}
+          <View style={s.ctaWrap}>
+            <Animated.View style={[s.ctaGlow, { opacity: ctaGlowAnim }]} />
+            <Pressable
+              style={({ pressed }) => [
+                s.cta,
+                prog.dueReviewCount === 0 && prog.sessionDoneToday && !isPremium && s.ctaPremium,
+                pressed && s.ctaPressed,
+              ]}
+              onPress={() => {
+                if (isPushing.current) return;
+                isPushing.current = true;
+                hapticLight();
+
+                if (prog.dueReviewCount > 0) {
+                  router.push('/(app)/revision');
+                } else if (!prog.sessionDoneToday) {
+                  router.push('/(app)/session');
+                } else if (isPremium) {
+                  router.push('/(app)/session');
+                } else {
+                  Alert.alert(
+                    'Zainly+',
+                    'Les utilisateurs gratuits peuvent mémoriser 1 nouvel ayat par jour. Passe à Zainly+ pour avancer sans limite dès aujourd\'hui\u00a0! (Paywall en cours de construction)',
+                  );
+                  isPushing.current = false;
+                  return;
+                }
+
+                setTimeout(() => { isPushing.current = false; }, 1000);
+              }}
+            >
+              <Text style={[
+                s.ctaText,
+                prog.dueReviewCount === 0 && prog.sessionDoneToday && !isPremium && s.ctaPremiumText,
+              ]}>
+                {prog.dueReviewCount >= 6
+                  ? 'Consolider mon Hifz →'
+                  : prog.dueReviewCount >= 2
+                    ? 'Commencer mes révisions →'
+                    : prog.dueReviewCount === 1
+                      ? 'Réviser maintenant →'
+                      : !prog.sessionDoneToday
+                        ? 'Commencer la mémorisation →'
+                        : isPremium
+                          ? 'Mémoriser l\'ayat suivant →'
+                          : 'Continuer avec Zainly+ ✦'}
+              </Text>
+              <Animated.View
+                pointerEvents="none"
+                style={[s.ctaShine, { left: ctaShineX }]}
+              />
+            </Pressable>
+          </View>
         </View>
       </Animated.View>
 
@@ -1148,6 +1169,19 @@ const s = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border,
   },
   ctaDoneText: { fontSize: 15, fontWeight: '600', color: colors.muted },
+  ctaPremium: {
+    backgroundColor: colors.goldSoft,
+    borderWidth: 1.5,
+    borderColor: colors.gold,
+    shadowColor: colors.gold,
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  ctaPremiumText: {
+    color: colors.gold,
+    fontWeight: '800',
+  },
 
   // ── surah progress ──
   progressCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 },
