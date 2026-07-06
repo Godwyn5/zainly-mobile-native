@@ -15,39 +15,39 @@ type ContextCopy = { title: string; subtitle: string };
 
 const CONTEXT_COPY: Record<PaywallContext, ContextCopy> = {
   daily_limit: {
-    title: 'Tu as termin\u00e9 ton ayat du jour',
+    title: 'Tu as terminé ton ayat du jour',
     subtitle: 'Reviens demain gratuitement, ou continue maintenant avec Zainly+.',
   },
   onboarding: {
-    title: 'Ton parcours est pr\u00eat',
-    subtitle: 'Continue gratuitement avec 1 ayat guid\u00e9 par jour, ou d\u00e9bloque Zainly+ pour avancer sans limite quotidienne.',
+    title: 'Ton parcours est prêt',
+    subtitle: 'Continue gratuitement avec 1 ayat guidé par jour, ou débloque Zainly+ pour avancer sans limite quotidienne.',
   },
   profile: {
-    title: 'D\u00e9couvre Zainly+',
-    subtitle: 'D\u00e9bloque les sessions guid\u00e9es sans limite quotidienne.',
+    title: 'Découvre Zainly+',
+    subtitle: 'Débloque les sessions guidées sans limite quotidienne.',
   },
 };
 
 const BENEFITS = [
   {
-    title: 'Sessions guid\u00e9es sans limite quotidienne',
-    desc: 'M\u00e9morise plusieurs ayats le m\u00eame jour.',
+    title: 'Sessions guidées sans limite quotidienne',
+    desc: 'Mémorise plusieurs ayats le même jour.',
   },
   {
     title: 'Continue sans attendre demain',
-    desc: 'Ton prochain ayat est disponible imm\u00e9diatement.',
+    desc: 'Ton prochain ayat est disponible immédiatement.',
   },
   {
-    title: 'Avance \u00e0 ton rythme',
-    desc: 'Garde ton \u00e9lan quand tu es motiv\u00e9.',
+    title: 'Avance à ton rythme',
+    desc: 'Garde ton élan quand tu es motivé.',
   },
 ];
 
 const LEGAL_ANNUAL =
-  'Apr\u00e8s 7 jours gratuits, l\u2019abonnement annuel se renouvelle automatiquement \u00e0 59,99\u00a0\u20ac\u00a0/ an, sauf annulation au moins 24\u00a0h avant la fin de la p\u00e9riode en cours. Le paiement sera d\u00e9bit\u00e9 de votre compte Apple \u00e0 la confirmation de l\u2019achat. Vous pouvez g\u00e9rer ou annuler votre abonnement dans les r\u00e9glages de votre compte Apple.';
+  'Après 7 jours gratuits, l’abonnement annuel se renouvelle automatiquement à 59,99 € / an, sauf annulation au moins 24 h avant la fin de la période en cours. Le paiement sera débité de votre compte Apple à la confirmation de l’achat. Vous pouvez gérer ou annuler votre abonnement dans les réglages de votre compte Apple.';
 
 const LEGAL_MONTHLY =
-  'L\u2019abonnement mensuel se renouvelle automatiquement \u00e0 9,99\u00a0\u20ac\u00a0/ mois, sauf annulation au moins 24\u00a0h avant la fin de la p\u00e9riode en cours. Le paiement sera d\u00e9bit\u00e9 de votre compte Apple \u00e0 la confirmation de l\u2019achat. Vous pouvez g\u00e9rer ou annuler votre abonnement dans les r\u00e9glages de votre compte Apple.';
+  'L’abonnement mensuel se renouvelle automatiquement à 9,99 € / mois, sauf annulation au moins 24 h avant la fin de la période en cours. Le paiement sera débité de votre compte Apple à la confirmation de l’achat. Vous pouvez gérer ou annuler votre abonnement dans les réglages de votre compte Apple.';
 
 export default function PremiumScreen() {
   const { context } = useLocalSearchParams<{ context?: string }>();
@@ -62,8 +62,8 @@ export default function PremiumScreen() {
   function handleSubscribe() {
     // TODO Zainly+: replace with RevenueCat purchase call.
     Alert.alert(
-      'Paiement bient\u00f4t disponible',
-      'Zainly+ sera bient\u00f4t disponible dans l\u2019application.'
+      'Paiement bientôt disponible',
+      'Zainly+ sera bientôt disponible dans l’application.'
     );
   }
 
@@ -74,12 +74,12 @@ export default function PremiumScreen() {
 
   function handlePrivacy() {
     // TODO Zainly+: open privacy policy URL.
-    Alert.alert('Confidentialit\u00e9', 'La politique de confidentialit\u00e9 sera disponible prochainement.');
+    Alert.alert('Confidentialité', 'La politique de confidentialité sera disponible prochainement.');
   }
 
   function handleTerms() {
     // TODO Zainly+: open terms of service URL.
-    Alert.alert('CGU', 'Les conditions g\u00e9n\u00e9rales d\u2019utilisation seront disponibles prochainement.');
+    Alert.alert('CGU', 'Les conditions générales d’utilisation seront disponibles prochainement.');
   }
 
   return (
@@ -108,11 +108,11 @@ export default function PremiumScreen() {
         <View style={s.compareRow}>
           <View style={s.compareItem}>
             <View style={s.compareDot} />
-            <Text style={s.compareText}>Gratuit\u00a0: 1 ayat guid\u00e9 par jour.</Text>
+            <Text style={s.compareText}>Gratuit : 1 ayat guidé par jour.</Text>
           </View>
           <View style={s.compareItem}>
             <View style={[s.compareDot, s.compareDotGold]} />
-            <Text style={[s.compareText, s.compareTextGold]}>Zainly+\u00a0: sessions guid\u00e9es sans limite quotidienne.</Text>
+            <Text style={[s.compareText, s.compareTextGold]}>Zainly+ : sessions guidées sans limite quotidienne.</Text>
           </View>
         </View>
 
@@ -133,7 +133,7 @@ export default function PremiumScreen() {
 
         {/* ── Social proof ── */}
         <Text style={s.socialProof}>
-          D\u00e9j\u00e0 utilis\u00e9 par des apprenants sur Zainly web.
+          Déjà utilisé par des apprenants sur Zainly web.
         </Text>
 
         {/* ── Plan selector ── */}
@@ -151,8 +151,8 @@ export default function PremiumScreen() {
               <View style={s.planTag}><Text style={s.planTagText}>-50%</Text></View>
               <View style={s.planTag}><Text style={s.planTagText}>7 jours gratuits</Text></View>
             </View>
-            <Text style={s.planPrice}>59,99\u00a0\u20ac / an</Text>
-            <Text style={s.planSub}>soit 4,99\u00a0\u20ac / mois</Text>
+            <Text style={s.planPrice}>59,99 € / an</Text>
+            <Text style={s.planSub}>soit 4,99 € / mois</Text>
           </Pressable>
 
           {/* Monthly */}
@@ -163,7 +163,7 @@ export default function PremiumScreen() {
             <View style={s.planNameRow}>
               <Text style={s.planName}>Mensuel</Text>
             </View>
-            <Text style={s.planPrice}>9,99\u00a0\u20ac / mois</Text>
+            <Text style={s.planPrice}>9,99 € / mois</Text>
           </Pressable>
         </View>
 
@@ -184,7 +184,7 @@ export default function PremiumScreen() {
 
         {/* ── Bouton gratuit ── */}
         <Pressable style={s.freeBtn} onPress={() => router.back()}>
-          <Text style={s.freeBtnText}>Continuer gratuitement \u2014 1 ayat / jour</Text>
+          <Text style={s.freeBtnText}>Continuer gratuitement — 1 ayat / jour</Text>
         </Pressable>
 
         {/* ── Footer links ── */}
@@ -192,11 +192,11 @@ export default function PremiumScreen() {
           <Pressable onPress={handleRestore} hitSlop={8}>
             <Text style={s.footerLink}>Restaurer mes achats</Text>
           </Pressable>
-          <Text style={s.footerSep}>\u00b7</Text>
+          <Text style={s.footerSep}>·</Text>
           <Pressable onPress={handlePrivacy} hitSlop={8}>
-            <Text style={s.footerLink}>Confidentialit\u00e9</Text>
+            <Text style={s.footerLink}>Confidentialité</Text>
           </Pressable>
-          <Text style={s.footerSep}>\u00b7</Text>
+          <Text style={s.footerSep}>·</Text>
           <Pressable onPress={handleTerms} hitSlop={8}>
             <Text style={s.footerLink}>CGU</Text>
           </Pressable>
