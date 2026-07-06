@@ -1,6 +1,9 @@
-import { ActivityIndicator, View, Text, StyleSheet, Pressable } from 'react-native';
+import { ActivityIndicator, Alert, View, Text, StyleSheet, Pressable } from 'react-native';
+import { router } from 'expo-router';
 import { Screen } from '@/components/ui/Screen';
 import { SectionLabel } from '@/components/ui/SectionLabel';
+import { useAuthStore } from '@/store/authStore';
+import { useProfile } from '@/hooks/useProfile';
 import { useLogout } from '@/hooks/useLogout';
 import { useNotificationSettings } from '@/hooks/useNotificationSettings';
 import { PRESETS, NotificationPreset } from '@/notifications/types';
@@ -167,10 +170,84 @@ function NotificationsCard() {
   );
 }
 
+// ─── SubscriptionCard ─────────────────────────────────────────────────────────
+
+function SubscriptionCard({ hasZainlyPlus }: { hasZainlyPlus: boolean }) {
+  if (hasZainlyPlus) {
+    return (
+      <View style={sub.card}>
+        <View style={sub.accentBar} />
+        <View style={sub.body}>
+          <View style={sub.headerRow}>
+            <Text style={sub.title}>Zainly+</Text>
+            <View style={sub.badgeActive}>
+              <Text style={sub.badgeActiveText}>Actif</Text>
+            </View>
+          </View>
+          <Text style={sub.desc}>Sessions guidées sans limite quotidienne.</Text>
+          <Text style={sub.secondary}>Ton accès Zainly+ est actif sur ce compte.</Text>
+          <Pressable
+            style={({ pressed }) => [sub.btnSecondary, pressed && sub.btnPressed]}
+            onPress={() => {
+              // TODO Zainly+: replace with RevenueCat subscription management.
+              Alert.alert(
+                'Bientôt disponible',
+                'La gestion de l’abonnement sera disponible avec les achats intégrés.'
+              );
+            }}
+          >
+            <Text style={sub.btnSecondaryText}>Gérer l’abonnement</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [sub.linkBtn, pressed && sub.btnPressed]}
+            onPress={() => {
+              // TODO Zainly+: replace with RevenueCat restorePurchases call.
+              Alert.alert(
+                'Bientôt disponible',
+                'La restauration des achats sera disponible avec les achats intégrés.'
+              );
+            }}
+          >
+            <Text style={sub.linkBtnText}>Restaurer mes achats</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={sub.card}>
+      <View style={sub.accentBar} />
+      <View style={sub.body}>
+        <View style={sub.headerRow}>
+          <Text style={sub.title}>Zainly Free</Text>
+          <View style={sub.badgeFree}>
+            <Text style={sub.badgeFreeText}>Gratuit</Text>
+          </View>
+        </View>
+        <Text style={sub.desc}>1 ayat guidé par jour.</Text>
+        <Text style={sub.secondary}>
+          Passe à Zainly+ pour débloquer les sessions guidées sans limite quotidienne.
+        </Text>
+        <Pressable
+          style={({ pressed }) => [sub.btnPrimary, pressed && sub.btnPressed]}
+          onPress={() => router.push('/premium?context=profile')}
+        >
+          <Text style={sub.btnPrimaryText}>Découvrir Zainly+</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
 // ─── ProfileScreen ────────────────────────────────────────────────────────────
 
 export default function ProfileScreen() {
   const { confirmLogout, isLoggingOut } = useLogout();
+  const userId = useAuthStore((s) => s.session?.user.id);
+  const { data: profileData } = useProfile(userId);
+  // TODO Zainly+: replace profile.is_premium with entitlement-backed access from RevenueCat/Supabase.
+  const hasZainlyPlus = profileData?.is_premium === true;
 
   return (
     <Screen>
@@ -181,6 +258,10 @@ export default function ProfileScreen() {
       {/* ── Notifications ── */}
       <SectionLabel text="Notifications" style={styles.sectionLabel} />
       <NotificationsCard />
+
+      {/* ── Abonnement ── */}
+      <SectionLabel text="Abonnement" style={styles.sectionLabel} />
+      <SubscriptionCard hasZainlyPlus={hasZainlyPlus} />
 
       {/* ── Bientôt ── */}
       <SectionLabel text="Personnalisation" style={styles.sectionLabel} />
@@ -193,11 +274,6 @@ export default function ProfileScreen() {
         <ProfileRow
           title="Programme"
           description="Modifier ton rythme ou ton objectif."
-        />
-        <View style={styles.divider} />
-        <ProfileRow
-          title="Abonnement"
-          description="Gérer ton accès Zainly."
         />
       </View>
 
@@ -468,4 +544,115 @@ const n = StyleSheet.create({
     marginTop: 8,
     fontStyle: 'italic',
   },
+});
+
+// ─── Styles: subscription card ────────────────────────────────────────────────
+
+const sub = StyleSheet.create({
+  card: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  accentBar: {
+    width: 4,
+    backgroundColor: colors.gold,
+  },
+  body: {
+    flex: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  title: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  badgeFree: {
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  badgeFreeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.muted,
+  },
+  badgeActive: {
+    backgroundColor: colors.goldSoft,
+    borderRadius: 20,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  badgeActiveText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.gold,
+  },
+  desc: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.primary,
+    marginBottom: 4,
+  },
+  secondary: {
+    fontSize: 12,
+    color: colors.muted,
+    lineHeight: 17,
+    marginBottom: spacing.md,
+  },
+  btnPrimary: {
+    backgroundColor: colors.primary,
+    borderRadius: 12,
+    paddingVertical: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnPrimaryText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.surface,
+  },
+  btnSecondary: {
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    borderRadius: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  btnSecondaryText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.primary,
+  },
+  linkBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+  },
+  linkBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.muted,
+  },
+  btnPressed: { opacity: 0.75 },
 });
