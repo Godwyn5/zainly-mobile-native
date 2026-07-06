@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { ActivityIndicator, Alert, View, Text, StyleSheet, Pressable } from 'react-native';
 import { router } from 'expo-router';
 import { Screen } from '@/components/ui/Screen';
@@ -5,6 +6,7 @@ import { SectionLabel } from '@/components/ui/SectionLabel';
 import { useAuthStore } from '@/store/authStore';
 import { useProfile } from '@/hooks/useProfile';
 import { useLogout } from '@/hooks/useLogout';
+import { requestAccountDeletion } from '@/db/accountDeletion';
 import { useNotificationSettings } from '@/hooks/useNotificationSettings';
 import { PRESETS, NotificationPreset } from '@/notifications/types';
 import { colors } from '@/theme/colors';
@@ -245,9 +247,50 @@ function SubscriptionCard({ hasZainlyPlus }: { hasZainlyPlus: boolean }) {
 export default function ProfileScreen() {
   const { confirmLogout, isLoggingOut } = useLogout();
   const userId = useAuthStore((s) => s.session?.user.id);
+  const userEmail = useAuthStore((s) => s.session?.user.email);
   const { data: profileData } = useProfile(userId);
   // TODO Zainly+: replace profile.is_premium with entitlement-backed access from RevenueCat/Supabase.
   const hasZainlyPlus = profileData?.is_premium === true;
+  const [requestingDeletion, setRequestingDeletion] = useState(false);
+
+  async function performDeletionRequest() {
+    if (!userId || requestingDeletion) return;
+    setRequestingDeletion(true);
+    const { error } = await requestAccountDeletion({ userId, email: userEmail ?? null });
+    setRequestingDeletion(false);
+
+    if (!error) {
+      Alert.alert(
+        'Demande envoyée',
+        'Ta demande de suppression a été enregistrée. Nous la traiterons dans les meilleurs délais.'
+      );
+      return;
+    }
+
+    if (error === 'already_requested') {
+      Alert.alert(
+        'Demande déjà envoyée',
+        'Une demande de suppression est déjà enregistrée pour ce compte.'
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Erreur',
+      'Impossible d’envoyer la demande pour le moment. Réessaie plus tard.'
+    );
+  }
+
+  function confirmDeletion() {
+    Alert.alert(
+      'Supprimer ton compte ?',
+      'Cette action enverra une demande de suppression de ton compte et de tes données Zainly. Elle sera traitée dans les meilleurs délais. Cette action ne peut pas être annulée une fois la demande envoyée.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        { text: 'Envoyer la demande', style: 'destructive', onPress: performDeletionRequest },
+      ]
+    );
+  }
 
   return (
     <Screen>
@@ -291,6 +334,23 @@ export default function ProfileScreen() {
         >
           <Text style={[styles.logoutText, isLoggingOut && styles.logoutTextDim]}>
             {isLoggingOut ? 'Déconnexion…' : 'Se déconnecter'}
+          </Text>
+        </Pressable>
+        <View style={styles.divider} />
+        <Pressable
+          style={({ pressed }) => [
+            styles.logoutRow,
+            requestingDeletion && styles.logoutRowDisabled,
+            pressed && !requestingDeletion && styles.logoutRowPressed,
+          ]}
+          onPress={confirmDeletion}
+          disabled={requestingDeletion}
+        >
+          <Text style={[styles.logoutText, requestingDeletion && styles.logoutTextDim]}>
+            {requestingDeletion ? 'Envoi…' : 'Supprimer mon compte'}
+          </Text>
+          <Text style={styles.deleteDesc}>
+            Envoyer une demande de suppression de ton compte et de tes données.
           </Text>
         </Pressable>
       </View>
@@ -372,6 +432,12 @@ const styles = StyleSheet.create({
     color: colors.danger,
   },
   logoutTextDim: { color: colors.muted },
+  deleteDesc: {
+    fontSize: 12,
+    color: colors.muted,
+    lineHeight: 17,
+    marginTop: 4,
+  },
 });
 
 // ─── Styles: notifications card ───────────────────────────────────────────────

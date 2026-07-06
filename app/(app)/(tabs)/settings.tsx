@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { Text, StyleSheet, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '@/db/client';
+import { requestAccountDeletion } from '@/db/accountDeletion';
+import { useAuthStore } from '@/store/authStore';
 import { Screen } from '@/components/ui/Screen';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
@@ -11,6 +13,9 @@ import { spacing } from '@/theme/spacing';
 
 export default function SettingsScreen() {
   const [signingOut, setSigningOut] = useState(false);
+  const [requestingDeletion, setRequestingDeletion] = useState(false);
+  const userId = useAuthStore((s) => s.user?.id);
+  const userEmail = useAuthStore((s) => s.user?.email);
 
   async function handleSignOut() {
     setSigningOut(true);
@@ -21,6 +26,45 @@ export default function SettingsScreen() {
       return;
     }
     router.replace('/(auth)/login');
+  }
+
+  async function performDeletionRequest() {
+    if (!userId || requestingDeletion) return;
+    setRequestingDeletion(true);
+    const { error } = await requestAccountDeletion({ userId, email: userEmail ?? null });
+    setRequestingDeletion(false);
+
+    if (!error) {
+      Alert.alert(
+        'Demande envoyée',
+        'Ta demande de suppression a été enregistrée. Nous la traiterons dans les meilleurs délais.'
+      );
+      return;
+    }
+
+    if (error === 'already_requested') {
+      Alert.alert(
+        'Demande déjà envoyée',
+        'Une demande de suppression est déjà enregistrée pour ce compte.'
+      );
+      return;
+    }
+
+    Alert.alert(
+      'Erreur',
+      'Impossible d’envoyer la demande pour le moment. Réessaie plus tard.'
+    );
+  }
+
+  function confirmDeletion() {
+    Alert.alert(
+      'Supprimer ton compte ?',
+      'Cette action enverra une demande de suppression de ton compte et de tes données Zainly. Elle sera traitée dans les meilleurs délais. Cette action ne peut pas être annulée une fois la demande envoyée.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        { text: 'Envoyer la demande', style: 'destructive', onPress: performDeletionRequest },
+      ]
+    );
   }
 
   return (
@@ -44,6 +88,14 @@ export default function SettingsScreen() {
           onPress={handleSignOut}
           loading={signingOut}
           disabled={signingOut}
+        />
+        <ListRow
+          title="Supprimer mon compte"
+          destructive
+          chevron={false}
+          onPress={confirmDeletion}
+          loading={requestingDeletion}
+          disabled={requestingDeletion}
         />
       </Card>
     </Screen>

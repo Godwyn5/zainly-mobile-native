@@ -53,3 +53,14 @@ export interface Profile {
   id: string;
   is_premium: boolean;
 }
+
+export interface AccountDeletionRequest {
+  id: string;
+  user_id: string;
+  email: string | null;
+  status: 'pending' | 'processing' | 'completed' | 'canceled';
+  reason: string | null;
+  requested_at: string;
+  processed_at: string | null;
+  created_at: string;
+}
