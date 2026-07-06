@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, Animated, Easing, Pressable, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -15,6 +15,47 @@ import { spacing } from '@/theme/spacing';
 import { hapticLight } from '@/utils/haptics';
 
 const SW = Dimensions.get('window').width;
+
+// ─── FreeLimitCountdown ───────────────────────────────────────────────────────
+// Isolated sub-component so its setInterval does not re-render TodayScreen.
+
+function FreeLimitCountdown() {
+  const [label, setLabel] = useState('');
+
+  const tick = useCallback(() => {
+    const now = new Date();
+    const nextMidnight = new Date(now);
+    nextMidnight.setHours(24, 0, 0, 0);
+    const diff = Math.max(0, nextMidnight.getTime() - now.getTime());
+    const h = Math.floor(diff / 3_600_000);
+    const m = Math.floor((diff % 3_600_000) / 60_000);
+    const sec = Math.floor((diff % 60_000) / 1_000);
+    setLabel(`${h}h${String(m).padStart(2, '0')}min${String(sec).padStart(2, '0')}s`);
+  }, []);
+
+  useEffect(() => {
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [tick]);
+
+  if (!label) return null;
+  return (
+    <Text style={cd.text}>
+      Prochain ayat gratuit dans {label}
+    </Text>
+  );
+}
+
+const cd = StyleSheet.create({
+  text: {
+    fontSize: 13,
+    color: colors.muted,
+    fontWeight: '500',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+});
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -659,16 +700,14 @@ export default function TodayScreen() {
 
           <View style={s.sessionDivider} />
 
-          {/* CTA — four cases:
-               A) 0 due → new session (or done-today)
-               B) 1 due → review (also allowed after sessionDoneToday)
-               C) 2–5 due → review
-               D) 6+ due → review (consolidation day) */}
-          {prog.dueReviewCount === 0 && prog.sessionDoneToday ? (
-            <View style={s.ctaDone}>
-              <Text style={s.ctaDoneText}>Session terminée aujourd'hui ✓</Text>
-            </View>
-          ) : (
+          {/* CTA — five cases:
+               1) révisions dues → /revision (tous)
+               2) gratuit, session pas faite → /session
+               3) gratuit, session faite → carte limite + countdown + /premium
+               4) Zainly+, session faite → continuer /session
+               5) Zainly+, session pas faite → /session */}
+          {prog.dueReviewCount > 0 ? (
+            // Cas 1 — révisions prioritaires (gratuit et Zainly+)
             <View style={s.ctaWrap}>
               <Animated.View style={[s.ctaGlow, { opacity: ctaGlowAnim }]} />
               <Pressable
@@ -677,11 +716,7 @@ export default function TodayScreen() {
                   if (isPushing.current) return;
                   isPushing.current = true;
                   hapticLight();
-                  if (prog.dueReviewCount > 0) {
-                    router.push('/(app)/revision');
-                  } else {
-                    router.push('/(app)/session');
-                  }
+                  router.push('/(app)/revision');
                   setTimeout(() => { isPushing.current = false; }, 1000);
                 }}
               >
@@ -690,14 +725,84 @@ export default function TodayScreen() {
                     ? 'Consolider mon Hifz →'
                     : prog.dueReviewCount >= 2
                       ? 'Commencer mes révisions →'
-                      : prog.dueReviewCount === 1
-                        ? 'Réviser maintenant →'
-                        : 'Commencer la session →'}
+                      : 'Réviser maintenant →'}
                 </Text>
-                <Animated.View
-                  pointerEvents="none"
-                  style={[s.ctaShine, { left: ctaShineX }]}
-                />
+                <Animated.View pointerEvents="none" style={[s.ctaShine, { left: ctaShineX }]} />
+              </Pressable>
+            </View>
+          ) : !hasZainlyPlus && prog.sessionDoneToday ? (
+            // Cas 3 — gratuit, limite atteinte
+            <View style={s.limitCard}>
+              <View style={s.limitHeader}>
+                <View style={s.limitDot} />
+                <Text style={s.limitEyebrow}>AYAT DU JOUR TERMINÉ</Text>
+              </View>
+              <Text style={s.limitTitle}>Ayat du jour terminé</Text>
+              <Text style={s.limitSubtitle}>
+                Tu peux revenir demain gratuitement, ou passer à Zainly+ pour avancer sans limite aujourd'hui.
+              </Text>
+              <FreeLimitCountdown />
+              <Pressable
+                style={({ pressed }) => [s.limitCta, pressed && s.limitCtaPressed]}
+                onPress={() => {
+                  if (isPushing.current) return;
+                  isPushing.current = true;
+                  hapticLight();
+                  router.push('/premium?context=daily_limit');
+                  setTimeout(() => { isPushing.current = false; }, 1000);
+                }}
+              >
+                <Text style={s.limitCtaText}>Continuer avec Zainly+</Text>
+              </Pressable>
+              <Pressable
+                style={s.limitSecondary}
+                onPress={() => {
+                  hapticLight();
+                  router.replace('/(app)/(tabs)/progression');
+                }}
+              >
+                <Text style={s.limitSecondaryText}>Voir ma progression</Text>
+              </Pressable>
+            </View>
+          ) : hasZainlyPlus && prog.sessionDoneToday ? (
+            // Cas 4 — Zainly+, peut continuer
+            <View style={s.zplusDoneCard}>
+              <Text style={s.zplusDoneTitle}>Session terminée</Text>
+              <Text style={s.zplusDoneSub}>
+                Tu peux continuer avec l'ayat suivant quand tu veux.
+              </Text>
+              <View style={s.ctaWrap}>
+                <Pressable
+                  style={({ pressed }) => [s.cta, pressed && s.ctaPressed]}
+                  onPress={() => {
+                    if (isPushing.current) return;
+                    isPushing.current = true;
+                    hapticLight();
+                    router.push('/(app)/session');
+                    setTimeout(() => { isPushing.current = false; }, 1000);
+                  }}
+                >
+                  <Text style={s.ctaText}>Continuer ma mémorisation →</Text>
+                  <Animated.View pointerEvents="none" style={[s.ctaShine, { left: ctaShineX }]} />
+                </Pressable>
+              </View>
+            </View>
+          ) : (
+            // Cas 2 + 5 — session pas encore faite (gratuit ou Zainly+)
+            <View style={s.ctaWrap}>
+              <Animated.View style={[s.ctaGlow, { opacity: ctaGlowAnim }]} />
+              <Pressable
+                style={({ pressed }) => [s.cta, pressed && s.ctaPressed]}
+                onPress={() => {
+                  if (isPushing.current) return;
+                  isPushing.current = true;
+                  hapticLight();
+                  router.push('/(app)/session');
+                  setTimeout(() => { isPushing.current = false; }, 1000);
+                }}
+              >
+                <Text style={s.ctaText}>Lancer ma session →</Text>
+                <Animated.View pointerEvents="none" style={[s.ctaShine, { left: ctaShineX }]} />
               </Pressable>
             </View>
           )}
@@ -1154,6 +1259,59 @@ const s = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border,
   },
   ctaDoneText: { fontSize: 15, fontWeight: '600', color: colors.muted },
+
+  // ── Free limit card (cas 3) ──
+  limitCard: {
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: 20, borderWidth: 1, borderColor: 'rgba(184,150,46,0.25)',
+    padding: spacing.lg,
+  },
+  limitHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  limitDot: {
+    width: 6, height: 6, borderRadius: 3,
+    backgroundColor: colors.gold, marginRight: 6,
+  },
+  limitEyebrow: {
+    fontSize: 9, fontWeight: '700', letterSpacing: 1.5,
+    color: colors.gold, textTransform: 'uppercase',
+  },
+  limitTitle: {
+    fontSize: 16, fontWeight: '700', color: colors.primary,
+    marginBottom: 6,
+  },
+  limitSubtitle: {
+    fontSize: 13, color: colors.muted, lineHeight: 20,
+    marginBottom: spacing.md,
+  },
+  limitCta: {
+    backgroundColor: colors.primary,
+    borderRadius: 14, height: 52,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: spacing.sm,
+    shadowColor: colors.primary, shadowOpacity: 0.30,
+    shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 4,
+  },
+  limitCtaPressed: { opacity: 0.82, transform: [{ scale: 0.977 }] },
+  limitCtaText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
+  limitSecondary: {
+    height: 40, alignItems: 'center', justifyContent: 'center',
+  },
+  limitSecondaryText: { fontSize: 13, color: colors.muted, fontWeight: '500' },
+
+  // ── Zainly+ done card (cas 4) ──
+  zplusDoneCard: {
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: 20, borderWidth: 1, borderColor: 'rgba(45,106,79,0.18)',
+    padding: spacing.lg,
+    marginBottom: 0,
+  },
+  zplusDoneTitle: {
+    fontSize: 15, fontWeight: '700', color: colors.primary, marginBottom: 4,
+  },
+  zplusDoneSub: {
+    fontSize: 13, color: colors.muted, lineHeight: 20,
+    marginBottom: spacing.md,
+  },
 
   // ── surah progress ──
   progressCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 },
