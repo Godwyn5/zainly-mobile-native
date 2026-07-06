@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, Animated, Easing, Pressable, Dimensions } from 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuthStore } from '@/store/authStore';
+import { useProfile }  from '@/hooks/useProfile';
 import { usePlan } from '@/hooks/usePlan';
 import { useProgress } from '@/hooks/useProgress';
 import { useDueReviews } from '@/hooks/useDueReviews';
@@ -197,6 +198,9 @@ export default function TodayScreen() {
   const plan     = usePlan(userId);
   const progress = useProgress(userId);
   const reviews  = useDueReviews(userId);
+  // TODO Zainly+: replace profile.is_premium with entitlement-backed access from RevenueCat/Supabase.
+  const { data: profileData } = useProfile(userId);
+  const hasZainlyPlus = profileData?.is_premium === true;
 
   const isLoading = plan.isLoading || progress.isLoading || reviews.isLoading;
   const hasError  = plan.isError   || progress.isError   || reviews.isError;
@@ -330,12 +334,14 @@ export default function TodayScreen() {
 
   // Derive prog before any early return so hooks order is stable
   const prog = useMemo(() => getTodayProgramme({
-    plan: plan.data ?? null,
-    progress: progress.data ?? null,
-    dueReviewCount: reviews.data ?? 0,
+    plan:               plan.data ?? null,
+    progress:           progress.data ?? null,
+    dueReviewCount:     reviews.data ?? 0,
     today,
+    // Free users are capped at 1 new ayat per day; Zainly+ follows their plan pace.
+    effectiveAyahPerDay: hasZainlyPlus ? undefined : 1,
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [plan.data, progress.data, reviews.data, today]);
+  }), [plan.data, progress.data, reviews.data, today, hasZainlyPlus]);
 
   const progressPct = prog.surahTotalAyats > 0
     ? Math.min(prog.currentAyah / prog.surahTotalAyats, 1)

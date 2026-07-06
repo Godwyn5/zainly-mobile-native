@@ -72,7 +72,19 @@ export async function fetchProgress(userId: string) {
 
 // ─── completeSession ──────────────────────────────────────────────────────────
 // Writes all session-completion fields atomically by row id.
-// Guards against duplicate completion for the same calendar day.
+//
+// allowMultipleToday (default: false):
+//   false → free-user behaviour: one new-learning validation per calendar day.
+//           Returns an error if last_session_date === today so the caller can
+//           detect a duplicate and NOT create review_items.
+//   true  → Zainly+ behaviour: additional validations on the same day are
+//           accepted. current_ayah advances, total_memorized increases.
+//           streak does NOT increment again within the same day.
+//
+// Streak rules (safe for multi-session):
+//   last_session_date === today     → streak unchanged  (already counted today)
+//   last_session_date === yesterday → streak + 1
+//   otherwise                       → streak reset to 1
 
 export async function completeSession(params: {
   userId: string;
@@ -81,8 +93,9 @@ export async function completeSession(params: {
   ayahPerDay: number;
   newAyatCount: number;
   difficulty: SessionDifficulty;
+  allowMultipleToday?: boolean;
 }): Promise<{ error: Error | null; data?: unknown }> {
-  const { userId, currentSurah, newCurrentAyah, ayahPerDay, newAyatCount, difficulty } = params;
+  const { userId, currentSurah, newCurrentAyah, ayahPerDay, newAyatCount, difficulty, allowMultipleToday = false } = params;
 
   // 1. Fetch the most recent progress row.
   const { data: existing, error: fetchError } = await supabase
@@ -99,15 +112,18 @@ export async function completeSession(params: {
   const today     = localDateStr();
   const yesterday = localYesterdayStr();
 
-  // 2. Duplicate-completion guard.
-  if (existing.last_session_date === today) {
+  // 2. Duplicate-completion guard — skipped for Zainly+ multi-session.
+  if (existing.last_session_date === today && !allowMultipleToday) {
     return { error: new Error('Session déjà validée aujourd\'hui.') };
   }
 
-  // 3. Streak: +1 if yesterday was the last session, else reset to 1.
-  const newStreak = existing.last_session_date === yesterday
-    ? (existing.streak ?? 0) + 1
-    : 1;
+  // 3. Streak: safe for multi-session.
+  //    Same-day second validation must NOT increment streak again.
+  const newStreak = existing.last_session_date === today
+    ? (existing.streak ?? 0)           // already counted today — unchanged
+    : existing.last_session_date === yesterday
+      ? (existing.streak ?? 0) + 1     // consecutive day — +1
+      : 1;                              // gap — reset
 
   // 4. total_memorized.
   const newTotalMemorized = (existing.total_memorized ?? 0) + newAyatCount;

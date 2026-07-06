@@ -28,6 +28,7 @@ import { useAyatAudio } from '@/hooks/useAyatAudio';
 import { usePassageAudio } from '@/hooks/usePassageAudio';
 import { useQueryClient }    from '@tanstack/react-query';
 import { useAuthStore }      from '@/store/authStore';
+import { useProfile }        from '@/hooks/useProfile';
 import { usePlan }           from '@/hooks/usePlan';
 import { useProgress }       from '@/hooks/useProgress';
 import { useDueReviews }     from '@/hooks/useDueReviews';
@@ -2513,12 +2514,13 @@ type FinalTestScreenProps = {
   userId:            string;
   ayahPerDay:        number;
   newCurrentAyah:    number;
+  hasZainlyPlus:     boolean;
   onBack:            () => void;
   onComplete:        (difficulty: DifficultyLevel) => void;
   onRestartPassage:  () => void;
 };
 
-function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, memEnd, surahName, userId, ayahPerDay, newCurrentAyah, onBack, onComplete, onRestartPassage }: FinalTestScreenProps) {
+function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, memEnd, surahName, userId, ayahPerDay, newCurrentAyah, hasZainlyPlus, onBack, onComplete, onRestartPassage }: FinalTestScreenProps) {
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const mountedRef = useRef(true);
@@ -2727,24 +2729,32 @@ function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, me
     const newAyatCount = memEnd - memStart + 1;
 
     // ── Step 1: completeSession (skip if already succeeded on a prior retry) ──
+    // TODO Zainly+: replace profile.is_premium with entitlement-backed access from RevenueCat/Supabase.
     if (!progressValidated.current) {
       const { error: sessionError } = await completeSession({
         userId,
-        currentSurah:   surahNumber,
+        currentSurah:       surahNumber,
         newCurrentAyah,
         ayahPerDay,
         newAyatCount,
-        difficulty:     selectedDifficulty,
+        difficulty:         selectedDifficulty,
+        allowMultipleToday: hasZainlyPlus,
       });
 
       if (sessionError) {
-        // Tolerate "already validated today" — treat as success so reviews can proceed
-        if (!sessionError.message.includes('déjà validée')) {
+        if (sessionError.message.includes('déjà validée')) {
+          // Free user hit the daily guard — do NOT proceed to review_items.
+          // For Zainly+ allowMultipleToday=true so this branch never fires.
           setIsValidating(false);
-          setValidationError('Impossible de valider pour l’instant. Réessaie.');
+          setValidationError('Tu as déjà validé un apprentissage aujourd\'hui. Reviens demain ou passe à Zainly+.');
           isCompleting.current = false;
           return;
         }
+        // Any other error (network, DB) — surface it.
+        setIsValidating(false);
+        setValidationError('Impossible de valider pour l\'instant. Réessaie.');
+        isCompleting.current = false;
+        return;
       }
       progressValidated.current = true;
     }
@@ -3370,15 +3380,20 @@ export default function SessionScreen() {
   const plan     = usePlan(userId);
   const progress = useProgress(userId);
   const reviews  = useDueReviews(userId);
+  // TODO Zainly+: replace profile.is_premium with entitlement-backed access from RevenueCat/Supabase.
+  const { data: profileData } = useProfile(userId);
+  const hasZainlyPlus = profileData?.is_premium === true;
 
   const isLoading = plan.isLoading || progress.isLoading || reviews.isLoading;
 
   const prog = useMemo(() => getTodayProgramme({
-    plan:           plan.data    ?? null,
-    progress:       progress.data ?? null,
-    dueReviewCount: reviews.data  ?? 0,
+    plan:                plan.data    ?? null,
+    progress:            progress.data ?? null,
+    dueReviewCount:      reviews.data  ?? 0,
     today,
-  }), [plan.data, progress.data, reviews.data, today]);
+    // Free users are capped at 1 new ayat per day; Zainly+ follows their plan pace.
+    effectiveAyahPerDay: hasZainlyPlus ? undefined : 1,
+  }), [plan.data, progress.data, reviews.data, today, hasZainlyPlus]);
 
   // ── internal phase + ayat index ──
   const [phase, setPhase] = useState<'mission' | 'discovery' | 'decoupage' | 'repetition' | 'ayatRecitation' | 'finalTest'>('mission');
@@ -3637,6 +3652,7 @@ export default function SessionScreen() {
         userId={userId!}
         ayahPerDay={prog.ayahPerDay ?? 1}
         newCurrentAyah={memEnd + 1}
+        hasZainlyPlus={hasZainlyPlus}
         onBack={() => { setPhase('ayatRecitation'); }}
         onComplete={() => { router.replace('/(app)/done'); }}
         onRestartPassage={restartLearningPassage}

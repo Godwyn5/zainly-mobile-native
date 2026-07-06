@@ -45,6 +45,13 @@ interface Params {
   progress: ProgressSnapshot | null | undefined;
   dueReviewCount: number;
   today: string;
+  /**
+   * Optional override for the number of new ayats to present this session.
+   * When omitted, the value from plan/progress (ayah_per_day) is used as-is.
+   * Pass 1 for free users to enforce the 1-new-ayat/day quota.
+   * Pass plan.ayah_per_day (or undefined) for Zainly+ users.
+   */
+  effectiveAyahPerDay?: number;
 }
 
 const SAFE_DEFAULTS: TodayProgramme = {
@@ -67,12 +74,16 @@ const SAFE_DEFAULTS: TodayProgramme = {
   remainingAfterSession: 0,
 };
 
-export function getTodayProgramme({ plan, progress, dueReviewCount, today }: Params): TodayProgramme {
+export function getTodayProgramme({ plan, progress, dueReviewCount, today, effectiveAyahPerDay }: Params): TodayProgramme {
   if (!plan || !progress) return { ...SAFE_DEFAULTS, dueReviewCount };
 
   const currentSurah = progress.current_surah ?? null;
   const currentAyah = progress.current_ayah ?? 0;
-  const ayahPerDay = plan.ayah_per_day ?? progress.ayah_per_day ?? 2;
+  const rawAyahPerDay = plan.ayah_per_day ?? progress.ayah_per_day ?? 2;
+  // effectiveAyahPerDay lets callers cap the session size (e.g. free users → 1).
+  const ayahPerDay = effectiveAyahPerDay != null
+    ? Math.min(effectiveAyahPerDay, rawAyahPerDay)
+    : rawAyahPerDay;
   const streak = progress.streak ?? 0;
   const totalMemorized = progress.total_memorized ?? 0;
   const sessionDoneToday = progress.last_session_date === today;
