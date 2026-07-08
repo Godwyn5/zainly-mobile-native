@@ -14,9 +14,11 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.zainly.app"
     },
     "android": {
+      "package": "com.zainly.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -31,6 +33,12 @@
       "expo-router",
       "expo-secure-store",
       "expo-font"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "209b113a-b3b3-40fe-b9ae-c6947412f5c7"
+      }
+    }
   }
 }
