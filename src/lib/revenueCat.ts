@@ -1,10 +1,17 @@
-// ─── RevenueCat client wrapper (Phase 1 — read-only) ──────────────────────────
+// ─── RevenueCat client wrapper (Phase 1 read + Phase 2 purchase) ──────────────
 // This is the ONLY file allowed to import 'react-native-purchases' directly.
-// Scope: configure + identify + read CustomerInfo/entitlement.
-// No purchase, no restore, no secret keys. iOS only for now.
+// Scope: configure + identify + read CustomerInfo/entitlement + fetch offerings
+// on demand (only when the paywall screen asks for them, never at app launch)
+// + purchase/restore. No secret keys. iOS only for now.
 
 import { Platform } from 'react-native';
-import Purchases, { CustomerInfo, LOG_LEVEL } from 'react-native-purchases';
+import Purchases, {
+  CustomerInfo,
+  LOG_LEVEL,
+  PurchasesOffering,
+  PurchasesPackage,
+  PURCHASES_ERROR_CODE,
+} from 'react-native-purchases';
 
 const DEFAULT_ENTITLEMENT_ID = 'zainly_plus';
 
@@ -145,4 +152,125 @@ export function hasRevenueCatEntitlement(
   return customerInfo.entitlements.active[entitlementId] !== undefined;
 }
 
-export type { CustomerInfo };
+/**
+ * Discriminated result returned by purchase/restore helpers below, so the UI
+ * can branch on a stable shape instead of catching thrown errors everywhere.
+ */
+export type RevenueCatActionResult =
+  | { ok: true; customerInfo: CustomerInfo }
+  | { ok: false; reason: 'cancelled' | 'not_configured' | 'unsupported_platform' | 'unknown'; message?: string };
+
+/**
+ * Fetches all RevenueCat offerings. Intended to be called on demand from the
+ * paywall screen only — never at app launch. Never throws.
+ * Returns null if unavailable (unsupported platform, not configured, or the
+ * native SDK failed to fetch offerings — e.g. products not ready yet on
+ * App Store Connect).
+ */
+export async function getRevenueCatOfferings(): Promise<PurchasesOffering[] | null> {
+  if (Platform.OS !== 'ios') return null;
+  if (!isConfigured) {
+    devWarn('getOfferings skipped — RevenueCat is not configured.');
+    return null;
+  }
+
+  try {
+    const offerings = await Purchases.getOfferings();
+    return Object.values(offerings.all);
+  } catch (err) {
+    devWarn(`getOfferings failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+/**
+ * Convenience wrapper: returns the "default" offering configured in the
+ * RevenueCat dashboard, falling back to `current` if "default" isn't found.
+ * Never throws.
+ */
+export async function getDefaultRevenueCatOffering(): Promise<PurchasesOffering | null> {
+  if (Platform.OS !== 'ios') return null;
+  if (!isConfigured) return null;
+
+  try {
+    const offerings = await Purchases.getOfferings();
+    return offerings.all['default'] ?? offerings.current ?? null;
+  } catch (err) {
+    devWarn(`getDefaultOffering failed: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  }
+}
+
+/**
+ * Pure helper: extracts the annual/monthly packages from an offering using
+ * RevenueCat's predefined package type slots ($rc_annual / $rc_monthly).
+ */
+export function getZainlyPlusPackages(offering: PurchasesOffering | null | undefined): {
+  annual: PurchasesPackage | null;
+  monthly: PurchasesPackage | null;
+} {
+  if (!offering) return { annual: null, monthly: null };
+  return {
+    annual: offering.annual ?? null,
+    monthly: offering.monthly ?? null,
+  };
+}
+
+/**
+ * Purchases a RevenueCat package (Phase 2). Never throws — returns a
+ * discriminated result so the UI can branch cleanly without try/catch.
+ * User cancellation is treated as a normal, non-error outcome.
+ */
+export async function purchaseRevenueCatPackage(
+  packageToPurchase: PurchasesPackage
+): Promise<RevenueCatActionResult> {
+  if (Platform.OS !== 'ios') {
+    return { ok: false, reason: 'unsupported_platform' };
+  }
+  if (!isConfigured) {
+    devWarn('purchasePackage skipped — RevenueCat is not configured.');
+    return { ok: false, reason: 'not_configured' };
+  }
+
+  try {
+    const { customerInfo } = await Purchases.purchasePackage(packageToPurchase);
+    return { ok: true, customerInfo };
+  } catch (err: any) {
+    const isCancelled =
+      err?.code === PURCHASES_ERROR_CODE.PURCHASE_CANCELLED_ERROR || err?.userCancelled === true;
+
+    if (isCancelled) {
+      devWarn('purchasePackage: user cancelled.');
+      return { ok: false, reason: 'cancelled' };
+    }
+
+    const message = err instanceof Error ? err.message : String(err);
+    devWarn(`purchasePackage failed: ${message}`);
+    return { ok: false, reason: 'unknown', message };
+  }
+}
+
+/**
+ * Restores previous purchases (Phase 2). Never throws — returns a
+ * discriminated result so the UI can branch cleanly without try/catch.
+ */
+export async function restoreRevenueCatPurchases(): Promise<RevenueCatActionResult> {
+  if (Platform.OS !== 'ios') {
+    return { ok: false, reason: 'unsupported_platform' };
+  }
+  if (!isConfigured) {
+    devWarn('restorePurchases skipped — RevenueCat is not configured.');
+    return { ok: false, reason: 'not_configured' };
+  }
+
+  try {
+    const customerInfo = await Purchases.restorePurchases();
+    return { ok: true, customerInfo };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    devWarn(`restorePurchases failed: ${message}`);
+    return { ok: false, reason: 'unknown', message };
+  }
+}
+
+export type { CustomerInfo, PurchasesOffering, PurchasesPackage };

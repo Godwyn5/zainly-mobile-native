@@ -202,13 +202,7 @@ function SubscriptionCard({ hasZainlyPlus }: { hasZainlyPlus: boolean }) {
           </Pressable>
           <Pressable
             style={({ pressed }) => [sub.linkBtn, pressed && sub.btnPressed]}
-            onPress={() => {
-              // TODO Zainly+: replace with RevenueCat restorePurchases call.
-              Alert.alert(
-                'Bientôt disponible',
-                'La restauration des achats sera disponible avec les achats intégrés.'
-              );
-            }}
+            onPress={() => router.push('/premium?context=profile')}
           >
             <Text style={sub.linkBtnText}>Restaurer mes achats</Text>
           </Pressable>
