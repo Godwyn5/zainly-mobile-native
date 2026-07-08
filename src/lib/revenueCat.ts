@@ -4,7 +4,7 @@
 // No purchase, no restore, no secret keys. iOS only for now.
 
 import { Platform } from 'react-native';
-import Purchases, { CustomerInfo } from 'react-native-purchases';
+import Purchases, { CustomerInfo, LOG_LEVEL } from 'react-native-purchases';
 
 const DEFAULT_ENTITLEMENT_ID = 'zainly_plus';
 
@@ -47,6 +47,19 @@ export async function configureRevenueCatOnce(userId?: string | null): Promise<v
     }
 
     try {
+      // Phase 1: offerings are not used yet. Avoid React Native redbox from
+      // RevenueCat offering configuration logs — the native SDK auto-prefetches
+      // offerings right after configure() and logs an ERROR if no products are
+      // set up yet in the RevenueCat dashboard / App Store Connect. By default
+      // react-native-purchases routes ERROR-level logs to console.error, which
+      // triggers a dev redbox. We keep full visibility via console.warn instead,
+      // without ever calling console.error for non-fatal RevenueCat logs.
+      Purchases.setLogHandler((level, message) => {
+        if (!__DEV__) return;
+        console.warn(`[revenueCat:${level}] ${message}`);
+      });
+      Purchases.setLogLevel(LOG_LEVEL.WARN).catch(() => {/* non-fatal */});
+
       Purchases.configure({
         apiKey,
         appUserID: userId ?? undefined,
