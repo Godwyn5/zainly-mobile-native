@@ -10,6 +10,7 @@ const DEFAULT_ENTITLEMENT_ID = 'zainly_plus';
 
 let isConfigured = false;
 let configurePromise: Promise<void> | null = null;
+let isLoggedIn = false;
 
 function getIosApiKey(): string | undefined {
   return process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY;
@@ -51,6 +52,7 @@ export async function configureRevenueCatOnce(userId?: string | null): Promise<v
         appUserID: userId ?? undefined,
       });
       isConfigured = true;
+      isLoggedIn = !!userId;
     } catch (err) {
       devWarn(`configure() failed: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -73,6 +75,7 @@ export async function revenueCatLogIn(userId: string): Promise<void> {
 
   try {
     await Purchases.logIn(userId);
+    isLoggedIn = true;
   } catch (err) {
     devWarn(`logIn failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -86,9 +89,11 @@ export async function revenueCatLogIn(userId: string): Promise<void> {
 export async function revenueCatLogOut(): Promise<void> {
   if (Platform.OS !== 'ios') return;
   if (!isConfigured) return;
+  if (!isLoggedIn) return;
 
   try {
     await Purchases.logOut();
+    isLoggedIn = false;
   } catch (err) {
     devWarn(`logOut failed (best-effort, ignored): ${err instanceof Error ? err.message : String(err)}`);
   }
