@@ -13,6 +13,7 @@ import { useAuthStore }          from '@/store/authStore';
 import { useSessionResultStore } from '@/store/sessionResultStore';
 import { cancelUserHifzNotifications } from '@/notifications/scheduler';
 import { clearNotificationData }       from '@/notifications/storage';
+import { revenueCatLogOut }            from '@/lib/revenueCat';
 
 export function useLogout() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -31,13 +32,16 @@ export function useLogout() {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
 
-      // 2. Clear React Query cache so next user starts fresh
+      // 2. Best-effort RevenueCat identity reset — must never affect logout flow
+      await revenueCatLogOut().catch(() => {/* non-fatal */});
+
+      // 3. Clear React Query cache so next user starts fresh
       queryClient.clear();
 
-      // 3. Clear sessionResultStore
+      // 4. Clear sessionResultStore
       clearResult();
 
-      // 4. Wipe user-scoped AsyncStorage keys
+      // 5. Wipe user-scoped AsyncStorage keys
       if (userId) {
         // Cancel scheduled Hifz reminders for this user — prevents stale
         // notifications firing for a different account after re-login.
@@ -51,7 +55,7 @@ export function useLogout() {
         await AsyncStorage.multiRemove(keys).catch(() => {/* non-fatal */});
       }
 
-      // 5. Reset auth Zustand store — triggers app/(app)/_layout.tsx guard → /(auth)/login
+      // 6. Reset auth Zustand store — triggers app/(app)/_layout.tsx guard → /(auth)/login
       setSession(null);
 
     } catch (err) {

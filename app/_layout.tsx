@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
 import { supabase } from '@/db/client';
 import { useAuthStore } from '@/store/authStore';
+import { RevenueCatProvider } from '@/components/providers/RevenueCatProvider';
 
 // ── Foreground notification handler ──────────────────────────────────────────
 // Must be called once at module level (outside any component).
@@ -92,6 +93,7 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <StatusBar style="dark" />
       <AuthBootstrap />
+      <RevenueCatProvider />
       <Stack screenOptions={{ headerShown: false }} />
     </QueryClientProvider>
   );
