@@ -6,6 +6,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  BackHandler,
   Dimensions,
   Easing,
   Pressable,
@@ -15,7 +16,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useNavigation } from 'expo-router';
 
 import { PremiumBackground } from '@/components/PremiumBackground';
 import { colors }  from '@/theme/colors';
@@ -2532,6 +2533,7 @@ function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, me
   const newCurrentAyah      = advancesToNextSurah ? 0 : memEnd;
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation();
   const mountedRef = useRef(true);
 
   // Cumulative recall target: only ayats up to and including the current ayat index.
@@ -2560,6 +2562,25 @@ function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, me
   const [isValidating, setIsValidating]         = useState(false);
   const [validationError, setValidationError]   = useState<string | null>(null);
   const setResult                               = useSessionResultStore(s => s.setResult);
+
+  // ── BUG-009 guard ──
+  // A pending completeSession/createReviewItemsForAyatRange write must not be
+  // abandonable via navigation: leaving mid-write and re-entering the session
+  // would remount this screen with a fresh isCompleting ref, and for Zainly+
+  // users (allowMultipleToday=true bypasses the daily guard) that could create
+  // a second real write — double total_memorized, double review_items. Block
+  // both the Android hardware back button and the iOS swipe-back gesture for
+  // the duration of the pending validation only; both re-enable automatically
+  // once isValidating goes back to false (success navigates away anyway).
+  useEffect(() => {
+    navigation.setOptions({ gestureEnabled: !isValidating });
+  }, [isValidating, navigation]);
+
+  useEffect(() => {
+    if (!isValidating) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
+    return () => sub.remove();
+  }, [isValidating]);
 
   // ── passage audio (finalCompare only) ──
   const passageAyatNumbers = useMemo(
@@ -2750,6 +2771,16 @@ function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, me
         allowMultipleToday: hasZainlyPlus,
       });
 
+      // Component may have unmounted while this await was pending (e.g. the
+      // user forced navigation away). Refs (isCompleting/progressValidated)
+      // still need updating so a remounted instance behaves correctly, but
+      // React state must not be touched on an unmounted component.
+      if (!mountedRef.current) {
+        if (!sessionError) progressValidated.current = true;
+        isCompleting.current = false;
+        return;
+      }
+
       if (sessionError) {
         if (sessionError.message.includes('déjà validée')) {
           // Free user hit the daily guard — do NOT proceed to review_items.
@@ -2776,6 +2807,11 @@ function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, me
       toAyah:   memEnd,
       difficulty: selectedDifficulty,
     });
+
+    if (!mountedRef.current) {
+      isCompleting.current = false;
+      return;
+    }
 
     if (reviewError) {
       // Session is saved but reviews failed — tell the truth
