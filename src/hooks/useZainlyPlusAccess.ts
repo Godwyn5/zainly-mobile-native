@@ -1,8 +1,9 @@
-// ─── useZainlyPlusAccess (Phase 1 — read-only) ─────────────────────────────────
+// ─── useZainlyPlusAccess ────────────────────────────────────────────────────────
 // Reads the 'zainly_plus' RevenueCat entitlement and falls back to the legacy
 // profile.is_premium flag when RevenueCat has no active entitlement.
-// This hook does NOT replace any screen's local hasZainlyPlus computation yet —
-// it is introduced standalone and unused, per Phase 1 scope.
+// This is the source of truth for Zainly+ access across the app (daily limit
+// gating in app/(app)/(tabs)/index.tsx and app/(app)/session.tsx, and the
+// subscription card in app/(app)/(tabs)/profile.tsx).
 
 import { useQuery } from '@tanstack/react-query';
 import {

@@ -188,8 +188,8 @@ function FloatDot({ d }: { d: PDot }) {
 // Used in AyatRow and LastAyatCard. Simple play/pause toggle (no label).
 
 function AudioPlayBtn({
-  surahNumber, ayahNumber, size = 32,
-}: { surahNumber: number; ayahNumber: number; size?: number }) {
+  surahNumber, ayahNumber, size = 32, autoPlay = false,
+}: { surahNumber: number; ayahNumber: number; size?: number; autoPlay?: boolean }) {
   const url    = getAyatAudioUrl({ surahNumber, ayahNumber });
   const onDone = useCallback(() => {}, []);
   const audio  = useAyatAudio(url, onDone);
@@ -199,6 +199,7 @@ function AudioPlayBtn({
   // Register stop fn in the module registry on mount; unregister on unmount.
   useEffect(() => {
     registerHifzAudio(audio.stop);
+    if (autoPlay) { stopAllHifzAudio(audio.stop); audio.play(); }
     return () => {
       unregisterHifzAudio(audio.stop);
       audio.stop();
@@ -268,9 +269,45 @@ function AudioPlayBtn({
   );
 }
 
+// ─── LazyAudioPlayBtn — perf guard ─────────────────────────────────────────────
+// AudioPlayBtn mounts a real native audio player (useAyatAudio → createAudioPlayer)
+// on mount. Rendering one per ayat row is fine for a handful of rows, but a large
+// surah (e.g. Al-Baqara, 286 ayats) mounts 286 native players at once when its
+// card is opened, even though the user only ever plays one at a time.
+// This wrapper shows a static idle icon (identical to AudioPlayBtn's resting
+// state) and only mounts the real AudioPlayBtn — and its native player — on the
+// user's first tap, then plays immediately.
+function LazyAudioPlayBtn({
+  surahNumber, ayahNumber, size = 32,
+}: { surahNumber: number; ayahNumber: number; size?: number }) {
+  const [activated, setActivated] = useState(false);
+
+  if (activated) {
+    return <AudioPlayBtn surahNumber={surahNumber} ayahNumber={ayahNumber} size={size} autoPlay />;
+  }
+
+  return (
+    <Pressable onPress={() => { hapticLight(); setActivated(true); }} hitSlop={10}>
+      <View style={{
+        width: size, height: size, borderRadius: size / 2,
+        borderWidth: 1.5, borderColor: 'rgba(22,48,38,0.18)',
+        backgroundColor: 'rgba(22,48,38,0.07)', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <View style={{
+          width: 0, height: 0,
+          borderTopWidth: 5,    borderTopColor: 'transparent',
+          borderBottomWidth: 5, borderBottomColor: 'transparent',
+          borderLeftWidth: 9,   borderLeftColor: GREEN,
+          marginLeft: 2,
+        }} />
+      </View>
+    </Pressable>
+  );
+}
+
 // ─── AyatRow – compact row inside an expanded surah ───────────────────────────
 
-function AyatRow({
+const AyatRow = React.memo(function AyatRow({
   row, surahName, content, onPress, delay,
 }: {
   row:       LearnedRow;
@@ -336,15 +373,15 @@ function AyatRow({
         </Pressable>
 
         {/* Play button — sibling, not nested, so its Pressable fires correctly */}
-        <AudioPlayBtn surahNumber={row.surah_number} ayahNumber={row.ayah} size={30} />
+        <LazyAudioPlayBtn surahNumber={row.surah_number} ayahNumber={row.ayah} size={30} />
       </View>
     </Animated.View>
   );
-}
+});
 
 // ─── SurahCard – accordion ────────────────────────────────────────────────────
 
-function SurahCard({
+const SurahCard = React.memo(function SurahCard({
   group, onAyatPress, entranceDelay,
 }: {
   group:         SurahGroup;
@@ -441,7 +478,7 @@ function SurahCard({
       </View>
     </Animated.View>
   );
-}
+});
 
 // ─── AyatDetailSheet ──────────────────────────────────────────────────────────
 // Content is passed in pre-resolved — no skeleton flash for text.

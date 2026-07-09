@@ -9,6 +9,7 @@ import { usePlan } from '@/hooks/usePlan';
 import { useLearnedItems } from '@/hooks/useLearnedItems';
 import { useAuthStore } from '@/store/authStore';
 import { getSurahName } from '@/data/quran';
+import { ZAINLY_ORDER, ZAINLY_INDEX_BY_SURAH } from '@/core/zainlyOrder';
 import {
   computeHifzProgressMetrics,
   QURAN_TOTAL_AYATS,
@@ -299,15 +300,20 @@ export default function ProgressionScreen() {
   const trackedRatio = caseA ? Math.min(trackedHifzAyats / QURAN_TOTAL_AYATS, 1) : null;
   const zainlyRatio  = Math.min(learnedWithZainlyAyats / QURAN_TOTAL_AYATS, 1);
 
-  // Current position — current_ayah is the NEXT ayat to learn (pointer), not a memorized count.
-  // Never used as a learned-count numerator.
-  const hasSurahNum   = typeof data.current_surah === 'number'
+  // Current position — current_ayah is the LAST completed ayah in current_surah
+  // (0 = none yet). It is never used as a learned-count numerator. The next ayat
+  // to display is current_ayah + 1, bounded by the surah's total ayat count.
+  const hasSurahNum      = typeof data.current_surah === 'number'
     && data.current_surah >= 1 && data.current_surah <= 114;
-  const hasNextAyah   = typeof data.current_ayah === 'number' && data.current_ayah >= 1;
-  // Fresh user: current_ayah = 0 but a surah is already configured via the plan.
-  const isFreshStart  = hasSurahNum && !hasNextAyah && learnedWithZainlyAyats === 0;
-  const surahNum      = hasSurahNum ? data.current_surah as number : null;
-  const nextAyah      = hasNextAyah ? data.current_ayah as number : null;
+  const surahNum         = hasSurahNum ? data.current_surah as number : null;
+  const surahTotalAyats  = surahNum !== null
+    ? (ZAINLY_ORDER[ZAINLY_INDEX_BY_SURAH[surahNum]]?.ayahs ?? 0)
+    : 0;
+  const lastCompletedAyah = typeof data.current_ayah === 'number' ? Math.max(0, data.current_ayah) : 0;
+  // Fresh user: no ayah completed yet in the current surah.
+  const isFreshStart     = hasSurahNum && lastCompletedAyah === 0 && learnedWithZainlyAyats === 0;
+  const hasNextAyah      = hasSurahNum && lastCompletedAyah < surahTotalAyats;
+  const nextAyah         = hasNextAyah ? lastCompletedAyah + 1 : null;
   // For a fresh user, fall back to plan.start_ayah (or 1) as the starting ayah display.
   const startAyah     = isFreshStart
     ? (typeof plan?.start_ayah === 'number' && plan.start_ayah >= 1 ? plan.start_ayah : 1)

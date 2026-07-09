@@ -4,7 +4,7 @@
 // keeps CustomerInfo/entitlement state in sync via React Query invalidation.
 // Never throws to the UI — all failures surface as typed state.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   getDefaultRevenueCatOffering,
@@ -48,6 +48,21 @@ export function useRevenueCatPaywall(userId: string | undefined): UseRevenueCatP
   const [hasActiveEntitlementAfterAction, setHasActiveEntitlementAfterAction] = useState<boolean | null>(
     null
   );
+
+  // Ref-based guards: React state (isPurchasing/isRestoring) is stale until
+  // the next render, so a fast double-tap could otherwise slip two native
+  // purchase/restore calls through before the disabled UI state re-renders.
+  const isPurchasingRef = useRef(false);
+  const isRestoringRef = useRef(false);
+  // Avoids setState-after-unmount warnings if the paywall is closed mid-purchase.
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,7 +114,11 @@ export function useRevenueCatPaywall(userId: string | undefined): UseRevenueCatP
     if (!selectedPackage) {
       return { ok: false, reason: 'error', message: 'Aucune offre sélectionnée.' };
     }
+    if (isPurchasingRef.current) {
+      return { ok: false, reason: 'error', message: 'Achat déjà en cours.' };
+    }
 
+    isPurchasingRef.current = true;
     setIsPurchasing(true);
     try {
       const result = await purchaseRevenueCatPackage(selectedPackage);
@@ -112,17 +131,27 @@ export function useRevenueCatPaywall(userId: string | undefined): UseRevenueCatP
       }
 
       const hasEntitlement = hasRevenueCatEntitlement(result.customerInfo);
-      setHasActiveEntitlementAfterAction(hasEntitlement);
+      if (isMountedRef.current) {
+        setHasActiveEntitlementAfterAction(hasEntitlement);
+      }
       invalidateCustomerInfo();
       return { ok: true, hasEntitlement };
     } finally {
-      setIsPurchasing(false);
+      isPurchasingRef.current = false;
+      if (isMountedRef.current) {
+        setIsPurchasing(false);
+      }
     }
   }, [selectedPackage, invalidateCustomerInfo]);
 
   const restorePurchases = useCallback(async (): Promise<
     { ok: true; hasEntitlement: boolean } | { ok: false; reason: 'error'; message?: string }
   > => {
+    if (isRestoringRef.current) {
+      return { ok: false, reason: 'error', message: 'Restauration déjà en cours.' };
+    }
+
+    isRestoringRef.current = true;
     setIsRestoring(true);
     try {
       const result = await restoreRevenueCatPurchases();
@@ -132,11 +161,16 @@ export function useRevenueCatPaywall(userId: string | undefined): UseRevenueCatP
       }
 
       const hasEntitlement = hasRevenueCatEntitlement(result.customerInfo);
-      setHasActiveEntitlementAfterAction(hasEntitlement);
+      if (isMountedRef.current) {
+        setHasActiveEntitlementAfterAction(hasEntitlement);
+      }
       invalidateCustomerInfo();
       return { ok: true, hasEntitlement };
     } finally {
-      setIsRestoring(false);
+      isRestoringRef.current = false;
+      if (isMountedRef.current) {
+        setIsRestoring(false);
+      }
     }
   }, [invalidateCustomerInfo]);
 

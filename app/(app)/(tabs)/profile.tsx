@@ -4,7 +4,7 @@ import { router } from 'expo-router';
 import { Screen } from '@/components/ui/Screen';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { useAuthStore } from '@/store/authStore';
-import { useProfile } from '@/hooks/useProfile';
+import { useZainlyPlusAccess } from '@/hooks/useZainlyPlusAccess';
 import { useLogout } from '@/hooks/useLogout';
 import { requestAccountDeletion } from '@/db/accountDeletion';
 import { useNotificationSettings } from '@/hooks/useNotificationSettings';
@@ -242,9 +242,8 @@ export default function ProfileScreen() {
   const { confirmLogout, isLoggingOut } = useLogout();
   const userId = useAuthStore((s) => s.session?.user.id);
   const userEmail = useAuthStore((s) => s.session?.user.email);
-  const { data: profileData } = useProfile(userId);
-  // TODO Zainly+: replace profile.is_premium with entitlement-backed access from RevenueCat/Supabase.
-  const hasZainlyPlus = profileData?.is_premium === true;
+  // Source of truth: RevenueCat 'zainly_plus' entitlement, with profile.is_premium as fallback.
+  const { hasZainlyPlus } = useZainlyPlusAccess(userId);
   const [requestingDeletion, setRequestingDeletion] = useState(false);
 
   async function performDeletionRequest() {

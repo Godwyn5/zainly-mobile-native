@@ -28,7 +28,7 @@ import { useAyatAudio } from '@/hooks/useAyatAudio';
 import { usePassageAudio } from '@/hooks/usePassageAudio';
 import { useQueryClient }    from '@tanstack/react-query';
 import { useAuthStore }      from '@/store/authStore';
-import { useProfile }        from '@/hooks/useProfile';
+import { useZainlyPlusAccess } from '@/hooks/useZainlyPlusAccess';
 import { usePlan }           from '@/hooks/usePlan';
 import { useProgress }       from '@/hooks/useProgress';
 import { useDueReviews }     from '@/hooks/useDueReviews';
@@ -2505,22 +2505,31 @@ type FinalTestMode = 'recite' | 'compare' | 'evaluate';
 type DifficultyLevel = 'easy' | 'hesitant' | 'hard';
 
 type FinalTestScreenProps = {
-  surahNumber:       number;
-  allAyats:          QuranAyahContent[];
-  currentAyatIndex:  number;
-  memStart:          number;
-  memEnd:            number;
-  surahName:         string;
-  userId:            string;
-  ayahPerDay:        number;
-  newCurrentAyah:    number;
-  hasZainlyPlus:     boolean;
-  onBack:            () => void;
-  onComplete:        (difficulty: DifficultyLevel) => void;
-  onRestartPassage:  () => void;
+  surahNumber:          number;
+  allAyats:             QuranAyahContent[];
+  currentAyatIndex:     number;
+  memStart:             number;
+  memEnd:               number;
+  surahName:            string;
+  userId:               string;
+  ayahPerDay:           number;
+  sessionFinishesSurah: boolean;
+  nextSurah:            number | null;
+  hasZainlyPlus:        boolean;
+  onBack:               () => void;
+  onComplete:           (difficulty: DifficultyLevel) => void;
+  onRestartPassage:     () => void;
 };
 
-function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, memEnd, surahName, userId, ayahPerDay, newCurrentAyah, hasZainlyPlus, onBack, onComplete, onRestartPassage }: FinalTestScreenProps) {
+function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, memEnd, surahName, userId, ayahPerDay, sessionFinishesSurah, nextSurah, hasZainlyPlus, onBack, onComplete, onRestartPassage }: FinalTestScreenProps) {
+  // ── BUG-001 / BUG-002 fix ──
+  // Convention: current_ayah = last completed ayah in current_surah (0 = none yet).
+  // If this session finishes the surah AND a next surah exists in the plan order,
+  // progression advances to nextSurah at ayah 0. Otherwise it stays on the same
+  // surah with current_ayah = memEnd (never memEnd + 1 — that was BUG-001).
+  const advancesToNextSurah = sessionFinishesSurah && nextSurah != null;
+  const newCurrentSurah     = advancesToNextSurah ? nextSurah! : surahNumber;
+  const newCurrentAyah      = advancesToNextSurah ? 0 : memEnd;
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
   const mountedRef = useRef(true);
@@ -2729,11 +2738,11 @@ function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, me
     const newAyatCount = memEnd - memStart + 1;
 
     // ── Step 1: completeSession (skip if already succeeded on a prior retry) ──
-    // TODO Zainly+: replace profile.is_premium with entitlement-backed access from RevenueCat/Supabase.
+    // hasZainlyPlus here is entitlement-backed (see useZainlyPlusAccess in SessionScreen).
     if (!progressValidated.current) {
       const { error: sessionError } = await completeSession({
         userId,
-        currentSurah:       surahNumber,
+        currentSurah:       newCurrentSurah,
         newCurrentAyah,
         ayahPerDay,
         newAyatCount,
@@ -2799,7 +2808,7 @@ function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, me
     hapticSuccess();
     onComplete(selectedDifficulty);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDifficulty, userId, surahNumber, newCurrentAyah, ayahPerDay, memStart, memEnd, surahName, setResult, onComplete]);
+  }, [selectedDifficulty, userId, surahNumber, newCurrentSurah, newCurrentAyah, ayahPerDay, memStart, memEnd, surahName, setResult, onComplete]);
 
   const ctaShineX = ctaShine.interpolate({ inputRange: [-1, 1], outputRange: ['-60%', '160%'] });
 
@@ -3380,11 +3389,10 @@ export default function SessionScreen() {
   const plan     = usePlan(userId);
   const progress = useProgress(userId);
   const reviews  = useDueReviews(userId);
-  // TODO Zainly+: replace profile.is_premium with entitlement-backed access from RevenueCat/Supabase.
-  const { data: profileData } = useProfile(userId);
-  const hasZainlyPlus = profileData?.is_premium === true;
+  // Source of truth: RevenueCat 'zainly_plus' entitlement, with profile.is_premium as fallback.
+  const { hasZainlyPlus, isLoading: isZainlyPlusLoading } = useZainlyPlusAccess(userId);
 
-  const isLoading = plan.isLoading || progress.isLoading || reviews.isLoading;
+  const isLoading = plan.isLoading || progress.isLoading || reviews.isLoading || isZainlyPlusLoading;
 
   const prog = useMemo(() => getTodayProgramme({
     plan:                plan.data    ?? null,
@@ -3522,8 +3530,8 @@ export default function SessionScreen() {
     );
   }
 
-  // ── session already done today ──
-  if (prog.sessionDoneToday) {
+  // ── session already done today (free users only — Zainly+ can continue) ──
+  if (!hasZainlyPlus && prog.sessionDoneToday) {
     return (
       <StaticScreen
         title="Session déjà terminée aujourd'hui."
@@ -3651,7 +3659,8 @@ export default function SessionScreen() {
         surahName={prog.surahName ?? ''}
         userId={userId!}
         ayahPerDay={prog.ayahPerDay ?? 1}
-        newCurrentAyah={memEnd + 1}
+        sessionFinishesSurah={prog.sessionFinishesSurah}
+        nextSurah={prog.nextSurah}
         hasZainlyPlus={hasZainlyPlus}
         onBack={() => { setPhase('ayatRecitation'); }}
         onComplete={() => { router.replace('/(app)/done'); }}

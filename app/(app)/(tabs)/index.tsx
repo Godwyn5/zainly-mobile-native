@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Animated, Easing, Pressable, Dimensions } from 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuthStore } from '@/store/authStore';
-import { useProfile }  from '@/hooks/useProfile';
+import { useZainlyPlusAccess } from '@/hooks/useZainlyPlusAccess';
 import { usePlan } from '@/hooks/usePlan';
 import { useProgress } from '@/hooks/useProgress';
 import { useDueReviews } from '@/hooks/useDueReviews';
@@ -239,11 +239,10 @@ export default function TodayScreen() {
   const plan     = usePlan(userId);
   const progress = useProgress(userId);
   const reviews  = useDueReviews(userId);
-  // TODO Zainly+: replace profile.is_premium with entitlement-backed access from RevenueCat/Supabase.
-  const { data: profileData } = useProfile(userId);
-  const hasZainlyPlus = profileData?.is_premium === true;
+  // Source of truth: RevenueCat 'zainly_plus' entitlement, with profile.is_premium as fallback.
+  const { hasZainlyPlus, isLoading: isZainlyPlusLoading } = useZainlyPlusAccess(userId);
 
-  const isLoading = plan.isLoading || progress.isLoading || reviews.isLoading;
+  const isLoading = plan.isLoading || progress.isLoading || reviews.isLoading || isZainlyPlusLoading;
   const hasError  = plan.isError   || progress.isError   || reviews.isError;
   const hasNoPlan = !plan.data || !progress.data;
 

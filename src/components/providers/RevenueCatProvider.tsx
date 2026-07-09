@@ -5,13 +5,20 @@
 // in src/lib/revenueCat.ts are best-effort and swallow their own errors.
 
 import { useEffect, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
-import { configureRevenueCatOnce, revenueCatLogIn, revenueCatLogOut } from '@/lib/revenueCat';
+import {
+  configureRevenueCatOnce,
+  revenueCatLogIn,
+  revenueCatLogOut,
+  debugRevenueCatState,
+} from '@/lib/revenueCat';
 
 export function RevenueCatProvider() {
   const userId = useAuthStore((s) => s.user?.id);
   const ready = useAuthStore((s) => s.ready);
   const lastSyncedUserId = useRef<string | null | undefined>(undefined);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     if (!ready) return;
@@ -27,8 +34,16 @@ export function RevenueCatProvider() {
       } else {
         await revenueCatLogOut();
       }
+
+      // Force any mounted useZainlyPlusAccess query to refetch AFTER the
+      // native identity switch resolves, so a fast logout->login on the same
+      // device never briefly reuses the previous account's entitlement.
+      queryClient.invalidateQueries({ queryKey: ['revenueCatCustomerInfo'] });
+
+      // Debug log RevenueCat state after sync (dev only)
+      await debugRevenueCatState(userId ?? undefined);
     })();
-  }, [ready, userId]);
+  }, [ready, userId, queryClient]);
 
   return null;
 }

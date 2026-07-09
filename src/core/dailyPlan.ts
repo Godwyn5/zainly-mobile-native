@@ -13,6 +13,8 @@ export type PlanSnapshot = {
 
 export type ProgressSnapshot = {
   current_surah: number;
+  // current_ayah stores the last completed ayah in current_surah.
+  // 0 means no ayah completed yet. Next session starts at current_ayah + 1.
   current_ayah: number;
   ayah_per_day: number;
   streak: number;
