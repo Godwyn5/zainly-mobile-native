@@ -3475,6 +3475,28 @@ export default function SessionScreen() {
     ]);
     entrance.start();
 
+    // gold line grow in header
+    Animated.timing(goldLineW, {
+      toValue: 1, duration: 900, delay: 400,
+      easing: Easing.out(Easing.cubic), useNativeDriver: false,
+    }).start();
+
+    return () => {
+      mountedRef.current = false;
+      entrance.stop();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── mission-intro decorative loops (halo, hero glow, CTA breathing/shine) ──
+  // SessionScreen never unmounts across phase transitions (phases 2-6 are
+  // early-returned sibling components below), so without this guard these
+  // loops would keep animating in the background for the whole session,
+  // compounding with each phase's own animation loops. Only relevant while
+  // the 'mission' intro screen is actually rendered.
+  useEffect(() => {
+    if (phase !== 'mission') return;
+
     // halo pulse
     haloLoop.current = Animated.loop(Animated.sequence([
       Animated.parallel([
@@ -3511,15 +3533,12 @@ export default function SessionScreen() {
     ctaShineLoop.current.start();
 
     return () => {
-      mountedRef.current = false;
-      entrance.stop();
       haloLoop.current?.stop();
       heroGlowLoop.current?.stop();
       ctaGlowLoop.current?.stop();
       ctaShineLoop.current?.stop();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [phase]);
 
   const goBack = useCallback(() => {
     hapticLight();

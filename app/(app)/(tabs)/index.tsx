@@ -2,6 +2,7 @@ import { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, Animated, Easing, Pressable, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import { useAuthStore } from '@/store/authStore';
 import { useZainlyPlusAccess } from '@/hooks/useZainlyPlusAccess';
 import { usePlan } from '@/hooks/usePlan';
@@ -133,13 +134,26 @@ function FloatingDots({ anims }: { anims: Animated.Value[] }) {
 // ─── AnimatedProgressBar ──────────────────────────────────────────────────────
 
 function AnimatedProgressBar({ progress }: { progress: number }) {
+  const isFocused  = useIsFocused();
   const mountedRef  = useRef(true);
   const fillAnim    = useRef(new Animated.Value(0)).current;
   const shimmerAnim = useRef(new Animated.Value(-1)).current;
   const shimmerLoop = useRef<Animated.CompositeAnimation | null>(null);
+  const fillDoneRef = useRef(false);
+
+  const startShimmer = () => {
+    shimmerLoop.current = Animated.loop(
+      Animated.timing(shimmerAnim, {
+        toValue: 1, duration: 1600,
+        easing: Easing.inOut(Easing.quad), useNativeDriver: false,
+      })
+    );
+    shimmerLoop.current.start();
+  };
 
   useEffect(() => {
     mountedRef.current = true;
+    fillDoneRef.current = false;
     const pct = Math.min(Math.max(progress, 0), 1);
 
     const fill = Animated.timing(fillAnim, {
@@ -148,13 +162,8 @@ function AnimatedProgressBar({ progress }: { progress: number }) {
     });
     fill.start(() => {
       if (!mountedRef.current) return;
-      shimmerLoop.current = Animated.loop(
-        Animated.timing(shimmerAnim, {
-          toValue: 1, duration: 1600,
-          easing: Easing.inOut(Easing.quad), useNativeDriver: false,
-        })
-      );
-      shimmerLoop.current.start();
+      fillDoneRef.current = true;
+      if (isFocused) startShimmer();
     });
 
     return () => {
@@ -164,6 +173,17 @@ function AnimatedProgressBar({ progress }: { progress: number }) {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progress]);
+
+  useEffect(() => {
+    if (!isFocused) {
+      shimmerLoop.current?.stop();
+      return;
+    }
+    if (fillDoneRef.current && mountedRef.current) {
+      startShimmer();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFocused]);
 
   const width       = fillAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
   const shimmerLeft = shimmerAnim.interpolate({ inputRange: [-1, 1], outputRange: ['-40%', '140%'] });
@@ -232,6 +252,7 @@ function DashboardSkeleton() {
 // ─── TodayScreen ──────────────────────────────────────────────────────────────
 
 export default function TodayScreen() {
+  const isFocused = useIsFocused();
   const user   = useAuthStore((s) => s.user);
   const userId = user?.id;
   const today  = localDateStr();
@@ -296,6 +317,22 @@ export default function TodayScreen() {
     });
     goldLine.start();
 
+    return () => {
+      mountedRef.current = false;
+      seq.stop();
+      goldLine.stop();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── decorative loops (halo, hero glow, CTA glow/shine, floating dots) ──
+  // This tab stays mounted under the Tabs navigator while the user is on
+  // Session, Mon Hifz, Progression or Profile — without this guard these
+  // 11 Animated.loop instances (2 of them useNativeDriver:false) would keep
+  // animating in the background indefinitely, competing for the UI thread.
+  useEffect(() => {
+    if (!isFocused) return;
+
     // CTA breathing glow — more visible
     ctaGlowLoop.current = Animated.loop(
       Animated.sequence([
@@ -316,27 +353,23 @@ export default function TodayScreen() {
     ctaShineLoop.current.start();
 
     // background halo scale + opacity pulse
-    haloLoop.current = Animated.loop(
-      Animated.sequence([
-        Animated.parallel([
-          Animated.timing(haloScale,   { toValue: 1.08, duration: 4000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-          Animated.timing(haloOpacity, { toValue: 0.22, duration: 4000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        ]),
-        Animated.parallel([
-          Animated.timing(haloScale,   { toValue: 1.0, duration: 4000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-          Animated.timing(haloOpacity, { toValue: 0.14, duration: 4000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        ]),
-      ])
-    );
+    haloLoop.current = Animated.loop(Animated.sequence([
+      Animated.parallel([
+        Animated.timing(haloScale,   { toValue: 1.08, duration: 4000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(haloOpacity, { toValue: 0.22, duration: 4000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      ]),
+      Animated.parallel([
+        Animated.timing(haloScale,   { toValue: 1.0, duration: 4000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(haloOpacity, { toValue: 0.14, duration: 4000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      ]),
+    ]));
     haloLoop.current.start();
 
     // hero inner glow pulse
-    heroGlowLoop.current = Animated.loop(
-      Animated.sequence([
-        Animated.timing(heroGlowAnim, { toValue: 0.18, duration: 3000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        Animated.timing(heroGlowAnim, { toValue: 0.08, duration: 3000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-      ])
-    );
+    heroGlowLoop.current = Animated.loop(Animated.sequence([
+      Animated.timing(heroGlowAnim, { toValue: 0.18, duration: 3000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      Animated.timing(heroGlowAnim, { toValue: 0.08, duration: 3000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+    ]));
     heroGlowLoop.current.start();
 
     // floating dots — staggered pulse
@@ -353,17 +386,13 @@ export default function TodayScreen() {
     });
 
     return () => {
-      mountedRef.current = false;
-      seq.stop();
-      goldLine.stop();
       ctaGlowLoop.current?.stop();
       ctaShineLoop.current?.stop();
       haloLoop.current?.stop();
       heroGlowLoop.current?.stop();
       dotLoops.current.forEach(l => l?.stop());
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isFocused]);
 
   function fadeStyle(anim: Animated.Value, dy = 16) {
     return {
