@@ -609,11 +609,6 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
   // eslint-disable-next-line react-hooks/exhaustive-deps
   []);
 
-  // Preload audio silently — native player buffers before the user taps
-  useEffect(() => { audio.preload(); },
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  []);
-
   const onAudioPress = useCallback(() => {
     hapticMedium();
     if (audio.hasError)         { audio.reset(); audio.play(); }
@@ -3479,12 +3474,6 @@ export default function SessionScreen() {
       Animated.timing(coachAnim,   { toValue: 1, duration: 360, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
     ]);
     entrance.start();
-
-    // gold line grow in header
-    Animated.timing(goldLineW, {
-      toValue: 1, duration: 900, delay: 400,
-      easing: Easing.out(Easing.cubic), useNativeDriver: false,
-    }).start();
 
     // halo pulse
     haloLoop.current = Animated.loop(Animated.sequence([
