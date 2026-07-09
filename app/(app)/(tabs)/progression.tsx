@@ -3,6 +3,7 @@ import {
   View, Text, StyleSheet, ActivityIndicator, Pressable,
   Animated, Easing, Dimensions,
 } from 'react-native';
+import { useIsFocused } from '@react-navigation/native';
 import { Screen } from '@/components/ui/Screen';
 import { useProgress } from '@/hooks/useProgress';
 import { usePlan } from '@/hooks/usePlan';
@@ -69,13 +70,26 @@ function buildMonthCalendar(year: number, month: number): (string | null)[][] {
 function AnimatedProgressBar({ progress, delay = 400, height = 8 }: {
   progress: number; delay?: number; height?: number;
 }) {
+  const isFocused  = useIsFocused();
   const mountedRef  = useRef(true);
   const fillAnim    = useRef(new Animated.Value(0)).current;
   const shimmerAnim = useRef(new Animated.Value(-1)).current;
   const shimmerLoop = useRef<Animated.CompositeAnimation | null>(null);
+  const fillDoneRef = useRef(false);
+
+  const startShimmer = () => {
+    shimmerLoop.current = Animated.loop(
+      Animated.timing(shimmerAnim, {
+        toValue: 1, duration: 1800,
+        easing: Easing.inOut(Easing.quad), useNativeDriver: false,
+      })
+    );
+    shimmerLoop.current.start();
+  };
 
   useEffect(() => {
     mountedRef.current = true;
+    fillDoneRef.current = false;
     const pct  = Math.min(Math.max(progress, 0), 1);
     const fill = Animated.timing(fillAnim, {
       toValue: pct, duration: 1000, delay,
@@ -83,17 +97,23 @@ function AnimatedProgressBar({ progress, delay = 400, height = 8 }: {
     });
     fill.start(() => {
       if (!mountedRef.current) return;
-      shimmerLoop.current = Animated.loop(
-        Animated.timing(shimmerAnim, {
-          toValue: 1, duration: 1800,
-          easing: Easing.inOut(Easing.quad), useNativeDriver: false,
-        })
-      );
-      shimmerLoop.current.start();
+      fillDoneRef.current = true;
+      if (isFocused) startShimmer();
     });
     return () => { mountedRef.current = false; fill.stop(); shimmerLoop.current?.stop(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [progress]);
+
+  useEffect(() => {
+    if (!isFocused) {
+      shimmerLoop.current?.stop();
+      return;
+    }
+    if (fillDoneRef.current && mountedRef.current) {
+      startShimmer();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isFocused]);
 
   const width       = fillAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
   const shimmerLeft = shimmerAnim.interpolate({ inputRange: [-1, 1], outputRange: ['-40%', '140%'] });
