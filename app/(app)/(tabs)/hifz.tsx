@@ -308,16 +308,21 @@ function LazyAudioPlayBtn({
 // ─── AyatRow – compact row inside an expanded surah ───────────────────────────
 
 const AyatRow = React.memo(function AyatRow({
-  row, surahName, content, onPress, delay,
+  row, surahName, content, onPress, delay, animate = true,
 }: {
   row:       LearnedRow;
   surahName: string;
   content:   QuranAyahContent | null;
   onPress:   (t: DetailTarget) => void;
   delay:     number;
+  animate?:  boolean;
 }) {
-  const anim = useRef(new Animated.Value(0)).current;
+  const anim = useRef(new Animated.Value(animate ? 0 : 1)).current;
   useEffect(() => {
+    // Beyond the stagger cap (see SurahCard), skip the entrance animation
+    // entirely — avoids scheduling hundreds of concurrent/long-delayed
+    // Animated.timing calls when a heavily-memorized surah is opened.
+    if (!animate) return;
     Animated.timing(anim, {
       toValue: 1, duration: 260, delay,
       easing: Easing.out(Easing.cubic), useNativeDriver: true,
@@ -381,14 +386,19 @@ const AyatRow = React.memo(function AyatRow({
 
 // ─── SurahCard – accordion ────────────────────────────────────────────────────
 
+// Above this many rows, per-row entrance stagger is skipped (see AyatRow).
+const ROW_STAGGER_LIMIT = 20;
+
 const SurahCard = React.memo(function SurahCard({
-  group, onAyatPress, entranceDelay,
+  group, onAyatPress, entranceDelay, isOpen, onToggle,
 }: {
   group:         SurahGroup;
   onAyatPress:   (t: DetailTarget) => void;
   entranceDelay: number;
+  isOpen:        boolean;
+  onToggle:      (surahNumber: number) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const open = isOpen;
   const chevRot = useRef(new Animated.Value(0)).current;
   const anim    = useRef(new Animated.Value(0)).current;
 
@@ -412,7 +422,7 @@ const SurahCard = React.memo(function SurahCard({
       toValue: open ? 0 : 1, duration: 240,
       easing: Easing.out(Easing.cubic), useNativeDriver: true,
     }).start();
-    setOpen(v => !v);
+    onToggle(group.surahNumber);
   };
 
   const count   = group.ayahs.length;
@@ -470,7 +480,8 @@ const SurahCard = React.memo(function SurahCard({
                 surahName={group.surahName}
                 content={group.contentMap.get(row.ayah) ?? null}
                 onPress={onAyatPress}
-                delay={idx * 40}
+                delay={idx < ROW_STAGGER_LIMIT ? idx * 40 : 0}
+                animate={idx < ROW_STAGGER_LIMIT}
               />
             ))}
           </View>
@@ -822,6 +833,15 @@ export default function HifzScreen() {
   const openDetail  = useCallback((t: DetailTarget) => { setDetail(t); }, []);
   const closeDetail = useCallback(() => setDetail(null), []);
 
+  // ── single-open accordion ──
+  // Only one SurahCard expanded at a time. Bounds the worst-case number of
+  // simultaneously rendered AyatRow instances (and LayoutAnimation cost) to
+  // the size of a single surah instead of the sum of every opened surah.
+  const [expandedSurah, setExpandedSurah] = useState<number | null>(null);
+  const toggleSurah = useCallback((surahNumber: number) => {
+    setExpandedSurah(prev => prev === surahNumber ? null : surahNumber);
+  }, []);
+
   // ── B21: stop all audio when leaving this tab ──
   useFocusEffect(
     useCallback(() => {
@@ -986,6 +1006,8 @@ export default function HifzScreen() {
                 group={group}
                 onAyatPress={openDetail}
                 entranceDelay={idx * 60}
+                isOpen={expandedSurah === group.surahNumber}
+                onToggle={toggleSurah}
               />
             ))}
           </Animated.View>

@@ -5,6 +5,7 @@
 // gating in app/(app)/(tabs)/index.tsx and app/(app)/session.tsx, and the
 // subscription card in app/(app)/(tabs)/profile.tsx).
 
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   getRevenueCatCustomerInfo,
@@ -56,11 +57,20 @@ export function useZainlyPlusAccess(userId: string | undefined): ZainlyPlusAcces
     source = 'profile_fallback';
   }
 
-  return {
-    hasZainlyPlus,
-    source,
-    isLoading: isCustomerInfoLoading || isProfileLoading,
-    error: customerInfoError instanceof Error ? customerInfoError.message : null,
-    customerInfo: customerInfo ?? null,
-  };
+  const isLoading = isCustomerInfoLoading || isProfileLoading;
+  const errorMessage = customerInfoError instanceof Error ? customerInfoError.message : null;
+
+  // Stable reference across renders when the derived values haven't actually
+  // changed — this hook is mounted independently in index.tsx, session.tsx
+  // and profile.tsx, each re-rendering on every cache update.
+  return useMemo(
+    () => ({
+      hasZainlyPlus,
+      source,
+      isLoading,
+      error: errorMessage,
+      customerInfo: customerInfo ?? null,
+    }),
+    [hasZainlyPlus, source, isLoading, errorMessage, customerInfo]
+  );
 }
