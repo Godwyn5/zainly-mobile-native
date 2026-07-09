@@ -583,12 +583,3 @@ export function nextZainlySurah(currentSurahNumber: number): number | null {
   if (nextIdx >= ZAINLY_ORDER.length) return null;
   return ZAINLY_ORDER[nextIdx].surah;
 }
-
-export function nextSurahInOrder(currentSurahNumber: number, orderArray: number[]): number | null {
-  if (!Array.isArray(orderArray) || orderArray.length === 0) return null;
-  const idx = orderArray.indexOf(currentSurahNumber);
-  if (idx === -1) return null;
-  const nextIdx = idx + 1;
-  if (nextIdx >= orderArray.length) return null;
-  return orderArray[nextIdx];
-}
