@@ -30,6 +30,16 @@ const GOLD_DARK    = '#9F7628';
 const MUTED        = '#CFC7B8';
 const BORDER       = 'rgba(248,244,234,0.20)';
 
+// ─── splash-only design tokens — warm beige / deep green / gold accent ─────
+const SPLASH_BEIGE          = '#F7F2E7';
+const SPLASH_BEIGE_EDGE     = '#EDE3CC';
+const SPLASH_GREEN          = '#163026';
+const SPLASH_GREEN_FAINT    = 'rgba(22,48,38,0.05)';
+const SPLASH_GOLD_DIM       = '#8A744A';
+const SPLASH_GOLD_GLOW_SOFT = 'rgba(198,161,91,0.14)';
+const SPLASH_HADITH_INK     = '#0F2318';
+const SPLASH_SOURCE_INK     = '#3E5B4C';
+
 // ─── font family names ───────────────────────────────────────────────────────
 const F_BRAND        = 'Cinzel_500Medium';
 const F_BRAND_SB     = 'Cinzel_600SemiBold';
@@ -61,8 +71,13 @@ export default function EntryScreen() {
   });
 
   // ─── splash animation values ─────────────────────────────────────────────
-  const logoOpacity    = useRef(new Animated.Value(0)).current;
-  const logoScale      = useRef(new Animated.Value(0.95)).current;
+  const bgOpacity      = useRef(new Animated.Value(0)).current;
+  const patternOpacity = useRef(new Animated.Value(0)).current;
+  const glowOpacity    = useRef(new Animated.Value(0)).current;
+  const glowScale      = useRef(new Animated.Value(0.7)).current;
+  const arabicReveal   = useRef(new Animated.Value(0)).current;
+  const sweepX         = useRef(new Animated.Value(0)).current;
+  const breatheLoop    = useRef<Animated.CompositeAnimation | null>(null);
   const lineOpacity    = useRef(new Animated.Value(0)).current;
   const brandOpacity   = useRef(new Animated.Value(0)).current;
   const hadithOpacity  = useRef(new Animated.Value(0)).current;
@@ -80,54 +95,96 @@ export default function EntryScreen() {
   const wSourceOpacity = useRef(new Animated.Value(0)).current;
 
   // ─── Splash sequence (runs once fonts are ready) ─────────────────────────
+  // Overlapping choreography, not a strict sequence: the background + faint
+  // geometric texture settle in first, a discreet golden glow blooms behind
+  // the mark and progressively "reveals" it (opacity + colour interpolation —
+  // no fade, no zoom on the glyph itself), the mark holds alone for a beat,
+  // then the gold filet, the Latin wordmark and finally the hadith arrive —
+  // each starting before the previous one has fully settled. Total elapsed
+  // time before setAnimDone stays close to the previous sequential timing.
   useEffect(() => {
     if (!fontsLoaded) return;
-    Animated.sequence([
-      // logo mark fades + scales in
-      Animated.parallel([
-        Animated.timing(logoOpacity, {
-          toValue: 1, duration: 500,
-          easing: Easing.out(Easing.quad), useNativeDriver: true,
-        }),
-        Animated.timing(logoScale, {
-          toValue: 1, duration: 560,
-          easing: Easing.out(Easing.cubic), useNativeDriver: true,
-        }),
-      ]),
-      // gold separator + Zainly text
-      Animated.parallel([
-        Animated.timing(lineOpacity, {
-          toValue: 1, duration: 220,
-          easing: Easing.out(Easing.quad), useNativeDriver: true,
-        }),
-        Animated.timing(brandOpacity, {
-          toValue: 1, duration: 280,
-          easing: Easing.out(Easing.quad), useNativeDriver: true,
-        }),
-      ]),
-      // hadith slides up + fades in
-      Animated.parallel([
-        Animated.timing(hadithOpacity, {
-          toValue: 1, duration: 480,
-          easing: Easing.out(Easing.quad), useNativeDriver: true,
-        }),
-        Animated.timing(hadithY, {
-          toValue: 0, duration: 480,
-          easing: Easing.out(Easing.cubic), useNativeDriver: true,
-        }),
-      ]),
-      // source appears after a beat
-      Animated.sequence([
-        Animated.delay(160),
-        Animated.timing(sourceOpacity, {
-          toValue: 1, duration: 320,
-          easing: Easing.out(Easing.quad), useNativeDriver: true,
-        }),
-      ]),
-      // hold
-      Animated.delay(420),
-    ]).start(() => setAnimDone(true));
+
+    const hapticTimer = setTimeout(() => hapticLight(), 900);
+
+    Animated.parallel([
+      // 1. background wash + faint geometric texture
+      Animated.timing(bgOpacity, {
+        toValue: 1, duration: 420, delay: 0,
+        easing: Easing.out(Easing.quad), useNativeDriver: true,
+      }),
+      Animated.timing(patternOpacity, {
+        toValue: 1, duration: 500, delay: 60,
+        easing: Easing.out(Easing.quad), useNativeDriver: true,
+      }),
+      // 2. discreet golden glow blooms behind the mark
+      Animated.timing(glowOpacity, {
+        toValue: 1, duration: 600, delay: 150,
+        easing: Easing.out(Easing.quad), useNativeDriver: true,
+      }),
+      Animated.timing(glowScale, {
+        toValue: 1, duration: 600, delay: 150,
+        easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      }),
+      // 3. the glow reveals the arabic mark — opacity + colour only
+      Animated.timing(arabicReveal, {
+        toValue: 1, duration: 600, delay: 300,
+        easing: Easing.out(Easing.quad), useNativeDriver: false,
+      }),
+      Animated.timing(sweepX, {
+        toValue: 1, duration: 700, delay: 300,
+        easing: Easing.out(Easing.quad), useNativeDriver: true,
+      }),
+      // 4. mark holds alone briefly, then 5. gold filet draws in
+      Animated.timing(lineOpacity, {
+        toValue: 1, duration: 250, delay: 1250,
+        easing: Easing.out(Easing.quad), useNativeDriver: true,
+      }),
+      // 6. "Zainly" wordmark settles in
+      Animated.timing(brandOpacity, {
+        toValue: 1, duration: 350, delay: 1450,
+        easing: Easing.out(Easing.quad), useNativeDriver: true,
+      }),
+      // 7. hadith, then its source, last of all
+      Animated.timing(hadithOpacity, {
+        toValue: 1, duration: 480, delay: 1800,
+        easing: Easing.out(Easing.quad), useNativeDriver: true,
+      }),
+      Animated.timing(hadithY, {
+        toValue: 0, duration: 480, delay: 1800,
+        easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      }),
+      Animated.timing(sourceOpacity, {
+        toValue: 1, duration: 320, delay: 1980,
+        easing: Easing.out(Easing.quad), useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setAnimDone(true);
+      // very low-amplitude breathing loop for the halo — stopped once the
+      // splash phase is left (see cleanup effect below).
+      breatheLoop.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(glowScale, {
+            toValue: 1.04, duration: 2600,
+            easing: Easing.inOut(Easing.sin), useNativeDriver: true,
+          }),
+          Animated.timing(glowScale, {
+            toValue: 1.0, duration: 2600,
+            easing: Easing.inOut(Easing.sin), useNativeDriver: true,
+          }),
+        ]),
+      );
+      breatheLoop.current.start();
+    });
+
+    return () => clearTimeout(hapticTimer);
   }, [fontsLoaded]);
+
+  // stop the ambient breathing loop once the splash phase is left — pure
+  // animation hygiene, does not affect the redirect/session gate below.
+  useEffect(() => {
+    if (phase !== 'splash') breatheLoop.current?.stop();
+  }, [phase]);
 
   // ─── Gate: wait for both animDone + auth ready ───────────────────────────
   useEffect(() => {
@@ -194,35 +251,65 @@ export default function EntryScreen() {
 
   // ─── Loading guard — show nothing while fonts load ───────────────────────
   if (!fontsLoaded) {
-    return <View style={styles.root}><StatusBar barStyle="light-content" backgroundColor={BG} translucent={false} /></View>;
+    return <View style={styles.splashRoot}><StatusBar barStyle="dark-content" backgroundColor={SPLASH_BEIGE_EDGE} translucent={false} /></View>;
   }
 
   // ─── SPLASH ──────────────────────────────────────────────────────────────
   if (phase === 'splash') {
+    // derived interpolations — computed only for this branch, not hooks
+    const arabicOpacity = arabicReveal.interpolate({ inputRange: [0, 1], outputRange: [0.05, 1] });
+    const arabicColor   = arabicReveal.interpolate({ inputRange: [0, 1], outputRange: [SPLASH_GOLD_DIM, GOLD] });
+    const sweepTranslate = sweepX.interpolate({ inputRange: [0, 1], outputRange: [-130, 130] });
+    const brandY         = brandOpacity.interpolate({ inputRange: [0, 1], outputRange: [6, 0] });
+
     return (
-      <View style={styles.root}>
-        <StatusBar barStyle="light-content" backgroundColor={BG} translucent={false} />
+      <View style={styles.splashRoot}>
+        <StatusBar barStyle="dark-content" backgroundColor={SPLASH_BEIGE_EDGE} translucent={false} />
+
+        {/* ── background depth: soft radial wash + faint vignette ── */}
+        <Animated.View pointerEvents="none" style={[styles.spWash, { opacity: bgOpacity }]} />
+        <Animated.View pointerEvents="none" style={[styles.spVignetteTop, { opacity: bgOpacity }]} />
+        <Animated.View pointerEvents="none" style={[styles.spVignetteBottom, { opacity: bgOpacity }]} />
+
+        {/* ── barely-felt geometric corner motifs ── */}
+        <Animated.View pointerEvents="none" style={[styles.spPattern, { opacity: patternOpacity }]}>
+          <View style={styles.spMotifLineA} />
+          <View style={styles.spMotifLineB} />
+          <View style={styles.spMotifLineC} />
+          <View style={styles.spMotifLineD} />
+        </Animated.View>
+
         <View style={styles.splashCenter}>
 
           {/* logo lockup */}
-          <Animated.View style={[
-            styles.lockup,
-            { opacity: logoOpacity, transform: [{ scale: logoScale }] },
-          ]}>
-            <Text style={styles.splashArabic}>زينلي</Text>
-            <Animated.View style={[styles.goldLine, { opacity: lineOpacity }]} />
-            <Animated.Text style={[styles.splashBrand, { opacity: brandOpacity }]}>
+          <View style={styles.lockup}>
+            {/* breathing golden halo behind the mark */}
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.spHalo, { opacity: glowOpacity, transform: [{ scale: glowScale }] }]}
+            />
+            {/* soft light sweep — the glow "revealing" the engraving */}
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.spSweep, { opacity: glowOpacity, transform: [{ translateX: sweepTranslate }] }]}
+            />
+
+            <Animated.Text style={[styles.splashArabic, { opacity: arabicOpacity, color: arabicColor }]}>
+              زينلي
+            </Animated.Text>
+            <Animated.View style={[styles.goldLine, { opacity: lineOpacity, transform: [{ scaleX: lineOpacity }] }]} />
+            <Animated.Text style={[styles.splashBrand, { opacity: brandOpacity, transform: [{ translateY: brandY }] }]}>
               Zainly
             </Animated.Text>
-          </Animated.View>
+          </View>
 
-          {/* hadith lower area */}
+          {/* hadith — quieter, discreet, last to arrive */}
           <Animated.View style={[
-            styles.hadithBlock,
+            styles.spHadithBlock,
             { opacity: hadithOpacity, transform: [{ translateY: hadithY }] },
           ]}>
-            <Text style={styles.hadithText}>{HADITH}</Text>
-            <Animated.Text style={[styles.hadithSource, { opacity: sourceOpacity }]}>
+            <Text style={styles.spHadithText}>{HADITH}</Text>
+            <Animated.Text style={[styles.spHadithSource, { opacity: sourceOpacity }]}>
               {HADITH_SOURCE}
             </Animated.Text>
           </Animated.View>
@@ -337,7 +424,7 @@ const styles = StyleSheet.create({
   splashBrand: {
     fontFamily: F_BRAND,
     fontSize: 32,
-    color: IVORY,
+    color: SPLASH_GREEN,
     letterSpacing: 4,
   },
 
@@ -363,6 +450,99 @@ const styles = StyleSheet.create({
     opacity: 0.55,
     marginTop: 8,
     letterSpacing: 0.6,
+    textAlign: 'center',
+  },
+
+  // ── splash root + background depth (beige dominant / green secondary / gold accent) ──
+  splashRoot: {
+    flex: 1,
+    backgroundColor: SPLASH_BEIGE_EDGE,
+  },
+  spWash: {
+    position: 'absolute',
+    top: -140, left: -90, right: -90,
+    height: 640,
+    borderRadius: 420,
+    backgroundColor: SPLASH_BEIGE,
+  },
+  spVignetteTop: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0,
+    height: 90,
+    backgroundColor: SPLASH_GREEN_FAINT,
+  },
+  spVignetteBottom: {
+    position: 'absolute',
+    bottom: 0, left: 0, right: 0,
+    height: 110,
+    backgroundColor: SPLASH_GREEN_FAINT,
+  },
+
+  // ── barely-felt geometric corner motifs — texture, not pattern ─────────────
+  spPattern: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  spMotifLineA: {
+    position: 'absolute', top: 74, left: 30,
+    width: 46, height: 1, backgroundColor: SPLASH_GOLD_DIM,
+    opacity: 0.16, transform: [{ rotate: '45deg' }],
+  },
+  spMotifLineB: {
+    position: 'absolute', top: 74, right: 30,
+    width: 46, height: 1, backgroundColor: SPLASH_GOLD_DIM,
+    opacity: 0.16, transform: [{ rotate: '-45deg' }],
+  },
+  spMotifLineC: {
+    position: 'absolute', bottom: 96, left: 30,
+    width: 46, height: 1, backgroundColor: SPLASH_GREEN,
+    opacity: 0.08, transform: [{ rotate: '-45deg' }],
+  },
+  spMotifLineD: {
+    position: 'absolute', bottom: 96, right: 30,
+    width: 46, height: 1, backgroundColor: SPLASH_GREEN,
+    opacity: 0.08, transform: [{ rotate: '45deg' }],
+  },
+
+  // ── golden halo + light sweep behind the arabic mark ───────────────────────
+  spHalo: {
+    position: 'absolute',
+    top: '50%', left: '50%',
+    width: 260, height: 260,
+    marginTop: -130, marginLeft: -130,
+    borderRadius: 130,
+    backgroundColor: SPLASH_GOLD_GLOW_SOFT,
+  },
+  spSweep: {
+    position: 'absolute',
+    top: -12, bottom: -12,
+    width: 60,
+    backgroundColor: 'rgba(255,250,235,0.18)',
+    transform: [{ rotate: '16deg' }],
+  },
+
+  // ── splash-only hadith treatment — quieter, more discreet than welcome's ───
+  spHadithBlock: {
+    alignItems: 'center',
+    paddingHorizontal: 22,
+    marginTop: 6,
+  },
+  spHadithText: {
+    fontFamily: F_DISPLAY_LIGHT,
+    fontSize: 14,
+    color: SPLASH_HADITH_INK,
+    opacity: 0.92,
+    textAlign: 'center',
+    lineHeight: 22,
+    letterSpacing: 0.4,
+    fontStyle: 'italic',
+  },
+  spHadithSource: {
+    fontFamily: F_ARABIC_R,
+    fontSize: 10,
+    color: SPLASH_SOURCE_INK,
+    opacity: 0.72,
+    marginTop: 8,
+    letterSpacing: 0.8,
     textAlign: 'center',
   },
 
