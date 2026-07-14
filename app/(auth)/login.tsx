@@ -10,6 +10,7 @@ import { Lora_600SemiBold, Lora_400Regular } from '@expo-google-fonts/lora';
 import { Amiri_400Regular, Amiri_700Bold } from '@expo-google-fonts/amiri';
 import { Cinzel_500Medium } from '@expo-google-fonts/cinzel';
 import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/db/client';
 import { hapticLight, hapticMedium, hapticSelection } from '@/utils/haptics';
 
@@ -43,6 +44,7 @@ export default function LoginScreen() {
   const [showPw, setShowPw]     = useState(false);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState<string | null>(null);
+  const [showDeletionBanner, setShowDeletionBanner] = useState(false);
 
   const [fontsLoaded] = useFonts({
     Lora_600SemiBold,
@@ -61,6 +63,23 @@ export default function LoginScreen() {
   const formY  = useRef(new Animated.Value(14)).current;
   const btnsO  = useRef(new Animated.Value(0)).current;
   const btnsY  = useRef(new Animated.Value(12)).current;
+
+  // ─── check for account deletion success flag ───────────────────────────────
+  useEffect(() => {
+    AsyncStorage.getItem('account_deleted_success').then((value) => {
+      if (value === 'true') {
+        setShowDeletionBanner(true);
+        setEmail('');
+        setPassword('');
+        // Consume the flag immediately so it doesn't reappear on app restart
+        AsyncStorage.removeItem('account_deleted_success').catch(() => {
+          // Non-fatal: if removal fails, the banner might show again on next launch
+        });
+      }
+    }).catch(() => {
+      // Non-fatal: if storage read fails, just proceed without banner
+    });
+  }, []);
 
   useEffect(() => {
     if (!fontsLoaded) return;
@@ -116,6 +135,13 @@ export default function LoginScreen() {
           <Text style={styles.heroTitle}>Bon retour</Text>
           <Text style={styles.heroSub}>Continue là où tu t'es arrêté.</Text>
         </Animated.View>
+
+        {/* ── Account deletion success banner ── */}
+        {showDeletionBanner && (
+          <View style={styles.deletionBanner} accessible accessibilityLabel="Compte supprimé avec succès" accessibilityRole="alert">
+            <Text style={styles.deletionBannerText}>Ton compte et tes données ont bien été supprimés.</Text>
+          </View>
+        )}
 
         {/* ── Form ── */}
         <Animated.View style={[styles.formBlock, { opacity: formO, transform: [{ translateY: formY }] }]}>
@@ -283,6 +309,17 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   errorText: { fontSize: 13, color: '#B91C1C', lineHeight: 18 },
+
+  deletionBanner: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  deletionBannerText: { fontSize: 13, color: '#047857', lineHeight: 18 },
 
   forgotRow: { alignItems: 'center', paddingVertical: 6, marginBottom: 4 },
   forgotText: { fontSize: 13, color: MUTED },

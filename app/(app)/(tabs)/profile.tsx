@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
 import { ActivityIndicator, Alert, View, Text, StyleSheet, Pressable } from 'react-native';
 import { router } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Screen } from '@/components/ui/Screen';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { useAuthStore } from '@/store/authStore';
@@ -257,6 +258,11 @@ export default function ProfileScreen() {
     const result = await deleteAccountSelfService();
 
     if (result.ok) {
+      // Set a flag for the login screen to show a success banner and clear fields.
+      // This flag is consumed immediately when the login screen reads it.
+      await AsyncStorage.setItem('account_deleted_success', 'true').catch(() => {
+        // Non-fatal: if storage fails, the user just won't see the banner.
+      });
       // Auth user + all Zainly data are gone server-side. Reuse the existing
       // logout cleanup (RQ cache, Zustand, AsyncStorage, RevenueCat) — its
       // supabase.auth.signOut() call is best-effort, so it still completes
