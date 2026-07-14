@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { ActivityIndicator, Alert, View, Text, StyleSheet, Pressable } from 'react-native';
 import { router } from 'expo-router';
 import { Screen } from '@/components/ui/Screen';
@@ -6,7 +6,7 @@ import { SectionLabel } from '@/components/ui/SectionLabel';
 import { useAuthStore } from '@/store/authStore';
 import { useZainlyPlusAccess } from '@/hooks/useZainlyPlusAccess';
 import { useLogout } from '@/hooks/useLogout';
-import { requestAccountDeletion } from '@/db/accountDeletion';
+import { deleteAccountSelfService } from '@/db/accountDeletion';
 import { useNotificationSettings } from '@/hooks/useNotificationSettings';
 import { PRESETS, NotificationPreset } from '@/notifications/types';
 import { colors } from '@/theme/colors';
@@ -239,48 +239,56 @@ function SubscriptionCard({ hasZainlyPlus }: { hasZainlyPlus: boolean }) {
 // ─── ProfileScreen ────────────────────────────────────────────────────────────
 
 export default function ProfileScreen() {
-  const { confirmLogout, isLoggingOut } = useLogout();
+  const { confirmLogout, isLoggingOut, performLogout } = useLogout();
   const userId = useAuthStore((s) => s.session?.user.id);
-  const userEmail = useAuthStore((s) => s.session?.user.email);
   // Source of truth: RevenueCat 'zainly_plus' entitlement, with profile.is_premium as fallback.
   const { hasZainlyPlus } = useZainlyPlusAccess(userId);
-  const [requestingDeletion, setRequestingDeletion] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  // Ref guard: synchronous, avoids a double tap slipping through before the
+  // isDeletingAccount state re-render disables the button (same pattern as
+  // isPushing/isCreatingRef used elsewhere in the app for destructive/CTA taps).
+  const isDeletingRef = useRef(false);
 
-  async function performDeletionRequest() {
-    if (!userId || requestingDeletion) return;
-    setRequestingDeletion(true);
-    const { error } = await requestAccountDeletion({ userId, email: userEmail ?? null });
-    setRequestingDeletion(false);
+  async function performAccountDeletion() {
+    if (isDeletingRef.current) return;
+    isDeletingRef.current = true;
+    setIsDeletingAccount(true);
 
-    if (!error) {
-      Alert.alert(
-        'Demande envoyée',
-        'Ta demande de suppression a été enregistrée. Nous la traiterons dans les meilleurs délais.'
-      );
+    const result = await deleteAccountSelfService();
+
+    if (result.ok) {
+      // Auth user + all Zainly data are gone server-side. Reuse the existing
+      // logout cleanup (RQ cache, Zustand, AsyncStorage, RevenueCat) — its
+      // supabase.auth.signOut() call is best-effort, so it still completes
+      // even though the Auth user no longer exists. The (app)/_layout.tsx
+      // guard redirects to /(auth)/login once the session is cleared.
+      await performLogout();
       return;
     }
 
-    if (error === 'already_requested') {
-      Alert.alert(
-        'Demande déjà envoyée',
-        'Une demande de suppression est déjà enregistrée pour ce compte.'
-      );
-      return;
-    }
+    isDeletingRef.current = false;
+    setIsDeletingAccount(false);
 
-    Alert.alert(
-      'Erreur',
-      'Impossible d’envoyer la demande pour le moment. Réessaie plus tard.'
-    );
+    const message =
+      result.error === 'unauthorized'
+        ? 'Ta session a expiré. Reconnecte-toi puis réessaie.'
+        : result.error === 'network'
+          ? 'Vérifie ta connexion internet puis réessaie.'
+          : 'Impossible de supprimer ton compte pour le moment. Réessaie dans un instant.';
+
+    Alert.alert('Suppression impossible', message);
   }
 
   function confirmDeletion() {
+    const subscriptionNote = hasZainlyPlus
+      ? '\n\nTon abonnement Zainly+ ne sera pas annulé automatiquement : annule-le depuis les Réglages de l’App Store pour éviter un renouvellement.'
+      : '';
     Alert.alert(
       'Supprimer ton compte ?',
-      'Cette action enverra une demande de suppression de ton compte et de tes données Zainly. Elle sera traitée dans les meilleurs délais. Cette action ne peut pas être annulée une fois la demande envoyée.',
+      `Cette action supprime définitivement ton compte Zainly et toutes tes données (programme, progression, révisions). Elle est irréversible.${subscriptionNote}`,
       [
         { text: 'Annuler', style: 'cancel' },
-        { text: 'Envoyer la demande', style: 'destructive', onPress: performDeletionRequest },
+        { text: 'Supprimer définitivement', style: 'destructive', onPress: performAccountDeletion },
       ]
     );
   }
@@ -333,17 +341,17 @@ export default function ProfileScreen() {
         <Pressable
           style={({ pressed }) => [
             styles.logoutRow,
-            requestingDeletion && styles.logoutRowDisabled,
-            pressed && !requestingDeletion && styles.logoutRowPressed,
+            isDeletingAccount && styles.logoutRowDisabled,
+            pressed && !isDeletingAccount && styles.logoutRowPressed,
           ]}
           onPress={confirmDeletion}
-          disabled={requestingDeletion}
+          disabled={isDeletingAccount}
         >
-          <Text style={[styles.logoutText, requestingDeletion && styles.logoutTextDim]}>
-            {requestingDeletion ? 'Envoi…' : 'Supprimer mon compte'}
+          <Text style={[styles.logoutText, isDeletingAccount && styles.logoutTextDim]}>
+            {isDeletingAccount ? 'Suppression…' : 'Supprimer mon compte'}
           </Text>
           <Text style={styles.deleteDesc}>
-            Envoyer une demande de suppression de ton compte et de tes données.
+            Supprimer définitivement ton compte et toutes tes données Zainly.
           </Text>
         </Pressable>
       </View>

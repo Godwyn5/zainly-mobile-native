@@ -28,9 +28,11 @@ export function useLogout() {
     setIsLoggingOut(true);
 
     try {
-      // 1. Sign out from Supabase (clears persisted session in AsyncStorage via the client)
+      // 1. Sign out from Supabase (clears persisted session in AsyncStorage via the client).
+      //    Best-effort: after account deletion the Auth user no longer exists server-side,
+      //    so this call can fail — local cleanup below must still run regardless.
       const { error } = await supabase.auth.signOut();
-      if (error) throw error;
+      if (error && __DEV__) console.warn('[useLogout] signOut error (ignored, best-effort):', error.message);
 
       // 2. Best-effort RevenueCat identity reset — must never affect logout flow
       await revenueCatLogOut().catch(() => {/* non-fatal */});
@@ -78,5 +80,5 @@ export function useLogout() {
     );
   }
 
-  return { confirmLogout, isLoggingOut };
+  return { confirmLogout, isLoggingOut, performLogout };
 }
