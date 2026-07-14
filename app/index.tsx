@@ -17,18 +17,14 @@ import {
   Cinzel_500Medium,
   Cinzel_600SemiBold,
 } from '@expo-google-fonts/cinzel';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuthStore } from '@/store/authStore';
 import { hapticLight, hapticMedium } from '@/utils/haptics';
 
-// ─── design tokens — luxury watch palette ───────────────────────────────────
-const BG           = '#031A12';
-const BG_MID       = '#041F16';
-const IVORY        = '#F8F4EA';
+// ─── gold accent tokens — shared between splash & welcome ───────────────────
 const GOLD         = '#C6A15B';
 const GOLD_DARK    = '#9F7628';
-const MUTED        = '#CFC7B8';
-const BORDER       = 'rgba(248,244,234,0.20)';
 
 // ─── splash-only design tokens — warm beige / deep green / gold accent ─────
 const SPLASH_BEIGE          = '#F7F2E7';
@@ -37,8 +33,8 @@ const SPLASH_GREEN          = '#163026';
 const SPLASH_GREEN_FAINT    = 'rgba(22,48,38,0.05)';
 const SPLASH_GOLD_DIM       = '#8A744A';
 const SPLASH_GOLD_GLOW_SOFT = 'rgba(198,161,91,0.14)';
-const SPLASH_HADITH_INK     = '#0F2318';
-const SPLASH_SOURCE_INK     = '#3E5B4C';
+const SPLASH_HADITH_INK     = '#163026';
+const SPLASH_SOURCE_INK     = '#2A4A3A';
 
 // ─── font family names ───────────────────────────────────────────────────────
 const F_BRAND        = 'Cinzel_500Medium';
@@ -84,15 +80,19 @@ export default function EntryScreen() {
   const hadithY        = useRef(new Animated.Value(10)).current;
   const sourceOpacity  = useRef(new Animated.Value(0)).current;
 
-  // ─── welcome animation values ────────────────────────────────────────────
-  const wLogoOpacity   = useRef(new Animated.Value(0)).current;
-  const wHeroOpacity   = useRef(new Animated.Value(0)).current;
-  const wHeroY         = useRef(new Animated.Value(16)).current;
-  const wBtnsOpacity   = useRef(new Animated.Value(0)).current;
-  const wBtnsY         = useRef(new Animated.Value(12)).current;
-  const wHadithOpacity = useRef(new Animated.Value(0)).current;
-  const wHadithY       = useRef(new Animated.Value(10)).current;
-  const wSourceOpacity = useRef(new Animated.Value(0)).current;
+  // ─── welcome animation values — continuation of the splash choreography ──
+  const wLogoOpacity     = useRef(new Animated.Value(0)).current;
+  const wGlowScale       = useRef(new Animated.Value(1)).current;
+  const wBreatheLoop     = useRef<Animated.CompositeAnimation | null>(null);
+  const wHeroOpacity     = useRef(new Animated.Value(0)).current;
+  const wHeroY           = useRef(new Animated.Value(16)).current;
+  const wSubtitleOpacity = useRef(new Animated.Value(0)).current;
+  const wSubtitleY       = useRef(new Animated.Value(10)).current;
+  const wBtnsOpacity     = useRef(new Animated.Value(0)).current;
+  const wBtnsY           = useRef(new Animated.Value(20)).current;
+  const wHadithOpacity   = useRef(new Animated.Value(0)).current;
+  const wHadithY         = useRef(new Animated.Value(8)).current;
+  const wSourceOpacity   = useRef(new Animated.Value(0)).current;
 
   // ─── Splash sequence (runs once fonts are ready) ─────────────────────────
   // Overlapping choreography, not a strict sequence: the background + faint
@@ -104,8 +104,6 @@ export default function EntryScreen() {
   // time before setAnimDone stays close to the previous sequential timing.
   useEffect(() => {
     if (!fontsLoaded) return;
-
-    const hapticTimer = setTimeout(() => hapticLight(), 900);
 
     Animated.parallel([
       // 1. background wash + faint geometric texture
@@ -176,8 +174,6 @@ export default function EntryScreen() {
       );
       breatheLoop.current.start();
     });
-
-    return () => clearTimeout(hapticTimer);
   }, [fontsLoaded]);
 
   // stop the ambient breathing loop once the splash phase is left — pure
@@ -196,57 +192,75 @@ export default function EntryScreen() {
     setPhase('welcome');
   }, [animDone, ready, session]);
 
-  // ─── Welcome sequence ────────────────────────────────────────────────────
+  // ─── Welcome sequence — continues the splash's choreography, not a new one ─
+  // The mark reappears instantly at the top (no re-fade — it never really left)
+  // and keeps breathing exactly as it did on the splash. The headline, then the
+  // subtitle a beat later, settle into the large open space beneath it. The
+  // quiet hadith caption fades in just before the CTA, which rises gently from
+  // below last of all — echoing the splash's "hold, then arrive" rhythm.
   useEffect(() => {
     if (phase !== 'welcome') return;
-    Animated.sequence([
-      // brand lockup at top
+
+    Animated.parallel([
       Animated.timing(wLogoOpacity, {
-        toValue: 1, duration: 300,
+        toValue: 1, duration: 260, delay: 0,
         easing: Easing.out(Easing.quad), useNativeDriver: true,
       }),
-      // headline block
-      Animated.parallel([
-        Animated.timing(wHeroOpacity, {
-          toValue: 1, duration: 420,
-          easing: Easing.out(Easing.quad), useNativeDriver: true,
-        }),
-        Animated.timing(wHeroY, {
-          toValue: 0, duration: 420,
-          easing: Easing.out(Easing.cubic), useNativeDriver: true,
-        }),
-      ]),
-      // buttons
-      Animated.parallel([
-        Animated.timing(wBtnsOpacity, {
-          toValue: 1, duration: 360,
-          easing: Easing.out(Easing.quad), useNativeDriver: true,
-        }),
-        Animated.timing(wBtnsY, {
-          toValue: 0, duration: 360,
-          easing: Easing.out(Easing.cubic), useNativeDriver: true,
-        }),
-      ]),
-      // hadith in lower area
-      Animated.parallel([
-        Animated.timing(wHadithOpacity, {
-          toValue: 1, duration: 440,
-          easing: Easing.out(Easing.quad), useNativeDriver: true,
-        }),
-        Animated.timing(wHadithY, {
-          toValue: 0, duration: 440,
-          easing: Easing.out(Easing.cubic), useNativeDriver: true,
-        }),
-      ]),
-      // source
-      Animated.sequence([
-        Animated.delay(140),
-        Animated.timing(wSourceOpacity, {
-          toValue: 1, duration: 300,
-          easing: Easing.out(Easing.quad), useNativeDriver: true,
-        }),
-      ]),
-    ]).start();
+      Animated.timing(wHeroOpacity, {
+        toValue: 1, duration: 440, delay: 120,
+        easing: Easing.out(Easing.quad), useNativeDriver: true,
+      }),
+      Animated.timing(wHeroY, {
+        toValue: 0, duration: 440, delay: 120,
+        easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      }),
+      Animated.timing(wSubtitleOpacity, {
+        toValue: 1, duration: 420, delay: 280,
+        easing: Easing.out(Easing.quad), useNativeDriver: true,
+      }),
+      Animated.timing(wSubtitleY, {
+        toValue: 0, duration: 420, delay: 280,
+        easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      }),
+      Animated.timing(wHadithOpacity, {
+        toValue: 1, duration: 380, delay: 520,
+        easing: Easing.out(Easing.quad), useNativeDriver: true,
+      }),
+      Animated.timing(wHadithY, {
+        toValue: 0, duration: 380, delay: 520,
+        easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      }),
+      Animated.timing(wSourceOpacity, {
+        toValue: 1, duration: 300, delay: 680,
+        easing: Easing.out(Easing.quad), useNativeDriver: true,
+      }),
+      Animated.timing(wBtnsOpacity, {
+        toValue: 1, duration: 440, delay: 640,
+        easing: Easing.out(Easing.quad), useNativeDriver: true,
+      }),
+      Animated.timing(wBtnsY, {
+        toValue: 0, duration: 440, delay: 640,
+        easing: Easing.out(Easing.cubic), useNativeDriver: true,
+      }),
+    ]).start(() => {
+      // low-amplitude breathing halo, identical rhythm to the splash's own —
+      // the glow never stops, it simply continues behind the smaller mark.
+      wBreatheLoop.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(wGlowScale, {
+            toValue: 1.05, duration: 2600,
+            easing: Easing.inOut(Easing.sin), useNativeDriver: true,
+          }),
+          Animated.timing(wGlowScale, {
+            toValue: 1.0, duration: 2600,
+            easing: Easing.inOut(Easing.sin), useNativeDriver: true,
+          }),
+        ]),
+      );
+      wBreatheLoop.current.start();
+    });
+
+    return () => wBreatheLoop.current?.stop();
   }, [phase]);
 
   // ─── Loading guard — show nothing while fonts load ───────────────────────
@@ -319,78 +333,96 @@ export default function EntryScreen() {
     );
   }
 
-  // ─── WELCOME ─────────────────────────────────────────────────────────────
+  // ─── WELCOME — the same room, the light hasn't changed ──────────────────
+  // Same beige/green/gold identity as the splash, full-bleed and un-faded
+  // (no re-entrance for the backdrop — it was already there a moment ago).
   return (
-    <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor={BG} translucent={false} />
+    <View style={styles.welcomeRoot}>
+      <StatusBar barStyle="dark-content" backgroundColor={SPLASH_BEIGE_EDGE} translucent={false} />
 
-      <View style={styles.welcomeShell}>
-
-        {/* brand lockup — top center */}
-        <Animated.View style={[styles.topBrand, { opacity: wLogoOpacity }]}>
-          <Text style={styles.topArabic}>زينلي</Text>
-          <View style={styles.topDivider} />
-          <Text style={styles.topBrandName}>Zainly</Text>
-        </Animated.View>
-
-        {/* headline + subtitle */}
-        <Animated.View style={[
-          styles.heroBlock,
-          { opacity: wHeroOpacity, transform: [{ translateY: wHeroY }] },
-        ]}>
-          <Text style={styles.headline}>{'Ton Hifz,'}</Text>
-          <Text style={styles.headlineLine2}>{'guidé chaque jour.'}</Text>
-          <Text style={styles.subtitle}>
-            {'Zainly te dit quoi mémoriser, quoi réviser,\net t\u2019aide à avancer avec constance.'}
-          </Text>
-        </Animated.View>
-
-        <View style={styles.spacer} />
-
-        {/* CTA buttons */}
-        <Animated.View style={[
-          styles.ctaBlock,
-          { opacity: wBtnsOpacity, transform: [{ translateY: wBtnsY }] },
-        ]}>
-          <TouchableOpacity
-            style={styles.primaryBtn}
-            activeOpacity={0.85}
-            onPress={() => { hapticMedium(); router.push('/(auth)/signup'); }}
-          >
-            <Text style={styles.primaryBtnText}>Commencer</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.secondaryBtn}
-            activeOpacity={0.7}
-            onPress={() => { hapticLight(); router.push('/(auth)/login'); }}
-          >
-            <Text style={styles.secondaryBtnText}>J'ai déjà un compte</Text>
-          </TouchableOpacity>
-        </Animated.View>
-
-        {/* French hadith — lower area, no card */}
-        <Animated.View style={[
-          styles.hadithBlock,
-          { opacity: wHadithOpacity, transform: [{ translateY: wHadithY }] },
-        ]}>
-          <Text style={styles.hadithText}>{HADITH}</Text>
-          <Animated.Text style={[styles.hadithSource, { opacity: wSourceOpacity }]}>
-            {HADITH_SOURCE}
-          </Animated.Text>
-        </Animated.View>
-
+      <View pointerEvents="none" style={styles.spWash} />
+      <View pointerEvents="none" style={styles.spVignetteTop} />
+      <View pointerEvents="none" style={styles.spVignetteBottom} />
+      <View pointerEvents="none" style={styles.spPattern}>
+        <View style={styles.spMotifLineA} />
+        <View style={styles.spMotifLineB} />
+        <View style={styles.spMotifLineC} />
+        <View style={styles.spMotifLineD} />
       </View>
+
+      <SafeAreaView style={styles.welcomeSafe}>
+        <View style={styles.welcomeShell}>
+
+          {/* brand lockup — the mark, now settled at the top, still glowing */}
+          <Animated.View style={[styles.topBrand, { opacity: wLogoOpacity }]}>
+            <View style={styles.topMark}>
+              <Animated.View
+                pointerEvents="none"
+                style={[styles.wHalo, { transform: [{ scale: wGlowScale }] }]}
+              />
+              <Text style={styles.topArabic}>زينلي</Text>
+            </View>
+            <View style={styles.topDivider} />
+            <Text style={styles.topBrandName}>Zainly</Text>
+          </Animated.View>
+
+          {/* headline + subtitle — floating in generous open space */}
+          <View style={styles.heroArea}>
+            <Animated.View style={[
+              styles.heroHeadlineWrap,
+              { opacity: wHeroOpacity, transform: [{ translateY: wHeroY }] },
+            ]}>
+              <Text style={styles.headline}>{'Ton Hifz,'}</Text>
+              <Text style={styles.headlineLine2}>{'guidé chaque jour.'}</Text>
+            </Animated.View>
+            <Animated.Text style={[
+              styles.subtitle,
+              { opacity: wSubtitleOpacity, transform: [{ translateY: wSubtitleY }] },
+            ]}>
+              {'Zainly te dit quoi mémoriser, quoi réviser,\net t\u2019aide à avancer avec constance.'}
+            </Animated.Text>
+          </View>
+
+          {/* quiet hadith caption — a grace note just above the CTA */}
+          <Animated.View style={[
+            styles.hadithCaption,
+            { opacity: wHadithOpacity, transform: [{ translateY: wHadithY }] },
+          ]}>
+            <Text style={styles.hadithCaptionText}>{HADITH}</Text>
+            <Animated.Text style={[styles.hadithCaptionSource, { opacity: wSourceOpacity }]}>
+              {HADITH_SOURCE}
+            </Animated.Text>
+          </Animated.View>
+
+          {/* CTA — always anchored to the bottom, rising gently into place */}
+          <Animated.View style={[
+            styles.ctaBlock,
+            { opacity: wBtnsOpacity, transform: [{ translateY: wBtnsY }] },
+          ]}>
+            <TouchableOpacity
+              style={styles.primaryBtn}
+              activeOpacity={0.88}
+              onPress={() => { hapticMedium(); router.push('/onboarding-v2/name'); }}
+            >
+              <Text style={styles.primaryBtnText}>Commencer</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.secondaryBtn}
+              activeOpacity={0.6}
+              onPress={() => { hapticLight(); router.push('/(auth)/login'); }}
+            >
+              <Text style={styles.secondaryBtnText}>J'ai déjà un compte</Text>
+            </TouchableOpacity>
+          </Animated.View>
+
+        </View>
+      </SafeAreaView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: BG,
-  },
-
   // ── splash layout ──────────────────────────────────────────────────────────
   splashCenter: {
     flex: 1,
@@ -426,31 +458,6 @@ const styles = StyleSheet.create({
     fontSize: 32,
     color: SPLASH_GREEN,
     letterSpacing: 4,
-  },
-
-  // ── hadith (shared splash + welcome) ──────────────────────────────────────
-  hadithBlock: {
-    alignItems: 'center',
-    paddingHorizontal: 8,
-  },
-  hadithText: {
-    fontFamily: F_DISPLAY_LIGHT,
-    fontSize: 16,
-    color: MUTED,
-    opacity: 0.85,
-    textAlign: 'center',
-    lineHeight: 26,
-    letterSpacing: 0.2,
-    fontStyle: 'italic',
-  },
-  hadithSource: {
-    fontFamily: F_ARABIC_R,
-    fontSize: 11,
-    color: MUTED,
-    opacity: 0.55,
-    marginTop: 8,
-    letterSpacing: 0.6,
-    textAlign: 'center',
   },
 
   // ── splash root + background depth (beige dominant / green secondary / gold accent) ──
@@ -546,20 +553,37 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // ── welcome layout ─────────────────────────────────────────────────────────
+  // ── welcome root — same beige backdrop as the splash, full-bleed ──────────
+  welcomeRoot: {
+    flex: 1,
+    backgroundColor: SPLASH_BEIGE_EDGE,
+  },
+  welcomeSafe: {
+    flex: 1,
+  },
   welcomeShell: {
     flex: 1,
     paddingHorizontal: 28,
-    paddingTop: 64,
-    paddingBottom: 36,
+    paddingTop: 8,
+    paddingBottom: 10,
     alignItems: 'center',
   },
 
+  // ── brand lockup — the mark, settled and small, still quietly glowing ─────
   topBrand: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    marginBottom: 56,
+  },
+  topMark: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  wHalo: {
+    position: 'absolute',
+    width: 108, height: 108,
+    borderRadius: 54,
+    backgroundColor: SPLASH_GOLD_GLOW_SOFT,
   },
   topArabic: {
     fontFamily: F_ARABIC,
@@ -572,76 +596,105 @@ const styles = StyleSheet.create({
     width: 1,
     height: 20,
     backgroundColor: GOLD,
-    opacity: 0.4,
+    opacity: 0.45,
   },
   topBrandName: {
     fontFamily: F_BRAND,
     fontSize: 18,
-    color: IVORY,
+    color: SPLASH_GREEN,
     letterSpacing: 3,
   },
 
-  heroBlock: {
+  // ── headline + subtitle — floating alone in a wide open middle ────────────
+  heroArea: {
+    flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
     width: '100%',
+  },
+  heroHeadlineWrap: {
+    alignItems: 'center',
   },
   headline: {
     fontFamily: F_DISPLAY_BOLD,
     fontSize: 44,
-    color: IVORY,
+    color: SPLASH_GREEN,
     lineHeight: 52,
     textAlign: 'center',
   },
   headlineLine2: {
     fontFamily: F_DISPLAY_BOLD,
     fontSize: 44,
-    color: GOLD,
+    color: GOLD_DARK,
     lineHeight: 52,
     textAlign: 'center',
     marginBottom: 20,
   },
   subtitle: {
-    fontFamily: F_DISPLAY_LIGHT,
+    fontFamily: F_DISPLAY,
     fontSize: 17,
-    color: MUTED,
+    color: SPLASH_SOURCE_INK,
     lineHeight: 26,
     textAlign: 'center',
     maxWidth: 310,
   },
 
-  spacer: {
-    flex: 1,
-    minHeight: 24,
-    maxHeight: 60,
+  // ── quiet hadith caption — a grace note, not a fifth hierarchy tier ───────
+  hadithCaption: {
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginBottom: 22,
+  },
+  hadithCaptionText: {
+    fontFamily: F_DISPLAY_LIGHT,
+    fontSize: 12.5,
+    color: SPLASH_SOURCE_INK,
+    opacity: 0.68,
+    textAlign: 'center',
+    lineHeight: 18,
+    letterSpacing: 0.4,
+    fontStyle: 'italic',
+  },
+  hadithCaptionSource: {
+    fontSize: 9,
+    fontWeight: '500',
+    color: SPLASH_SOURCE_INK,
+    opacity: 0.5,
+    marginTop: 4,
+    letterSpacing: 0.7,
+    textAlign: 'center',
   },
 
+  // ── CTA — always anchored to the very bottom, Duolingo-style ─────────────
   ctaBlock: {
     gap: 12,
-    marginBottom: 28,
     width: '100%',
   },
   primaryBtn: {
-    backgroundColor: IVORY,
-    borderRadius: 14,
-    paddingVertical: 17,
+    backgroundColor: GOLD_DARK,
+    borderRadius: 18,
+    paddingVertical: 18,
     alignItems: 'center',
+    shadowColor: GOLD_DARK,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 18,
+    elevation: 8,
   },
   primaryBtnText: {
-    color: BG,
-    fontSize: 16,
+    color: SPLASH_BEIGE,
+    fontSize: 16.5,
     fontWeight: '700',
-    letterSpacing: 0.2,
+    letterSpacing: 0.3,
   },
   secondaryBtn: {
-    borderRadius: 14,
-    paddingVertical: 16,
+    paddingVertical: 14,
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: BORDER,
   },
   secondaryBtnText: {
-    color: IVORY,
-    fontSize: 16,
-    fontWeight: '500',
+    color: SPLASH_GREEN,
+    fontSize: 14.5,
+    fontWeight: '600',
+    letterSpacing: 0.2,
   },
 });
