@@ -463,7 +463,7 @@ const styles = StyleSheet.create({
   // ── splash root + background depth (beige dominant / green secondary / gold accent) ──
   splashRoot: {
     flex: 1,
-    backgroundColor: SPLASH_BEIGE_EDGE,
+    backgroundColor: SPLASH_BEIGE,
   },
   spWash: {
     position: 'absolute',
@@ -536,7 +536,7 @@ const styles = StyleSheet.create({
   spHadithText: {
     fontFamily: F_DISPLAY_LIGHT,
     fontSize: 14,
-    color: SPLASH_HADITH_INK,
+    color: SPLASH_SOURCE_INK,
     opacity: 0.92,
     textAlign: 'center',
     lineHeight: 22,
@@ -546,7 +546,7 @@ const styles = StyleSheet.create({
   spHadithSource: {
     fontFamily: F_ARABIC_R,
     fontSize: 10,
-    color: SPLASH_SOURCE_INK,
+    color: SPLASH_HADITH_INK,
     opacity: 0.72,
     marginTop: 8,
     letterSpacing: 0.8,
@@ -556,7 +556,7 @@ const styles = StyleSheet.create({
   // ── welcome root — same beige backdrop as the splash, full-bleed ──────────
   welcomeRoot: {
     flex: 1,
-    backgroundColor: SPLASH_BEIGE_EDGE,
+    backgroundColor: SPLASH_BEIGE,
   },
   welcomeSafe: {
     flex: 1,
@@ -648,7 +648,7 @@ const styles = StyleSheet.create({
   hadithCaptionText: {
     fontFamily: F_DISPLAY_LIGHT,
     fontSize: 12.5,
-    color: SPLASH_SOURCE_INK,
+    color: SPLASH_HADITH_INK,
     opacity: 0.68,
     textAlign: 'center',
     lineHeight: 18,
