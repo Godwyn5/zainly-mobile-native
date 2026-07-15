@@ -308,10 +308,7 @@ export default function OnboardingGreetingScreen() {
 
   function handleContinue() {
     hapticLight();
-    // The screens that used to follow the greeting were rejected and
-    // removed. This routes to a minimal temporary placeholder until the
-    // post-greeting flow is redefined — see coming-soon.tsx.
-    router.push('/onboarding-v2/coming-soon');
+    router.push('/onboarding-v2/overview');
   }
 
   if (!draftChecked || !firstName) {
