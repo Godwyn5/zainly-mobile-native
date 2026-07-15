@@ -347,7 +347,7 @@ export default function OnboardingRevisionsScreen() {
                   },
                 ]}
               >
-                <Text style={styles.ayahCardLabel}>Ayah mémorisée</Text>
+                <Text style={styles.ayahCardLabel}>Ayat mémorisée</Text>
                 <View style={styles.ayahLine} />
                 <View style={[styles.ayahLine, { width: '62%' }]} />
               </Animated.View>
@@ -374,7 +374,12 @@ export default function OnboardingRevisionsScreen() {
                       >
                         <View style={styles.timelineDotCheck} />
                       </Animated.View>
-                      <Animated.Text style={[styles.timelineLabel, { opacity }]}>
+                      <Animated.Text
+                        style={[styles.timelineLabel, { opacity }]}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.7}
+                      >
                         {MILESTONES[i]}
                       </Animated.Text>
                     </View>
@@ -497,10 +502,10 @@ const styles = StyleSheet.create({
     borderRadius: 1, backgroundColor: GOLD,
   },
   timelineDots: {
-    flexDirection: 'row', justifyContent: 'space-between',
+    flexDirection: 'row',
   },
   timelineStep: {
-    alignItems: 'center', width: 56,
+    flex: 1, alignItems: 'center', paddingHorizontal: 2,
   },
   timelineDot: {
     width: 20, height: 20, borderRadius: 10,

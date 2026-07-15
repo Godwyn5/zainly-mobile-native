@@ -244,7 +244,7 @@ export default function OnboardingBuildScreen() {
     if (navigatedRef.current) return;
     navigatedRef.current = true;
     hapticLight();
-    router.push('/onboarding-v2/coming-soon');
+    router.push('/onboarding-v2/motivation');
   }
 
   if (!draftChecked) {
