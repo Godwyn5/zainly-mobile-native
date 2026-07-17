@@ -13,17 +13,26 @@
 // allowed for branches of varying depth.
 //
 // Example:
-//   motivation (phase 1)            → 1/4
-//   motivation-reassurance          → 1/4 (same phase, never advances)
-//   learning-mode (phase 2)         → 2/4
-//   start-surah (phase 3, mode-dependent) → 3/4
-//   known-surahs (phase 3, common)  → 3/4
-//   experience-choice (phase 4)     → 4/4 (100% only here)
+//   motivation (phase 1)            → 1/7
+//   motivation-reassurance          → 1/7 (same phase, never advances)
+//   learning-mode (phase 2)         → 2/7
+//   start-surah (phase 3, mode-dependent) → 3/7
+//   known-surahs (phase 3, common)  → 3/7
+//   experience-choice (phase 4)     → 4/7
+//   premium-confirmation / free-support (phase 4) → 4/7 (same phase as
+//     experience-choice — the decision itself, not a new step)
+//   notifications (phase 5)         → 5/7
+//   discovery-source (phase 6)      → 6/7
+//   program-summary (phase 7)       → 7/7 (100% only here — program-generating
+//     renders no numeric progress bar at all, see its own screen)
 
-export type OnboardingPhase = 'intention' | 'parcours' | 'niveau' | 'experience';
+export type OnboardingPhase =
+  | 'intention' | 'parcours' | 'niveau' | 'experience'
+  | 'notifications' | 'discovery' | 'programme';
 
 export const ONBOARDING_PHASE_ORDER: OnboardingPhase[] = [
   'intention', 'parcours', 'niveau', 'experience',
+  'notifications', 'discovery', 'programme',
 ];
 
 export const TOTAL_ONBOARDING_PHASES = ONBOARDING_PHASE_ORDER.length;
@@ -33,6 +42,9 @@ export const PHASE_NUMBER: Record<OnboardingPhase, number> = {
   parcours: 2,
   niveau: 3,
   experience: 4,
+  notifications: 5,
+  discovery: 6,
+  programme: 7,
 };
 
 /** Every route of the block (decisions + their reassurance + branch
@@ -45,7 +57,12 @@ export type OnboardingQuestionnaireRouteId =
   | 'start_surah_picker'
   | 'custom_order_picker'
   | 'known_surahs'
-  | 'experience_choice';
+  | 'experience_choice'
+  | 'premium_confirmation'
+  | 'free_support'
+  | 'notifications'
+  | 'discovery_source'
+  | 'program_summary';
 
 export const QUESTIONNAIRE_ROUTE_PHASE: Record<OnboardingQuestionnaireRouteId, OnboardingPhase> = {
   motivation: 'intention',
@@ -56,6 +73,11 @@ export const QUESTIONNAIRE_ROUTE_PHASE: Record<OnboardingQuestionnaireRouteId, O
   custom_order_picker: 'niveau',
   known_surahs: 'niveau',
   experience_choice: 'experience',
+  premium_confirmation: 'experience',
+  free_support: 'experience',
+  notifications: 'notifications',
+  discovery_source: 'discovery',
+  program_summary: 'programme',
 };
 
 /** Convenience: the step number to feed OnboardingQuestionHeader for a
@@ -85,6 +107,16 @@ export const QUESTIONNAIRE_BACK_TARGETS: Partial<Record<OnboardingQuestionnaireR
   // reassurance for 'recommended'). Screens must compute it from
   // draft.learningMode via knownSurahsBackTarget() below, never a constant.
   experience_choice: '/onboarding-v2/known-surahs',
+  // premium_confirmation / free_support / discovery_source all have a
+  // single, mode-independent back target — static entries are enough.
+  premium_confirmation: '/onboarding-v2/experience-choice',
+  free_support: '/onboarding-v2/experience-choice',
+  discovery_source: '/onboarding-v2/notifications',
+  // notifications has no static entry: its "back" depends on which of the
+  // two experience_choice branches produced it (premium_confirmation vs
+  // free_support). Screens must compute it via notificationsBackTarget()
+  // below, never a constant.
+  // program_summary has no static entry either — see programSummaryBackTarget().
 };
 
 /** known_surahs is the one screen whose "back" target depends on the
@@ -96,14 +128,29 @@ export function knownSurahsBackTarget(learningMode: 'recommended' | 'start_surah
   return '/onboarding-v2/learning-mode-reassurance';
 }
 
+/** notifications is the one screen whose "back" target depends on which
+ *  experience_choice branch led to it. */
+export function notificationsBackTarget(experienceChoice: 'unlimited' | 'daily_limited' | null): string {
+  if (experienceChoice === 'unlimited') return '/onboarding-v2/premium-confirmation';
+  return '/onboarding-v2/free-support';
+}
+
 /**
- * Destination after the last screen of this block (experience-choice).
- * Points to signup — the next real, functional, already-existing screen:
- * creating an account is the natural continuation, since computePlan()
- * requires an authenticated userId (see src/core/planEngine.ts) that this
- * anonymous, pre-account draft never holds. The draft itself already
- * carries every field computePlan needs (see onboardingPlanValidation.ts);
- * only the userId is missing, and only signup can produce it. Update this
- * constant, not the screen file, if that integration point ever changes.
+ * program_summary's "back" deliberately never points at program_generating
+ * (a transient loading animation with nothing to resume into) — it returns
+ * to the last real input screen, so the user can change their discovery
+ * answer and regenerate.
  */
-export const AFTER_EXPERIENCE_CHOICE_ROUTE = '/(auth)/signup';
+export const PROGRAM_SUMMARY_BACK_TARGET = '/onboarding-v2/discovery-source';
+
+/**
+ * Destination after experience-choice depends on the chosen experience AND
+ * (for 'unlimited') on whether a Zainly+ entitlement is already active —
+ * computed directly in experience-choice.tsx (it needs a live RevenueCat
+ * check, which does not belong in this static config module). Kept here
+ * only as documentation of the two possible next steps:
+ *   - 'unlimited'    → already entitled: /onboarding-v2/premium-confirmation
+ *                      not entitled:      /premium?context=onboarding
+ *   - 'daily_limited' → /onboarding-v2/free-support
+ * Both branches converge again at /onboarding-v2/notifications.
+ */

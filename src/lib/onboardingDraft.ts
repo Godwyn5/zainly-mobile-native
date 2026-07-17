@@ -29,7 +29,13 @@ export type OnboardingStep =
   | 'start_surah_picker'
   | 'custom_order_picker'
   | 'known_surahs'
-  | 'experience_choice';
+  | 'experience_choice'
+  | 'premium_confirmation'
+  | 'free_support'
+  | 'notifications'
+  | 'discovery_source'
+  | 'program_generating'
+  | 'program_summary';
 
 const VALID_STEPS: OnboardingStep[] = [
   'first_name', 'greeting',
@@ -37,6 +43,9 @@ const VALID_STEPS: OnboardingStep[] = [
   'learning_mode', 'learning_mode_reassurance',
   'start_surah_picker', 'custom_order_picker', 'known_surahs',
   'experience_choice',
+  'premium_confirmation', 'free_support',
+  'notifications', 'discovery_source',
+  'program_generating', 'program_summary',
 ];
 
 export type MotivationReason =
@@ -68,6 +77,27 @@ export type ExperienceChoice = 'unlimited' | 'daily_limited';
 
 const VALID_EXPERIENCE_CHOICES: ExperienceChoice[] = ['unlimited', 'daily_limited'];
 
+// ── notifications pre-permission screen ─────────────────────────────────────
+// Deliberately does NOT store a push token or schedule anything itself — it
+// only remembers the user's stated intent/outcome from the onboarding-v2
+// notifications screen, so it can be honoured for real (via
+// src/notifications/scheduler.ts) once a real userId exists after signup.
+export type NotificationPreference = 'enabled' | 'denied' | 'skipped' | 'already_granted';
+
+const VALID_NOTIFICATION_PREFERENCES: NotificationPreference[] = [
+  'enabled', 'denied', 'skipped', 'already_granted',
+];
+
+// ── discovery-source question ───────────────────────────────────────────────
+export type DiscoverySource =
+  | 'tiktok' | 'instagram' | 'youtube' | 'google'
+  | 'app_store' | 'word_of_mouth' | 'other';
+
+const VALID_DISCOVERY_SOURCES: DiscoverySource[] = [
+  'tiktok', 'instagram', 'youtube', 'google',
+  'app_store', 'word_of_mouth', 'other',
+];
+
 // ─── deep branch fields — mirror PlanInput exactly (src/core/planEngine.ts) ─
 // knownSurahs / startingSurah / customSurahOrder / continueWithRest are the
 // exact historical field names and shapes consumed by computePlan(). No new
@@ -90,6 +120,9 @@ export interface OnboardingDraftV1 {
   // 'custom_order' mode only — mirrors computePlan's own default (true).
   continueWithRest: boolean;
   experienceChoice: ExperienceChoice | null;
+  // ── post-experience-choice block — never touches computePlan/PlanInput ──
+  notificationPreference: NotificationPreference | null;
+  discoverySource: DiscoverySource | null;
 }
 
 // fields that must never appear in this draft — defensive guard against
@@ -117,6 +150,14 @@ function isValidDraftShape(raw: unknown): raw is OnboardingDraftV1 {
     d.experienceChoice !== null
     && (typeof d.experienceChoice !== 'string' || !VALID_EXPERIENCE_CHOICES.includes(d.experienceChoice as ExperienceChoice))
   ) return false;
+  if (
+    d.notificationPreference !== null
+    && (typeof d.notificationPreference !== 'string' || !VALID_NOTIFICATION_PREFERENCES.includes(d.notificationPreference as NotificationPreference))
+  ) return false;
+  if (
+    d.discoverySource !== null
+    && (typeof d.discoverySource !== 'string' || !VALID_DISCOVERY_SOURCES.includes(d.discoverySource as DiscoverySource))
+  ) return false;
   if (!Array.isArray(d.knownSurahs) || !d.knownSurahs.every(n => typeof n === 'number')) return false;
   if (d.startingSurah !== null && typeof d.startingSurah !== 'number') return false;
   if (!Array.isArray(d.customSurahOrder) || !d.customSurahOrder.every(n => typeof n === 'number')) return false;
@@ -141,6 +182,8 @@ function createDefaultDraft(step: OnboardingStep = 'first_name'): OnboardingDraf
     customSurahOrder: [],
     continueWithRest: true,
     experienceChoice: null,
+    notificationPreference: null,
+    discoverySource: null,
   };
 }
 
@@ -185,7 +228,7 @@ export async function updateOnboardingDraft(
     OnboardingDraftV1,
     | 'currentStep' | 'firstName' | 'motivationReason' | 'learningMode'
     | 'knownSurahs' | 'startingSurah' | 'customSurahOrder' | 'continueWithRest'
-    | 'experienceChoice'
+    | 'experienceChoice' | 'notificationPreference' | 'discoverySource'
   >>
 ): Promise<OnboardingDraftV1> {
   const existing = await readOnboardingDraft();

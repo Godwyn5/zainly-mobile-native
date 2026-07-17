@@ -9,11 +9,12 @@ import { hapticLight } from '@/utils/haptics';
 import { readOnboardingDraft, updateOnboardingDraft, ExperienceChoice } from '@/lib/onboardingDraft';
 import {
   TOTAL_ONBOARDING_PHASES, phaseStepNumber, QUESTIONNAIRE_BACK_TARGETS,
-  AFTER_EXPERIENCE_CHOICE_ROUTE,
 } from '@/lib/onboardingQuestionnaire';
 import {
   buildPlanInputFromDraft, isPlanValidationError, routeForOnboardingStep,
+  PENDING_SIGNUP_USER_ID,
 } from '@/lib/onboardingPlanValidation';
+import { getRevenueCatCustomerInfo, hasRevenueCatEntitlement } from '@/lib/revenueCat';
 import OnboardingQuestionHeader from '@/components/onboarding/OnboardingQuestionHeader';
 import OnboardingChoiceCard from '@/components/onboarding/OnboardingChoiceCard';
 import OnboardingBottomAction from '@/components/onboarding/OnboardingBottomAction';
@@ -108,7 +109,7 @@ export default function OnboardingExperienceChoiceScreen() {
       // enough to exercise every OTHER structural check (mode-specific
       // required fields), since userId itself is re-validated for real
       // once it exists (post-signup).
-      const check = buildPlanInputFromDraft(draft, 'pending-signup');
+      const check = buildPlanInputFromDraft(draft, PENDING_SIGNUP_USER_ID);
       if (isPlanValidationError(check) && check.missingStep !== 'first_name') {
         router.replace(routeForOnboardingStep(check.missingStep));
         return;
@@ -189,8 +190,27 @@ export default function OnboardingExperienceChoiceScreen() {
     isSubmittingRef.current = true;
     hapticLight();
 
-    await updateOnboardingDraft({ experienceChoice: selected });
-    router.push(AFTER_EXPERIENCE_CHOICE_ROUTE);
+    try {
+      await updateOnboardingDraft({ experienceChoice: selected });
+
+      if (selected === 'daily_limited') {
+        router.push('/onboarding-v2/free-support');
+        return;
+      }
+
+      // 'unlimited' — the illimited experience must only ever unlock from a
+      // real, currently active RevenueCat entitlement, never merely from
+      // tapping this card. Check live state before deciding whether the
+      // paywall is even needed.
+      const customerInfo = await getRevenueCatCustomerInfo();
+      if (hasRevenueCatEntitlement(customerInfo)) {
+        router.push('/onboarding-v2/premium-confirmation');
+        return;
+      }
+      router.push('/premium?context=onboarding');
+    } finally {
+      isSubmittingRef.current = false;
+    }
   }
 
   if (!draftChecked) {

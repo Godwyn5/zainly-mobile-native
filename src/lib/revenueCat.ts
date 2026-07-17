@@ -179,21 +179,26 @@ export async function configureRevenueCatOnce(userId?: string | null): Promise<v
 
 /**
  * Identifies the current Supabase user to RevenueCat via Purchases.logIn.
- * No-op (with dev warning) if RevenueCat is not configured or on unsupported platforms.
- * Never throws.
+ * Returns true when the identity switch is confirmed to have succeeded (or
+ * there was genuinely nothing to do — unsupported platform), false when a
+ * real logIn attempt was made and failed. Callers (RevenueCatProvider,
+ * syncRevenueCatUserAfterAuth) use this to decide whether the sync can be
+ * considered durable or must be retried later. Never throws.
  */
-export async function revenueCatLogIn(userId: string): Promise<void> {
-  if (Platform.OS !== 'ios') return;
+export async function revenueCatLogIn(userId: string): Promise<boolean> {
+  if (Platform.OS !== 'ios') return true;
   if (!isConfigured) {
     devWarn('logIn skipped — RevenueCat is not configured.');
-    return;
+    return false;
   }
 
   try {
     await Purchases.logIn(userId);
     isLoggedIn = true;
+    return true;
   } catch (err) {
     devWarn(`logIn failed: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
   }
 }
 
@@ -379,6 +384,70 @@ export async function restoreRevenueCatPurchases(): Promise<RevenueCatActionResu
     devWarn(`restorePurchases failed: ${message}`);
     return { ok: false, reason: 'unknown', message };
   }
+}
+
+/**
+ * Discriminated result returned by syncRevenueCatUserAfterAuth() below.
+ * 'unsupported_platform' is not a failure — Zainly+ is iOS-only by design —
+ * callers must treat it as "nothing to verify" and never block a free flow
+ * on it. The other three reasons are real, potentially-retryable failures.
+ */
+export type RevenueCatAuthSyncResult =
+  | { ok: true; entitlementActive: boolean; customerInfo: CustomerInfo | null }
+  | {
+      ok: false;
+      reason: 'unsupported_platform' | 'configure_failed' | 'login_failed' | 'customer_info_failed';
+      error?: unknown;
+    };
+
+/**
+ * Explicitly (re)identifies the given Supabase userId to RevenueCat and
+ * returns a verified, freshly-fetched entitlement snapshot. Intended to be
+ * awaited right after a signup/login call resolves with an active session —
+ * this is the exact moment a pre-auth anonymous purchase (made from the
+ * onboarding paywall before an account existed) must be linked to the real
+ * user, so any screen reading entitlement immediately after (e.g. the
+ * dashboard) never races the identity switch.
+ *
+ * This is a thin composition of the existing configure/logIn/getCustomerInfo
+ * primitives above — no second purchase/identity layer, no new state. Safe
+ * to call multiple times for the same or different userId (configure is a
+ * one-time no-op after the first call, logIn is idempotent). Never throws —
+ * every failure mode is surfaced as a typed `ok: false` result instead, so
+ * callers can decide whether to block (premium flows) or ignore (free
+ * flows) without ever catching an exception. RevenueCat entitlement remains
+ * the only source of truth: this function never invents a local premium
+ * flag. The RevenueCatProvider's own reactive logIn (triggered by the
+ * authStore user id changing) still runs independently and is unaffected by
+ * this call.
+ */
+export async function syncRevenueCatUserAfterAuth(
+  userId: string
+): Promise<RevenueCatAuthSyncResult> {
+  if (Platform.OS !== 'ios') {
+    return { ok: false, reason: 'unsupported_platform' };
+  }
+
+  await configureRevenueCatOnce(userId);
+  if (!isConfigured) {
+    return { ok: false, reason: 'configure_failed' };
+  }
+
+  const loggedIn = await revenueCatLogIn(userId);
+  if (!loggedIn) {
+    return { ok: false, reason: 'login_failed' };
+  }
+
+  const customerInfo = await getRevenueCatCustomerInfo();
+  if (!customerInfo) {
+    return { ok: false, reason: 'customer_info_failed' };
+  }
+
+  return {
+    ok: true,
+    entitlementActive: hasRevenueCatEntitlement(customerInfo),
+    customerInfo,
+  };
 }
 
 export type { CustomerInfo, PurchasesOffering, PurchasesPackage };

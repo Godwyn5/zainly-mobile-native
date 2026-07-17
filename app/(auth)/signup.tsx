@@ -9,9 +9,11 @@ import { useFonts } from 'expo-font';
 import { Lora_600SemiBold, Lora_400Regular } from '@expo-google-fonts/lora';
 import { Amiri_400Regular, Amiri_700Bold } from '@expo-google-fonts/amiri';
 import { Cinzel_500Medium } from '@expo-google-fonts/cinzel';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { supabase } from '@/db/client';
 import { hapticLight, hapticMedium, hapticSelection } from '@/utils/haptics';
+import { useOnboardingV2AuthFinalize } from '@/hooks/useOnboardingV2AuthFinalize';
+import type { FinalizeOnboardingV2Result } from '@/lib/onboardingFinalize';
 
 // ─── palette — inverted from entry: ivory bg, deep green text ───────────────
 const BG          = '#F8F4EA';
@@ -40,6 +42,9 @@ function friendlySignupError(msg: string): string {
 }
 
 export default function SignupScreen() {
+  const { context } = useLocalSearchParams<{ context?: string }>();
+  const fromOnboarding = context === 'onboarding';
+
   const [email, setEmail]             = useState('');
   const [password, setPassword]       = useState('');
   const [confirm, setConfirm]         = useState('');
@@ -48,6 +53,11 @@ export default function SignupScreen() {
   const [loading, setLoading]         = useState(false);
   const [error, setError]             = useState<string | null>(null);
   const [emailSent, setEmailSent]     = useState(false);
+
+  const {
+    premiumGateIssue, isResolvingPremiumGate,
+    runFinalize, retryPremiumGate, restorePremiumPurchase,
+  } = useOnboardingV2AuthFinalize();
 
   const [fontsLoaded] = useFonts({
     Lora_600SemiBold,
@@ -82,6 +92,29 @@ export default function SignupScreen() {
     ]).start();
   }, [fontsLoaded]);
 
+  // Shared branching for a resolved (non-premium-gated) finalization result —
+  // called both right after signup and after a successful gate retry/restore.
+  function applyFinalizedResult(finalized: FinalizeOnboardingV2Result) {
+    if (finalized.ok) { router.replace('/(app)/(tabs)'); return; }
+    if (finalized.reason === 'no_source') {
+      // Not an error — this user simply did not come through
+      // onboarding-v2 (a direct signup). Falls back to the legacy full
+      // questionnaire, never silently discards a real draft/payload.
+      router.replace('/onboarding/intro');
+      return;
+    }
+    // A real onboarding-v2 program failed to finalize (Supabase error,
+    // etc.). The pending payload was deliberately NOT deleted by
+    // finalizeOnboardingV2Plan in this case — retrying via login (below)
+    // will retry finalization automatically. Never route to a dashboard
+    // with no persisted plan.
+    Alert.alert(
+      'Programme non enregistré',
+      'Ton compte a été créé, mais l’enregistrement de ton programme a échoué. Connecte-toi pour réessayer.'
+    );
+    router.replace(fromOnboarding ? '/(auth)/login?context=onboarding' : '/(auth)/login');
+  }
+
   async function handleSignup() {
     setError(null);
     hapticMedium();
@@ -94,8 +127,38 @@ export default function SignupScreen() {
     const { data, error: signupError } = await supabase.auth.signUp({ email: trimEmail, password });
     setLoading(false);
     if (signupError) { setError(friendlySignupError(signupError.message)); return; }
-    if (data.session) { router.replace('/onboarding/intro'); return; }
+    if (data.session) {
+      // Onboarding-v2 draft/pending payload (if any) is finalized into a
+      // real, persisted plan here — the only moment a real userId exists.
+      // A 'unlimited' parcours is gated on a verified RevenueCat entitlement
+      // first (see useOnboardingV2AuthFinalize / onboardingFinalize.ts) —
+      // free/daily_limited parcours resolve immediately, never blocked.
+      const finalized = await runFinalize(data.session.user.id);
+      if (!finalized) return; // premiumGateIssue is now set — inline block renders below
+      applyFinalizedResult(finalized);
+      return;
+    }
     setEmailSent(true);
+  }
+
+  async function handlePremiumGateRetry() {
+    hapticLight();
+    const finalized = await retryPremiumGate();
+    if (finalized) applyFinalizedResult(finalized);
+  }
+
+  async function handlePremiumGateRestore() {
+    hapticLight();
+    const finalized = await restorePremiumPurchase();
+    if (finalized) {
+      applyFinalizedResult(finalized);
+      return;
+    }
+    // Either still blocked (no purchase to restore) or a transient error —
+    // premiumGateIssue stays set either way and the inline block above
+    // already conveys that; a short-lived Alert just confirms this specific
+    // restore attempt found nothing, without contradicting it.
+    Alert.alert('Aucun achat trouvé', 'Aucun abonnement Zainly+ actif n’a été trouvé sur ce compte Apple.');
   }
 
   function handleSocial() {
@@ -145,7 +208,11 @@ export default function SignupScreen() {
         {/* ── Hero title — centered ── */}
         <Animated.View style={[styles.heroBlock, { opacity: heroO, transform: [{ translateY: heroY }] }]}>
           <Text style={styles.heroTitle}>Commence ton Hifz</Text>
-          <Text style={styles.heroSub}>{'Crée ton compte pour sauvegarder ta progression.'}</Text>
+          <Text style={styles.heroSub}>
+            {fromOnboarding
+              ? 'Crée ton compte pour sauvegarder ton programme et accéder à ton dashboard.'
+              : 'Crée ton compte pour sauvegarder ta progression.'}
+          </Text>
         </Animated.View>
 
         {/* ── Form ── */}
@@ -199,7 +266,42 @@ export default function SignupScreen() {
           )}
         </Animated.View>
 
+        {/* ── Premium verification gate — replaces the normal buttons while a
+              'unlimited' parcours can't yet be confirmed premium. Never
+              submitted silently as free, never blocks the account itself. ── */}
+        {premiumGateIssue && (
+          <View style={styles.premiumGateBox}>
+            <Text style={styles.premiumGateText}>
+              {premiumGateIssue === 'entitlement_missing'
+                ? 'Nous n’avons pas encore pu vérifier ton accès premium. Tu peux réessayer ou restaurer ton achat.'
+                : 'Nous n’avons pas pu vérifier ton accès Zainly+ pour le moment. Réessaie dans quelques instants.'}
+            </Text>
+            <TouchableOpacity
+              style={[styles.primaryBtn, isResolvingPremiumGate && styles.btnDim]}
+              onPress={handlePremiumGateRetry}
+              activeOpacity={0.85}
+              disabled={isResolvingPremiumGate}
+            >
+              {isResolvingPremiumGate
+                ? <ActivityIndicator color={BG} />
+                : <Text style={styles.primaryBtnText}>Réessayer</Text>
+              }
+            </TouchableOpacity>
+            {premiumGateIssue === 'entitlement_missing' && (
+              <TouchableOpacity
+                style={[styles.socialBtn, { marginBottom: 0 }, isResolvingPremiumGate && styles.btnDim]}
+                onPress={handlePremiumGateRestore}
+                activeOpacity={0.8}
+                disabled={isResolvingPremiumGate}
+              >
+                <Text style={styles.socialBtnText}>Restaurer mon achat</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
         {/* ── Buttons ── */}
+        {!premiumGateIssue && (
         <Animated.View style={[styles.btnsBlock, { opacity: btnsO, transform: [{ translateY: btnsY }] }]}>
           <TouchableOpacity style={[styles.primaryBtn, loading && styles.btnDim]} onPress={handleSignup} activeOpacity={0.85} disabled={loading}>
             {loading
@@ -223,11 +325,18 @@ export default function SignupScreen() {
 
           <View style={styles.switchRow}>
             <Text style={styles.switchText}>Déjà un compte ?{'  '}</Text>
-            <TouchableOpacity onPress={() => { hapticLight(); router.replace('/(auth)/login'); }} disabled={loading}>
+            <TouchableOpacity
+              onPress={() => {
+                hapticLight();
+                router.replace(fromOnboarding ? '/(auth)/login?context=onboarding' : '/(auth)/login');
+              }}
+              disabled={loading}
+            >
               <Text style={styles.switchLink}>Connexion</Text>
             </TouchableOpacity>
           </View>
         </Animated.View>
+        )}
 
       </ScrollView>
     </KeyboardAvoidingView>
@@ -330,6 +439,24 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   errorText: { fontSize: 13, color: '#B91C1C', lineHeight: 18 },
+
+  // ── premium verification gate ───────────────────────────────────────────
+  premiumGateBox: {
+    width: '100%',
+    backgroundColor: SURF,
+    borderWidth: 1,
+    borderColor: GOLD_BORDER,
+    borderRadius: 14,
+    padding: 18,
+    gap: 12,
+  },
+  premiumGateText: {
+    fontSize: 14,
+    color: GREEN,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginBottom: 4,
+  },
 
   // ── buttons ──────────────────────────────────────────────────────────────
   btnsBlock: { width: '100%' },

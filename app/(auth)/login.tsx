@@ -9,10 +9,12 @@ import { useFonts } from 'expo-font';
 import { Lora_600SemiBold, Lora_400Regular } from '@expo-google-fonts/lora';
 import { Amiri_400Regular, Amiri_700Bold } from '@expo-google-fonts/amiri';
 import { Cinzel_500Medium } from '@expo-google-fonts/cinzel';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/db/client';
 import { hapticLight, hapticMedium, hapticSelection } from '@/utils/haptics';
+import { useOnboardingV2AuthFinalize } from '@/hooks/useOnboardingV2AuthFinalize';
+import type { FinalizeOnboardingV2Result } from '@/lib/onboardingFinalize';
 
 // ─── palette — inverted from entry: ivory bg, deep green text ───────────────
 const BG          = '#F8F4EA';          // warm ivory (entry IVORY)
@@ -39,12 +41,20 @@ function friendlyAuthError(msg: string): string {
 }
 
 export default function LoginScreen() {
+  const { context } = useLocalSearchParams<{ context?: string }>();
+  const fromOnboarding = context === 'onboarding';
+
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw]     = useState(false);
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState<string | null>(null);
   const [showDeletionBanner, setShowDeletionBanner] = useState(false);
+
+  const {
+    premiumGateIssue, isResolvingPremiumGate,
+    runFinalize, retryPremiumGate, restorePremiumPurchase,
+  } = useOnboardingV2AuthFinalize();
 
   const [fontsLoaded] = useFonts({
     Lora_600SemiBold,
@@ -97,16 +107,63 @@ export default function LoginScreen() {
     ]).start();
   }, [fontsLoaded]);
 
+  // Shared branching for a resolved (non-premium-gated) finalization result —
+  // called both right after login and after a successful gate retry/restore.
+  function applyFinalizedResult(finalized: FinalizeOnboardingV2Result) {
+    if (!finalized.ok && finalized.reason !== 'no_source') {
+      // A real onboarding-v2 program failed to finalize. The pending
+      // payload was deliberately NOT deleted — retrying login again will
+      // retry finalization. Never route into a dashboard with no
+      // persisted plan.
+      Alert.alert(
+        'Programme non enregistré',
+        'La connexion a réussi, mais l’enregistrement de ton programme a échoué. Réessaie de te connecter dans un instant.'
+      );
+      return;
+    }
+    router.replace('/(app)/(tabs)/');
+  }
+
   async function handleLogin() {
     setError(null);
     hapticMedium();
     const trimEmail = email.trim().toLowerCase();
     if (!trimEmail || !password) { setError('Saisis ton e-mail et ton mot de passe.'); return; }
     setLoading(true);
-    const { error: authError } = await supabase.auth.signInWithPassword({ email: trimEmail, password });
+    const { data, error: authError } = await supabase.auth.signInWithPassword({ email: trimEmail, password });
     setLoading(false);
     if (authError) { setError(friendlyAuthError(authError.message)); return; }
+    // Same integration point as signup.tsx: an abandoned onboarding-v2 draft
+    // OR pending payload (user confirmed their e-mail and came back via a
+    // normal login, possibly without ?context=onboarding) is finalized into
+    // a real, persisted plan here too, never silently lost. Deliberately
+    // unconditional — finalizeOnboardingV2Plan() itself is a no-op
+    // (`no_source`) for accounts that never went through onboarding-v2. A
+    // 'unlimited' parcours is gated on a verified RevenueCat entitlement
+    // first — free/daily_limited parcours resolve immediately, never blocked.
+    if (data.session) {
+      const finalized = await runFinalize(data.session.user.id);
+      if (!finalized) return; // premiumGateIssue is now set — inline block renders below
+      applyFinalizedResult(finalized);
+      return;
+    }
     router.replace('/(app)/(tabs)/');
+  }
+
+  async function handlePremiumGateRetry() {
+    hapticLight();
+    const finalized = await retryPremiumGate();
+    if (finalized) applyFinalizedResult(finalized);
+  }
+
+  async function handlePremiumGateRestore() {
+    hapticLight();
+    const finalized = await restorePremiumPurchase();
+    if (finalized) {
+      applyFinalizedResult(finalized);
+      return;
+    }
+    Alert.alert('Aucun achat trouvé', 'Aucun abonnement Zainly+ actif n’a été trouvé sur ce compte Apple.');
   }
 
   function handleSocial() {
@@ -133,7 +190,11 @@ export default function LoginScreen() {
         {/* ── Hero title — centered ── */}
         <Animated.View style={[styles.heroBlock, { opacity: heroO, transform: [{ translateY: heroY }] }]}>
           <Text style={styles.heroTitle}>Bon retour</Text>
-          <Text style={styles.heroSub}>Continue là où tu t'es arrêté.</Text>
+          <Text style={styles.heroSub}>
+            {fromOnboarding
+              ? 'Connecte-toi pour retrouver ton programme et accéder à ton dashboard.'
+              : "Continue là où tu t'es arrêté."}
+          </Text>
         </Animated.View>
 
         {/* ── Account deletion success banner ── */}
@@ -183,7 +244,42 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </Animated.View>
 
+        {/* ── Premium verification gate — replaces the normal buttons while a
+              'unlimited' parcours can't yet be confirmed premium. Never
+              submitted silently as free, never blocks the login itself. ── */}
+        {premiumGateIssue && (
+          <View style={styles.premiumGateBox}>
+            <Text style={styles.premiumGateText}>
+              {premiumGateIssue === 'entitlement_missing'
+                ? 'Nous n’avons pas encore pu vérifier ton accès premium. Tu peux réessayer ou restaurer ton achat.'
+                : 'Nous n’avons pas pu vérifier ton accès Zainly+ pour le moment. Réessaie dans quelques instants.'}
+            </Text>
+            <TouchableOpacity
+              style={[styles.primaryBtn, isResolvingPremiumGate && styles.btnDim]}
+              onPress={handlePremiumGateRetry}
+              activeOpacity={0.85}
+              disabled={isResolvingPremiumGate}
+            >
+              {isResolvingPremiumGate
+                ? <ActivityIndicator color={BG} />
+                : <Text style={styles.primaryBtnText}>Réessayer</Text>
+              }
+            </TouchableOpacity>
+            {premiumGateIssue === 'entitlement_missing' && (
+              <TouchableOpacity
+                style={[styles.socialBtn, { marginBottom: 0 }, isResolvingPremiumGate && styles.btnDim]}
+                onPress={handlePremiumGateRestore}
+                activeOpacity={0.8}
+                disabled={isResolvingPremiumGate}
+              >
+                <Text style={styles.socialBtnText}>Restaurer mon achat</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
         {/* ── Buttons ── */}
+        {!premiumGateIssue && (
         <Animated.View style={[styles.btnsBlock, { opacity: btnsO, transform: [{ translateY: btnsY }] }]}>
           <TouchableOpacity style={[styles.primaryBtn, loading && styles.btnDim]} onPress={handleLogin} activeOpacity={0.85} disabled={loading}>
             {loading
@@ -207,11 +303,18 @@ export default function LoginScreen() {
 
           <View style={styles.switchRow}>
             <Text style={styles.switchText}>Pas encore de compte ?{'  '}</Text>
-            <TouchableOpacity onPress={() => { hapticLight(); router.push('/(auth)/signup'); }} disabled={loading}>
+            <TouchableOpacity
+              onPress={() => {
+                hapticLight();
+                router.push(fromOnboarding ? '/(auth)/signup?context=onboarding' : '/(auth)/signup');
+              }}
+              disabled={loading}
+            >
               <Text style={styles.switchLink}>Créer un compte</Text>
             </TouchableOpacity>
           </View>
         </Animated.View>
+        )}
 
       </ScrollView>
     </KeyboardAvoidingView>
@@ -323,6 +426,24 @@ const styles = StyleSheet.create({
 
   forgotRow: { alignItems: 'center', paddingVertical: 6, marginBottom: 4 },
   forgotText: { fontSize: 13, color: MUTED },
+
+  // ── premium verification gate ───────────────────────────────────────────
+  premiumGateBox: {
+    width: '100%',
+    backgroundColor: SURF,
+    borderWidth: 1,
+    borderColor: GOLD_BORDER,
+    borderRadius: 14,
+    padding: 18,
+    gap: 12,
+  },
+  premiumGateText: {
+    fontSize: 14,
+    color: GREEN,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginBottom: 4,
+  },
 
   // ── buttons ──────────────────────────────────────────────────────────────
   btnsBlock: { width: '100%' },

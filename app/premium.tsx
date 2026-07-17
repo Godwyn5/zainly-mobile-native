@@ -96,8 +96,15 @@ export default function PremiumScreen() {
 
     if (result.ok) {
       if (result.hasEntitlement) {
-        Alert.alert('Zainly+ activé', 'Ton accès Zainly+ est maintenant actif.');
-        goBackAfterPurchase();
+        // Onboarding context: the dedicated premium-confirmation screen
+        // IS the confirmation moment — a native Alert on top of it would be
+        // redundant/jarring, so it is skipped only for this context.
+        if (ctx === 'onboarding') {
+          router.replace('/onboarding-v2/premium-confirmation');
+        } else {
+          Alert.alert('Zainly+ activé', 'Ton accès Zainly+ est maintenant actif.');
+          goBackAfterPurchase();
+        }
       } else {
         Alert.alert(
           'Achat confirmé, activation en attente',
@@ -125,8 +132,12 @@ export default function PremiumScreen() {
 
     if (result.ok) {
       if (result.hasEntitlement) {
-        Alert.alert('Achats restaurés', 'Ton accès Zainly+ est actif.');
-        goBackAfterPurchase();
+        if (ctx === 'onboarding') {
+          router.replace('/onboarding-v2/premium-confirmation');
+        } else {
+          Alert.alert('Achats restaurés', 'Ton accès Zainly+ est actif.');
+          goBackAfterPurchase();
+        }
       } else {
         Alert.alert('Aucun achat trouvé', 'Aucun abonnement Zainly+ actif n’a été trouvé sur ce compte Apple.');
       }

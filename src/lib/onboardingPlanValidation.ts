@@ -20,6 +20,17 @@ import type { OnboardingDraftV1, OnboardingStep } from './onboardingDraft';
 // invents a "pace" question the legacy model never had.
 const DEFAULT_DAILY_AYAT_GOAL = 1;
 
+// ── pre-signup preview placeholder ──────────────────────────────────────────
+// computePlan() only ever uses `userId` as an opaque non-empty string (it
+// never queries Supabase itself — see src/core/planEngine.ts) — real
+// persistence (upsertPlan/upsertProgress) always happens later, with the
+// real authenticated userId, from src/lib/onboardingFinalize.ts. This
+// shared placeholder lets every pre-signup screen (experience-choice's own
+// completeness check, program-generating, program-summary) run the exact
+// same structural validation / preview computation without duplicating a
+// magic string.
+export const PENDING_SIGNUP_USER_ID = 'pending-signup';
+
 export interface OnboardingPlanValidationError {
   error: string;
   /** The step the user must complete/fix before a valid PlanInput can be
@@ -38,13 +49,25 @@ export function isPlanValidationError(
   return 'error' in r;
 }
 
+/** The only fields this mapping actually reads — deliberately narrower than
+ *  the full OnboardingDraftV1 so the same function can build a PlanInput
+ *  from either the in-memory draft OR the minimal, versioned pending-plan
+ *  payload (src/lib/pendingOnboardingPlan.ts) once the draft itself no
+ *  longer exists (app killed / email confirmation pending). Any full
+ *  OnboardingDraftV1 already satisfies this shape, so existing callers are
+ *  unaffected. */
+export type PlanInputSource = Pick<
+  OnboardingDraftV1,
+  'learningMode' | 'knownSurahs' | 'startingSurah' | 'customSurahOrder' | 'continueWithRest'
+>;
+
 /**
- * Builds the exact PlanInput computePlan() expects from the current draft,
- * or returns a typed error naming the step to redirect to. Never invents a
- * default for a missing required field.
+ * Builds the exact PlanInput computePlan() expects from the current draft
+ * (or an equivalent minimal source), or returns a typed error naming the
+ * step to redirect to. Never invents a default for a missing required field.
  */
 export function buildPlanInputFromDraft(
-  draft: OnboardingDraftV1,
+  draft: PlanInputSource,
   userId: string
 ): OnboardingPlanValidationResult {
   if (!userId) {
@@ -117,6 +140,12 @@ const ROUTE_FOR_STEP: Record<OnboardingStep, string> = {
   custom_order_picker:      '/onboarding-v2/custom-order',
   known_surahs:             '/onboarding-v2/known-surahs',
   experience_choice:        '/onboarding-v2/experience-choice',
+  premium_confirmation:     '/onboarding-v2/experience-choice',
+  free_support:             '/onboarding-v2/experience-choice',
+  notifications:            '/onboarding-v2/notifications',
+  discovery_source:         '/onboarding-v2/discovery-source',
+  program_generating:       '/onboarding-v2/discovery-source',
+  program_summary:          '/onboarding-v2/discovery-source',
 };
 
 /** Maps a missing step to the route the user should be redirected to. */
