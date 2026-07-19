@@ -8,7 +8,7 @@ import { router } from 'expo-router';
 import { hapticLight } from '@/utils/haptics';
 import { readOnboardingDraft } from '@/lib/onboardingDraft';
 
-// ─── palette — identical tokens to Splash/Welcome/Name/Greeting/Overview/
+// ─── palette — identical tokens to Splash/Welcome/Name/Greeting/
 // Session/Revisions/Program (kept local, not exported from those files,
 // to avoid touching them) ────────────────────────────────────────────────
 const SPLASH_BEIGE       = '#F7F2E7';

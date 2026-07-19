@@ -83,7 +83,7 @@ export default function OnboardingSessionScreen() {
   }
 
   // ── living background — the exact same five independent breathing loops
-  // as Greeting/Overview, so the space itself never feels like it changed
+  // as Greeting, so the space itself never feels like it changed
   // when this scene arrives. ───────────────────────────────────────────────
   const washBreath   = useRef(new Animated.Value(0)).current;
   const glowPulse     = useRef(new Animated.Value(0)).current;

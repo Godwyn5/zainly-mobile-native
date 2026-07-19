@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Animated, Easing, AccessibilityInfo,
 } from 'react-native';
+import { useOnboardingProgress } from '../../../app/onboarding-v2/_layout';
 
 // ─── palette — identical tokens to the rest of Onboarding V2 (kept local,
 // not imported from src/theme, to stay visually consistent with the
@@ -33,7 +34,9 @@ export default function OnboardingQuestionHeader({
   const [reduceMotion, setReduceMotion] = useState(false);
   const mountedRef     = useRef(true);
   const backLockedRef  = useRef(false);
-  const fillRatio       = useRef(new Animated.Value(0)).current;
+  const localProgress  = useRef(new Animated.Value(0)).current;
+  const sharedProgress = useOnboardingProgress();
+  const fillRatio       = sharedProgress ?? localProgress;
 
   useEffect(() => {
     AccessibilityInfo.isReduceMotionEnabled()

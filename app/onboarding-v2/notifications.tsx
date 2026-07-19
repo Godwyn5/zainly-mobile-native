@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { hapticLight } from '@/utils/haptics';
 import { readOnboardingDraft, updateOnboardingDraft, ExperienceChoice } from '@/lib/onboardingDraft';
-import { getNotificationPermissionStatus, requestNotificationPermission } from '@/notifications/scheduler';
+import { getNotificationPermissionStatus, requestNotificationPermission, PermissionStatus } from '@/notifications/scheduler';
 import {
   TOTAL_ONBOARDING_PHASES, phaseStepNumber, notificationsBackTarget,
 } from '@/lib/onboardingQuestionnaire';
@@ -36,7 +36,7 @@ function ambientBreath(value: Animated.Value, halfDuration: number, delay = 0) {
 }
 
 // ─── notifications — the OS permission prompt must only ever fire from a
-// direct tap on "Activer les rappels", never on mount. If permission is
+// direct tap on "Activer mes rappels", never on mount. If permission is
 // already granted, this screen still renders — with a short confirmation
 // version (no system prompt, no Activer/Plus tard buttons) so the user
 // always sees this step instead of being silently skipped. Uses the real,
@@ -49,7 +49,7 @@ export default function OnboardingNotificationsScreen() {
   const [busy, setBusy] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
   const [experienceChoice, setExperienceChoice] = useState<ExperienceChoice | null>(null);
-  const [alreadyGranted, setAlreadyGranted] = useState(false);
+  const [permissionStatus, setPermissionStatus] = useState<PermissionStatus>('undetermined');
   const mountedRef = useRef(true);
   const isSubmittingRef = useRef(false);
 
@@ -73,7 +73,7 @@ export default function OnboardingNotificationsScreen() {
 
       const status = await getNotificationPermissionStatus();
       if (cancelled) return;
-      setAlreadyGranted(status === 'granted');
+      setPermissionStatus(status);
       setReady(true);
     })();
     return () => { cancelled = true; };
@@ -145,6 +145,21 @@ export default function OnboardingNotificationsScreen() {
     }
   }
 
+  async function handleContinueDenied() {
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    hapticLight();
+    try {
+      await updateOnboardingDraft({
+        notificationPreference: 'denied',
+        currentStep: 'discovery_source',
+      });
+      router.push('/onboarding-v2/discovery-source');
+    } finally {
+      isSubmittingRef.current = false;
+    }
+  }
+
   async function handleLater() {
     if (isSubmittingRef.current) return;
     isSubmittingRef.current = true;
@@ -166,6 +181,9 @@ export default function OnboardingNotificationsScreen() {
 
   const washScale = washBreath.interpolate({ inputRange: [0, 1], outputRange: [1, 1.02] });
 
+  const isGranted = permissionStatus === 'granted';
+  const isDenied = permissionStatus === 'denied';
+
   return (
     <View style={styles.root}>
       <StatusBar barStyle="dark-content" backgroundColor={SPLASH_BEIGE} translucent={false} />
@@ -184,34 +202,51 @@ export default function OnboardingNotificationsScreen() {
             <Animated.Text
               style={[styles.title, { opacity: titleOpacity, transform: [{ translateY: titleY }] }]}
             >
-              {alreadyGranted
-                ? 'Tes rappels sont déjà activés.'
-                : 'Ne laisse pas ton Hifz dépendre de ta motivation.'}
+              {isGranted
+                ? 'Tes rappels sont prêts.'
+                : isDenied
+                ? 'Continue à avancer à ton rythme.'
+                : 'Avance chaque jour dans ton Hifz.'}
             </Animated.Text>
 
             <Animated.Text style={[styles.body, { opacity: bodyOpacity }]}>
-              {alreadyGranted
-                ? 'Zainly pourra te rappeler ta séance au bon moment pour t’aider à rester régulier.'
-                : 'Zainly peut te rappeler ta séance au bon moment pour t’aider à rester régulier.'}
+              {isGranted
+                ? 'Zainly pourra te prévenir lorsque ta séance du jour sera prête pour t\'aider à garder un rythme régulier.'
+                : isDenied
+                ? 'Les rappels sont désactivés sur ce téléphone, mais ton programme restera accessible chaque jour dans Zainly.'
+                : 'Active tes rappels pour recevoir ta séance au bon moment et garder un rythme régulier, même les jours chargés.'}
             </Animated.Text>
 
             <Animated.View style={[styles.card, { opacity: cardOpacity, transform: [{ translateY: cardY }] }]}>
-              <View style={styles.bellGlyph}>
-                <View style={styles.bellDot} />
-              </View>
+              <Animated.View style={[styles.notificationCard, { opacity: cardOpacity, transform: [{ translateY: cardY }] }]}>
+                <View style={styles.notificationHeader}>
+                  <View style={styles.zainlyBadge}>
+                    <View style={styles.zainlyBadgeDot} />
+                    <Text style={styles.zainlyBadgeText}>Zainly</Text>
+                  </View>
+                  <Text style={styles.notificationTime}>maintenant</Text>
+                </View>
+                <Text style={styles.notificationTitle}>Ta séance du jour est prête</Text>
+                <Text style={styles.notificationBody}>Quelques minutes suffisent pour avancer aujourd'hui.</Text>
+              </Animated.View>
             </Animated.View>
           </View>
 
           <View style={styles.actions}>
-            {alreadyGranted ? (
+            {isGranted ? (
               <OnboardingBottomAction
                 label="Continuer"
                 onPress={handleContinueAlreadyGranted}
               />
+            ) : isDenied ? (
+              <OnboardingBottomAction
+                label="Continuer sans rappels"
+                onPress={handleContinueDenied}
+              />
             ) : (
               <>
                 <OnboardingBottomAction
-                  label={busy ? 'Activation…' : 'Activer les rappels'}
+                  label={busy ? 'Activation…' : 'Activer mes rappels'}
                   disabled={busy}
                   onPress={handleActivate}
                 />
@@ -255,16 +290,63 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    width: 88, height: 88, borderRadius: 44,
-    backgroundColor: CARD_CREAM, borderWidth: 1, borderColor: CARD_BORDER,
+    width: '100%', maxWidth: 320,
     alignItems: 'center', justifyContent: 'center',
   },
-  bellGlyph: {
-    width: 40, height: 40, borderRadius: 20,
-    borderWidth: 1.5, borderColor: GOLD_DARK,
-    alignItems: 'center', justifyContent: 'center',
+  notificationCard: {
+    width: '100%',
+    backgroundColor: CARD_CREAM,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: CARD_BORDER,
+    padding: 16,
+    shadowColor: GOLD_DARK,
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
-  bellDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: GOLD_DARK },
+  notificationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  zainlyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  zainlyBadgeDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: GOLD_DARK,
+  },
+  zainlyBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: SPLASH_GREEN,
+    letterSpacing: 0.2,
+  },
+  notificationTime: {
+    fontSize: 11,
+    color: SPLASH_GREEN,
+    opacity: 0.5,
+  },
+  notificationTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: SPLASH_GREEN,
+    marginBottom: 4,
+    lineHeight: 20,
+  },
+  notificationBody: {
+    fontSize: 13,
+    color: SPLASH_GREEN,
+    opacity: 0.75,
+    lineHeight: 18,
+  },
 
   actions: { width: '100%', paddingTop: 16, gap: 14 },
   laterBtn: { alignItems: 'center', paddingVertical: 6 },

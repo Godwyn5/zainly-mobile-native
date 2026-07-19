@@ -16,7 +16,7 @@ import OnboardingQuestionHeader from '@/components/onboarding/OnboardingQuestion
 import OnboardingChoiceCard from '@/components/onboarding/OnboardingChoiceCard';
 import OnboardingBottomAction from '@/components/onboarding/OnboardingBottomAction';
 
-// ─── palette — identical tokens to Splash/Welcome/Name/Greeting/Overview/
+// ─── palette — identical tokens to Splash/Welcome/Name/Greeting/
 // Session/Revisions/Program/Ready/Build (kept local, not exported from
 // those files, to avoid touching them) ──────────────────────────────────
 const SPLASH_BEIGE       = '#F7F2E7';
@@ -153,8 +153,8 @@ export default function OnboardingMotivationScreen() {
     isSubmittingRef.current = true;
     hapticLight();
 
-    await updateOnboardingDraft({ currentStep: 'motivation_reassurance', motivationReason: selected });
-    router.push('/onboarding-v2/motivation-reassurance');
+    await updateOnboardingDraft({ currentStep: 'learning_mode', motivationReason: selected });
+    router.push('/onboarding-v2/learning-mode');
   }
 
   if (!draftChecked) {

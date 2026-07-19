@@ -308,7 +308,7 @@ export default function OnboardingGreetingScreen() {
 
   function handleContinue() {
     hapticLight();
-    router.push('/onboarding-v2/overview');
+    router.push('/onboarding-v2/session');
   }
 
   if (!draftChecked || !firstName) {

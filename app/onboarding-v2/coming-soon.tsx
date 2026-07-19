@@ -3,7 +3,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 // ─── TEMPORARY PLACEHOLDER ──────────────────────────────────────────────────
 // build.tsx ("Construisons ton programme.") is the sixth and last
-// narrative screen after greeting.tsx → overview.tsx → session.tsx →
+// narrative screen after greeting.tsx → session.tsx →
 // revisions.tsx → program.tsx → ready.tsx, immediately preceding the real
 // questionnaire. This screen exists only so build.tsx's "Créer mon
 // programme" CTA has a valid navigation target instead of a dead route,

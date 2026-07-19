@@ -23,9 +23,7 @@ export type OnboardingStep =
   | 'first_name'
   | 'greeting'
   | 'motivation'
-  | 'motivation_reassurance'
   | 'learning_mode'
-  | 'learning_mode_reassurance'
   | 'start_surah_picker'
   | 'custom_order_picker'
   | 'known_surahs'
@@ -39,8 +37,7 @@ export type OnboardingStep =
 
 const VALID_STEPS: OnboardingStep[] = [
   'first_name', 'greeting',
-  'motivation', 'motivation_reassurance',
-  'learning_mode', 'learning_mode_reassurance',
+  'motivation', 'learning_mode',
   'start_surah_picker', 'custom_order_picker', 'known_surahs',
   'experience_choice',
   'premium_confirmation', 'free_support',

@@ -140,7 +140,7 @@ export default function OnboardingNameScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="dark-content" backgroundColor={SPLASH_BEIGE_EDGE} translucent={false} />
+      <StatusBar barStyle="dark-content" backgroundColor={SPLASH_BEIGE} translucent={false} />
 
       <View pointerEvents="none" style={styles.wash} />
       <View pointerEvents="none" style={styles.vignetteTop} />

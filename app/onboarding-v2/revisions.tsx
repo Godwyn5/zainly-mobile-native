@@ -8,7 +8,7 @@ import { router } from 'expo-router';
 import { hapticLight } from '@/utils/haptics';
 import { readOnboardingDraft } from '@/lib/onboardingDraft';
 
-// ─── palette — identical tokens to Splash/Welcome/Name/Greeting/Overview/
+// ─── palette — identical tokens to Splash/Welcome/Name/Greeting/
 // Session (kept local, not exported from those files, to avoid touching
 // them) ──────────────────────────────────────────────────────────────────
 const SPLASH_BEIGE       = '#F7F2E7';
@@ -77,7 +77,7 @@ export default function OnboardingRevisionsScreen() {
   }
 
   // ── living background — the exact same five independent breathing loops
-  // as Greeting/Overview/Session, so the space itself never feels like it
+  // as Greeting/Session, so the space itself never feels like it
   // changed when this scene arrives. ─────────────────────────────────────
   const washBreath   = useRef(new Animated.Value(0)).current;
   const glowPulse     = useRef(new Animated.Value(0)).current;

@@ -181,8 +181,23 @@ export default function OnboardingLearningModeScreen() {
     // / continueWithRest) if this is an actual mode CHANGE from a previously
     // filled-in branch — knownSurahs (common) is preserved.
     await setLearningModeAndCleanupBranch(selected);
-    await updateOnboardingDraft({ currentStep: 'learning_mode_reassurance' });
-    router.push('/onboarding-v2/learning-mode-reassurance');
+
+    let nextRoute: string;
+    let nextStep: 'known_surahs' | 'start_surah_picker' | 'custom_order_picker';
+
+    if (selected === 'recommended') {
+      nextRoute = '/onboarding-v2/known-surahs';
+      nextStep = 'known_surahs';
+    } else if (selected === 'start_surah') {
+      nextRoute = '/onboarding-v2/start-surah';
+      nextStep = 'start_surah_picker';
+    } else {
+      nextRoute = '/onboarding-v2/custom-order';
+      nextStep = 'custom_order_picker';
+    }
+
+    await updateOnboardingDraft({ currentStep: nextStep });
+    router.push(nextRoute);
   }
 
   if (!draftChecked) {
