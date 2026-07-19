@@ -51,7 +51,9 @@ export const PHASE_NUMBER: Record<OnboardingPhase, number> = {
  *  screens). Used for navigation wiring and phase lookup below. */
 export type OnboardingQuestionnaireRouteId =
   | 'motivation'
+  | 'motivation_reassurance'
   | 'learning_mode'
+  | 'learning_mode_reassurance'
   | 'start_surah_picker'
   | 'custom_order_picker'
   | 'known_surahs'
@@ -64,7 +66,9 @@ export type OnboardingQuestionnaireRouteId =
 
 export const QUESTIONNAIRE_ROUTE_PHASE: Record<OnboardingQuestionnaireRouteId, OnboardingPhase> = {
   motivation: 'intention',
+  motivation_reassurance: 'intention',
   learning_mode: 'parcours',
+  learning_mode_reassurance: 'parcours',
   start_surah_picker: 'niveau',
   custom_order_picker: 'niveau',
   known_surahs: 'niveau',
@@ -93,11 +97,13 @@ export function phaseStepNumber(route: OnboardingQuestionnaireRouteId): number {
  */
 export const QUESTIONNAIRE_BACK_TARGETS: Partial<Record<OnboardingQuestionnaireRouteId, string>> = {
   motivation: '/onboarding-v2/build',
-  learning_mode: '/onboarding-v2/motivation',
-  start_surah_picker: '/onboarding-v2/learning-mode',
-  custom_order_picker: '/onboarding-v2/learning-mode',
+  motivation_reassurance: '/onboarding-v2/motivation',
+  learning_mode: '/onboarding-v2/motivation-reassurance',
+  learning_mode_reassurance: '/onboarding-v2/learning-mode',
+  start_surah_picker: '/onboarding-v2/learning-mode-reassurance',
+  custom_order_picker: '/onboarding-v2/learning-mode-reassurance',
   // known_surahs has no static entry: its "back" depends on the chosen
-  // mode (start_surah_picker / custom_order_picker / learning-mode
+  // mode (start_surah_picker / custom_order_picker / learning-mode-reassurance
   // for 'recommended'). Screens must compute it from
   // draft.learningMode via knownSurahsBackTarget() below, never a constant.
   experience_choice: '/onboarding-v2/known-surahs',
@@ -119,7 +125,7 @@ export const QUESTIONNAIRE_BACK_TARGETS: Partial<Record<OnboardingQuestionnaireR
 export function knownSurahsBackTarget(learningMode: 'recommended' | 'start_surah' | 'custom_order' | null): string {
   if (learningMode === 'start_surah') return '/onboarding-v2/start-surah';
   if (learningMode === 'custom_order') return '/onboarding-v2/custom-order';
-  return '/onboarding-v2/learning-mode';
+  return '/onboarding-v2/learning-mode-reassurance';
 }
 
 /** notifications is the one screen whose "back" target depends on which

@@ -153,8 +153,8 @@ export default function OnboardingMotivationScreen() {
     isSubmittingRef.current = true;
     hapticLight();
 
-    await updateOnboardingDraft({ currentStep: 'learning_mode', motivationReason: selected });
-    router.push('/onboarding-v2/learning-mode');
+    await updateOnboardingDraft({ currentStep: 'motivation_reassurance', motivationReason: selected });
+    router.push('/onboarding-v2/motivation-reassurance');
   }
 
   if (!draftChecked) {
