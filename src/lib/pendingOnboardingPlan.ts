@@ -126,6 +126,19 @@ export async function readPendingOnboardingPlan(): Promise<PendingOnboardingPlan
   }
 }
 
+/**
+ * Read-only convenience check for callers that only need to know WHETHER a
+ * still-valid pending payload exists (e.g. the dashboard deciding whether
+ * an onboarding-v2 finalization may still be in flight) — never exposes
+ * the payload itself. Reuses readPendingOnboardingPlan() as the single
+ * source of TTL/shape validation; never duplicates that logic, and never
+ * throws (readPendingOnboardingPlan() already swallows every error case).
+ */
+export async function hasValidPendingOnboardingPlan(): Promise<boolean> {
+  const pending = await readPendingOnboardingPlan();
+  return pending !== null;
+}
+
 /** Removes the pending payload. Never throws. Safe to call even if absent. */
 export async function clearPendingOnboardingPlan(): Promise<void> {
   try {

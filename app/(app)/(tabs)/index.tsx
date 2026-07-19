@@ -1,5 +1,5 @@
 import { useEffect, useRef, useMemo, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, Animated, Easing, Pressable, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, Animated, Easing, Pressable, Dimensions, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
@@ -8,9 +8,12 @@ import { useZainlyPlusAccess } from '@/hooks/useZainlyPlusAccess';
 import { usePlan } from '@/hooks/usePlan';
 import { useProgress } from '@/hooks/useProgress';
 import { useDueReviews } from '@/hooks/useDueReviews';
+import { usePendingOnboardingPlanStatus } from '@/hooks/usePendingOnboardingPlanStatus';
+import { useOnboardingV2AuthFinalize } from '@/hooks/useOnboardingV2AuthFinalize';
 import { getTodayProgramme } from '@/core/dailyPlan';
 import { Screen } from '@/components/ui/Screen';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { SecondaryButton } from '@/components/ui/SecondaryButton';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
 import { hapticLight } from '@/utils/haptics';
@@ -267,6 +270,53 @@ export default function TodayScreen() {
   const hasError  = plan.isError   || progress.isError   || reviews.isError;
   const hasNoPlan = !plan.data || !progress.data;
 
+  // ── onboarding-v2 finalization guard ──────────────────────────────────
+  // AuthLayout (app/(auth)/_layout.tsx) redirects into this dashboard the
+  // instant a Supabase session exists — which can happen BEFORE
+  // finalizeOnboardingV2Plan() (src/lib/onboardingFinalize.ts) has finished
+  // persisting the plan/progress rows. Re-checked whenever isFocused or the
+  // plan/progress queries actually refetch (e.g. the invalidateQueries()
+  // triggered by a successful finalize in useOnboardingV2AuthFinalize.ts) —
+  // never a timer/poll.
+  const pendingOnboardingV2 = usePendingOnboardingPlanStatus([
+    isFocused, plan.dataUpdatedAt, progress.dataUpdatedAt,
+  ]);
+  // Shared finalization hook — exposes declarative status and retry/restore
+  // actions. The dashboard auto-triggers it once when a valid pending
+  // payload exists and no plan is present yet. Signup/login already call
+  // runFinalize themselves; this is purely for recovery when the dashboard
+  // mounts before that flow completes or after a restart.
+  const finalize = useOnboardingV2AuthFinalize();
+  const autoAttemptRef = useRef(false); // Ensure exactly one auto-attempt per session
+
+  // Auto-trigger finalization once when: authed, no plan, valid pending,
+  // not already running, and we haven't already attempted this session.
+  useEffect(() => {
+    if (
+      userId &&
+      hasNoPlan &&
+      pendingOnboardingV2.hasPending &&
+      finalize.status === 'idle' &&
+      !autoAttemptRef.current
+    ) {
+      autoAttemptRef.current = true;
+      finalize.runFinalize(userId);
+    }
+  }, [userId, hasNoPlan, pendingOnboardingV2.hasPending, finalize.status, finalize.runFinalize]);
+
+  // True while there is no plan yet AND either the pending-payload check
+  // hasn't resolved, or it found a still-valid one, OR the finalize hook
+  // is actively running/errored from a pending payload — in all these cases
+  // the legacy "Créer mon programme" CTA must never render.
+  const isFinalizingOnboardingV2 =
+    hasNoPlan &&
+    (pendingOnboardingV2.isLoading ||
+      pendingOnboardingV2.hasPending ||
+      finalize.status === 'running' ||
+      finalize.status === 'error' ||
+      finalize.status === 'premium_sync_failed' ||
+      finalize.status === 'premium_entitlement_missing');
+
   // ── animation refs ──
   const mountedRef   = useRef(true);
   const heroAnim     = useRef(new Animated.Value(0)).current;
@@ -447,7 +497,98 @@ export default function TodayScreen() {
     );
   }
 
-  // ── no plan state ──
+  // ── onboarding-v2 finalization states — never the legacy CTA here ──
+  if (isFinalizingOnboardingV2) {
+    // Running state
+    if (finalize.status === 'running') {
+      return (
+        <SafeAreaView style={s.centered}>
+          <View style={s.stateCard}>
+            <ActivityIndicator color={colors.primary} style={s.finalizingSpinner} />
+            <EmptyState
+              title="Finalisation de ton programme"
+              description="Nous préparons ton espace avant de commencer ton Hifz."
+            />
+          </View>
+        </SafeAreaView>
+      );
+    }
+
+    // Standard error (persist/network)
+    if (finalize.status === 'error') {
+      return (
+        <SafeAreaView style={s.centered}>
+          <View style={s.stateCard}>
+            <EmptyState
+              title="Impossible de finaliser ton programme"
+              description="Ton programme n'a pas été perdu. Vérifie ta connexion puis réessaie."
+              buttonLabel="Réessayer"
+              onPress={finalize.retryFinalize}
+            />
+          </View>
+        </SafeAreaView>
+      );
+    }
+
+    // Premium sync failed
+    if (finalize.status === 'premium_sync_failed') {
+      return (
+        <SafeAreaView style={s.centered}>
+          <View style={s.stateCard}>
+            <EmptyState
+              title="Nous n'avons pas pu vérifier ton accès Zainly+"
+              description="Ton programme est conservé. Réessaie lorsque ta connexion est stable."
+              buttonLabel="Réessayer"
+              onPress={finalize.retryFinalize}
+            />
+          </View>
+        </SafeAreaView>
+      );
+    }
+
+    // Premium entitlement missing
+    if (finalize.status === 'premium_entitlement_missing') {
+      return (
+        <SafeAreaView style={s.centered}>
+          <View style={s.stateCard}>
+            <EmptyState
+              title="Nous n'avons pas encore pu vérifier ton accès premium"
+              description="Tu peux réessayer ou restaurer ton achat."
+            />
+            <View style={s.finalizingActions}>
+              <SecondaryButton
+                label="Réessayer"
+                onPress={finalize.retryFinalize}
+                disabled={finalize.isResolvingPremiumGate}
+                style={s.finalizingActionBtn}
+              />
+              <SecondaryButton
+                label="Restaurer mon achat"
+                onPress={finalize.restorePremiumPurchase}
+                disabled={finalize.isResolvingPremiumGate}
+                style={s.finalizingActionBtn}
+              />
+            </View>
+          </View>
+        </SafeAreaView>
+      );
+    }
+
+    // Fallback (pending payload detected but hook idle — shouldn't happen after auto-trigger)
+    return (
+      <SafeAreaView style={s.centered}>
+        <View style={s.stateCard}>
+          <ActivityIndicator color={colors.primary} style={s.finalizingSpinner} />
+          <EmptyState
+            title="Finalisation de ton programme"
+            description="Nous préparons ton espace avant de commencer ton Hifz."
+          />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ── no plan state — genuine legacy case only (no onboarding-v2 pending) ──
   if (hasNoPlan) {
     return (
       <SafeAreaView style={s.centered}>
@@ -988,6 +1129,9 @@ const s = StyleSheet.create({
     shadowColor: colors.primary, shadowOpacity: 0.06, shadowRadius: 12,
     shadowOffset: { width: 0, height: 3 }, elevation: 2,
   },
+  finalizingSpinner: { marginBottom: spacing.sm },
+  finalizingActions: { width: '100%', gap: 12, marginTop: spacing.md },
+  finalizingActionBtn: { width: '100%' },
 
   // ── background wash zones ──
   washTop: {

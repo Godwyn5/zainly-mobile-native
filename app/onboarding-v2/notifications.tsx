@@ -37,16 +37,19 @@ function ambientBreath(value: Animated.Value, halfDuration: number, delay = 0) {
 
 // ─── notifications — the OS permission prompt must only ever fire from a
 // direct tap on "Activer les rappels", never on mount. If permission is
-// already granted, this screen never even renders — it silently continues
-// the flow (mission requirement). Uses the real, already-existing
-// expo-notifications wrapper (src/notifications/scheduler.ts) — no new
-// notification system, no push token, no scheduling here (scheduling needs
-// a real userId and only happens post-signup, from onboardingFinalize.ts).
+// already granted, this screen still renders — with a short confirmation
+// version (no system prompt, no Activer/Plus tard buttons) so the user
+// always sees this step instead of being silently skipped. Uses the real,
+// already-existing expo-notifications wrapper (src/notifications/scheduler.ts)
+// — no new notification system, no push token, no scheduling here
+// (scheduling needs a real userId and only happens post-signup, from
+// onboardingFinalize.ts).
 export default function OnboardingNotificationsScreen() {
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
   const [experienceChoice, setExperienceChoice] = useState<ExperienceChoice | null>(null);
+  const [alreadyGranted, setAlreadyGranted] = useState(false);
   const mountedRef = useRef(true);
   const isSubmittingRef = useRef(false);
 
@@ -70,14 +73,7 @@ export default function OnboardingNotificationsScreen() {
 
       const status = await getNotificationPermissionStatus();
       if (cancelled) return;
-      if (status === 'granted') {
-        await updateOnboardingDraft({
-          notificationPreference: 'already_granted',
-          currentStep: 'discovery_source',
-        });
-        if (!cancelled) router.replace('/onboarding-v2/discovery-source');
-        return;
-      }
+      setAlreadyGranted(status === 'granted');
       setReady(true);
     })();
     return () => { cancelled = true; };
@@ -134,6 +130,21 @@ export default function OnboardingNotificationsScreen() {
     }
   }
 
+  async function handleContinueAlreadyGranted() {
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
+    hapticLight();
+    try {
+      await updateOnboardingDraft({
+        notificationPreference: 'already_granted',
+        currentStep: 'discovery_source',
+      });
+      router.push('/onboarding-v2/discovery-source');
+    } finally {
+      isSubmittingRef.current = false;
+    }
+  }
+
   async function handleLater() {
     if (isSubmittingRef.current) return;
     isSubmittingRef.current = true;
@@ -173,11 +184,15 @@ export default function OnboardingNotificationsScreen() {
             <Animated.Text
               style={[styles.title, { opacity: titleOpacity, transform: [{ translateY: titleY }] }]}
             >
-              Ne laisse pas ton Hifz dépendre de ta motivation.
+              {alreadyGranted
+                ? 'Tes rappels sont déjà activés.'
+                : 'Ne laisse pas ton Hifz dépendre de ta motivation.'}
             </Animated.Text>
 
             <Animated.Text style={[styles.body, { opacity: bodyOpacity }]}>
-              Zainly peut te rappeler ta séance au bon moment pour t’aider à rester régulier.
+              {alreadyGranted
+                ? 'Zainly pourra te rappeler ta séance au bon moment pour t’aider à rester régulier.'
+                : 'Zainly peut te rappeler ta séance au bon moment pour t’aider à rester régulier.'}
             </Animated.Text>
 
             <Animated.View style={[styles.card, { opacity: cardOpacity, transform: [{ translateY: cardY }] }]}>
@@ -188,21 +203,30 @@ export default function OnboardingNotificationsScreen() {
           </View>
 
           <View style={styles.actions}>
-            <OnboardingBottomAction
-              label={busy ? 'Activation…' : 'Activer les rappels'}
-              disabled={busy}
-              onPress={handleActivate}
-            />
-            <TouchableOpacity
-              onPress={handleLater}
-              disabled={busy}
-              style={styles.laterBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Plus tard"
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Text style={styles.laterText}>Plus tard</Text>
-            </TouchableOpacity>
+            {alreadyGranted ? (
+              <OnboardingBottomAction
+                label="Continuer"
+                onPress={handleContinueAlreadyGranted}
+              />
+            ) : (
+              <>
+                <OnboardingBottomAction
+                  label={busy ? 'Activation…' : 'Activer les rappels'}
+                  disabled={busy}
+                  onPress={handleActivate}
+                />
+                <TouchableOpacity
+                  onPress={handleLater}
+                  disabled={busy}
+                  style={styles.laterBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Plus tard"
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={styles.laterText}>Plus tard</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
 
         </View>
