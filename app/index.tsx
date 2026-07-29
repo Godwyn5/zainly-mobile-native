@@ -19,8 +19,11 @@ import {
 } from '@expo-google-fonts/cinzel';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { hapticLight, hapticMedium } from '@/utils/haptics';
+import { hasValidPendingOnboardingPlan } from '@/lib/pendingOnboardingPlan';
+import { planQueryOptions, progressQueryOptions, dueReviewsQueryOptions, profileQueryOptions } from '@/queries';
 
 // ─── gold accent tokens — shared between splash & welcome ───────────────────
 const GOLD         = '#C6A15B';
@@ -52,9 +55,14 @@ const HADITH_SOURCE = 'Sahih al-Bukhari 5027';
 type Phase = 'splash' | 'welcome';
 
 export default function EntryScreen() {
-  const { session, ready } = useAuthStore();
+  const { session, ready, user } = useAuthStore();
+  const userId = user?.id;
+  const queryClient = useQueryClient();
   const [phase, setPhase] = useState<Phase>('splash');
-  const [animDone, setAnimDone] = useState(false);
+  const [minDurationElapsed, setMinDurationElapsed] = useState(false);
+  const [warmupReady, setWarmupReady] = useState(false);
+  const [hasPendingOnboarding, setHasPendingOnboarding] = useState(false);
+  const navigatedRef = useRef(false);
 
   const [fontsLoaded] = useFonts({
     CormorantGaramond_300Light,
@@ -67,18 +75,7 @@ export default function EntryScreen() {
   });
 
   // ─── splash animation values ─────────────────────────────────────────────
-  const bgOpacity      = useRef(new Animated.Value(0)).current;
-  const patternOpacity = useRef(new Animated.Value(0)).current;
-  const glowOpacity    = useRef(new Animated.Value(0)).current;
-  const glowScale      = useRef(new Animated.Value(0.7)).current;
-  const arabicReveal   = useRef(new Animated.Value(0)).current;
-  const sweepX         = useRef(new Animated.Value(0)).current;
-  const breatheLoop    = useRef<Animated.CompositeAnimation | null>(null);
-  const lineOpacity    = useRef(new Animated.Value(0)).current;
-  const brandOpacity   = useRef(new Animated.Value(0)).current;
-  const hadithOpacity  = useRef(new Animated.Value(0)).current;
-  const hadithY        = useRef(new Animated.Value(10)).current;
-  const sourceOpacity  = useRef(new Animated.Value(0)).current;
+  // Removed: splash is now static, no animations
 
   // ─── welcome animation values — continuation of the splash choreography ──
   const wLogoOpacity     = useRef(new Animated.Value(0)).current;
@@ -94,103 +91,80 @@ export default function EntryScreen() {
   const wHadithY         = useRef(new Animated.Value(8)).current;
   const wSourceOpacity   = useRef(new Animated.Value(0)).current;
 
-  // ─── Splash sequence (runs once fonts are ready) ─────────────────────────
-  // Overlapping choreography, not a strict sequence: the background + faint
-  // geometric texture settle in first, a discreet golden glow blooms behind
-  // the mark and progressively "reveals" it (opacity + colour interpolation —
-  // no fade, no zoom on the glyph itself), the mark holds alone for a beat,
-  // then the gold filet, the Latin wordmark and finally the hadith arrive —
-  // each starting before the previous one has fully settled. Total elapsed
-  // time before setAnimDone stays close to the previous sequential timing.
+  // ─── Splash sequence removed — now static ─────────────────────────────
+
+  // ─── Check for pending Onboarding V2 payload ───────────────────────────
+  useEffect(() => {
+    if (!ready) return;
+
+    hasValidPendingOnboardingPlan()
+      .then((pending) => {
+        setHasPendingOnboarding(pending);
+      })
+      .catch(() => {
+        setHasPendingOnboarding(false);
+      });
+  }, [ready]);
+
+  // ─── Dashboard warm-up (prefetch) for authenticated users ─────────────────
+  useEffect(() => {
+    if (!fontsLoaded || !ready || !userId || hasPendingOnboarding) {
+      setWarmupReady(true);
+      return;
+    }
+
+    const mountedRef = { current: true };
+
+    Promise.all([
+      queryClient.prefetchQuery(planQueryOptions(userId)),
+      queryClient.prefetchQuery(progressQueryOptions(userId)),
+      queryClient.prefetchQuery(dueReviewsQueryOptions(userId)),
+      queryClient.prefetchQuery(profileQueryOptions(userId)),
+    ])
+      .then(() => {
+        if (mountedRef.current) setWarmupReady(true);
+      })
+      .catch(() => {
+        if (mountedRef.current) setWarmupReady(true);
+      });
+
+    return () => { mountedRef.current = false; };
+  }, [fontsLoaded, ready, userId, hasPendingOnboarding, queryClient]);
+
+  // ─── Minimum display duration timer (1200ms) ─────────────────────────────
   useEffect(() => {
     if (!fontsLoaded) return;
 
-    Animated.parallel([
-      // 1. background wash + faint geometric texture
-      Animated.timing(bgOpacity, {
-        toValue: 1, duration: 420, delay: 0,
-        easing: Easing.out(Easing.quad), useNativeDriver: true,
-      }),
-      Animated.timing(patternOpacity, {
-        toValue: 1, duration: 500, delay: 60,
-        easing: Easing.out(Easing.quad), useNativeDriver: true,
-      }),
-      // 2. discreet golden glow blooms behind the mark
-      Animated.timing(glowOpacity, {
-        toValue: 1, duration: 600, delay: 150,
-        easing: Easing.out(Easing.quad), useNativeDriver: true,
-      }),
-      Animated.timing(glowScale, {
-        toValue: 1, duration: 600, delay: 150,
-        easing: Easing.out(Easing.cubic), useNativeDriver: true,
-      }),
-      // 3. the glow reveals the arabic mark — opacity + colour only
-      Animated.timing(arabicReveal, {
-        toValue: 1, duration: 600, delay: 300,
-        easing: Easing.out(Easing.quad), useNativeDriver: false,
-      }),
-      Animated.timing(sweepX, {
-        toValue: 1, duration: 700, delay: 300,
-        easing: Easing.out(Easing.quad), useNativeDriver: true,
-      }),
-      // 4. mark holds alone briefly, then 5. gold filet draws in
-      Animated.timing(lineOpacity, {
-        toValue: 1, duration: 250, delay: 1250,
-        easing: Easing.out(Easing.quad), useNativeDriver: true,
-      }),
-      // 6. "Zainly" wordmark settles in
-      Animated.timing(brandOpacity, {
-        toValue: 1, duration: 350, delay: 1450,
-        easing: Easing.out(Easing.quad), useNativeDriver: true,
-      }),
-      // 7. hadith, then its source, last of all
-      Animated.timing(hadithOpacity, {
-        toValue: 1, duration: 480, delay: 1800,
-        easing: Easing.out(Easing.quad), useNativeDriver: true,
-      }),
-      Animated.timing(hadithY, {
-        toValue: 0, duration: 480, delay: 1800,
-        easing: Easing.out(Easing.cubic), useNativeDriver: true,
-      }),
-      Animated.timing(sourceOpacity, {
-        toValue: 1, duration: 320, delay: 1980,
-        easing: Easing.out(Easing.quad), useNativeDriver: true,
-      }),
-    ]).start(() => {
-      setAnimDone(true);
-      // very low-amplitude breathing loop for the halo — stopped once the
-      // splash phase is left (see cleanup effect below).
-      breatheLoop.current = Animated.loop(
-        Animated.sequence([
-          Animated.timing(glowScale, {
-            toValue: 1.04, duration: 2600,
-            easing: Easing.inOut(Easing.sin), useNativeDriver: true,
-          }),
-          Animated.timing(glowScale, {
-            toValue: 1.0, duration: 2600,
-            easing: Easing.inOut(Easing.sin), useNativeDriver: true,
-          }),
-        ]),
-      );
-      breatheLoop.current.start();
-    });
+    const timer = setTimeout(() => {
+      setMinDurationElapsed(true);
+    }, 1200);
+
+    return () => clearTimeout(timer);
   }, [fontsLoaded]);
 
-  // stop the ambient breathing loop once the splash phase is left — pure
-  // animation hygiene, does not affect the redirect/session gate below.
+  // ─── Maximum wait timeout (3000ms total from fonts loaded) ───────────────────
   useEffect(() => {
-    if (phase !== 'splash') breatheLoop.current?.stop();
-  }, [phase]);
+    if (!fontsLoaded) return;
 
-  // ─── Gate: wait for both animDone + auth ready ───────────────────────────
+    const timer = setTimeout(() => {
+      setWarmupReady(true);
+    }, 3000);
+
+    return () => clearTimeout(timer);
+  }, [fontsLoaded]);
+
+  // ─── Gate: wait for fonts + auth ready + minimum duration + warm-up/timeout ───
   useEffect(() => {
-    if (!animDone || !ready) return;
+    if (!fontsLoaded || !ready || !minDurationElapsed || !warmupReady) return;
+    if (navigatedRef.current) return;
+
     if (session) {
+      navigatedRef.current = true;
       router.replace('/(app)/(tabs)');
       return;
     }
     setPhase('welcome');
-  }, [animDone, ready, session]);
+  }, [fontsLoaded, ready, minDurationElapsed, warmupReady, session]);
 
   // ─── Welcome sequence — continues the splash's choreography, not a new one ─
   // The mark reappears instantly at the top (no re-fade — it never really left)
@@ -270,64 +244,22 @@ export default function EntryScreen() {
 
   // ─── SPLASH ──────────────────────────────────────────────────────────────
   if (phase === 'splash') {
-    // derived interpolations — computed only for this branch, not hooks
-    const arabicOpacity = arabicReveal.interpolate({ inputRange: [0, 1], outputRange: [0.05, 1] });
-    const arabicColor   = arabicReveal.interpolate({ inputRange: [0, 1], outputRange: [SPLASH_GOLD_DIM, GOLD] });
-    const sweepTranslate = sweepX.interpolate({ inputRange: [0, 1], outputRange: [-130, 130] });
-    const brandY         = brandOpacity.interpolate({ inputRange: [0, 1], outputRange: [6, 0] });
-
     return (
       <View style={styles.splashRoot}>
         <StatusBar barStyle="dark-content" backgroundColor={SPLASH_BEIGE_EDGE} translucent={false} />
 
-        {/* ── background depth: soft radial wash + faint vignette ── */}
-        <Animated.View pointerEvents="none" style={[styles.spWash, { opacity: bgOpacity }]} />
-        <Animated.View pointerEvents="none" style={[styles.spVignetteTop, { opacity: bgOpacity }]} />
-        <Animated.View pointerEvents="none" style={[styles.spVignetteBottom, { opacity: bgOpacity }]} />
+        {/* ── Deep green design elements ── */}
+        <View style={styles.spGreenFormTop} />
+        <View style={styles.spGreenFormBot} />
+        <View style={styles.spGoldAccent} />
 
-        {/* ── barely-felt geometric corner motifs ── */}
-        <Animated.View pointerEvents="none" style={[styles.spPattern, { opacity: patternOpacity }]}>
-          <View style={styles.spMotifLineA} />
-          <View style={styles.spMotifLineB} />
-          <View style={styles.spMotifLineC} />
-          <View style={styles.spMotifLineD} />
-        </Animated.View>
-
+        {/* ── Centered logo lockup ── */}
         <View style={styles.splashCenter}>
-
-          {/* logo lockup */}
           <View style={styles.lockup}>
-            {/* breathing golden halo behind the mark */}
-            <Animated.View
-              pointerEvents="none"
-              style={[styles.spHalo, { opacity: glowOpacity, transform: [{ scale: glowScale }] }]}
-            />
-            {/* soft light sweep — the glow "revealing" the engraving */}
-            <Animated.View
-              pointerEvents="none"
-              style={[styles.spSweep, { opacity: glowOpacity, transform: [{ translateX: sweepTranslate }] }]}
-            />
-
-            <Animated.Text style={[styles.splashArabic, { opacity: arabicOpacity, color: arabicColor }]}>
-              زينلي
-            </Animated.Text>
-            <Animated.View style={[styles.goldLine, { opacity: lineOpacity, transform: [{ scaleX: lineOpacity }] }]} />
-            <Animated.Text style={[styles.splashBrand, { opacity: brandOpacity, transform: [{ translateY: brandY }] }]}>
-              Zainly
-            </Animated.Text>
+            <Text style={styles.splashArabic}>زينلي</Text>
+            <View style={styles.goldLine} />
+            <Text style={styles.splashBrand}>ZAINLY</Text>
           </View>
-
-          {/* hadith — quieter, discreet, last to arrive */}
-          <Animated.View style={[
-            styles.spHadithBlock,
-            { opacity: hadithOpacity, transform: [{ translateY: hadithY }] },
-          ]}>
-            <Text style={styles.spHadithText}>{HADITH}</Text>
-            <Animated.Text style={[styles.spHadithSource, { opacity: sourceOpacity }]}>
-              {HADITH_SOURCE}
-            </Animated.Text>
-          </Animated.View>
-
         </View>
       </View>
     );
@@ -435,29 +367,29 @@ const styles = StyleSheet.create({
   // ── shared logo lockup ─────────────────────────────────────────────────────
   lockup: {
     alignItems: 'center',
-    marginBottom: 64,
   },
   splashArabic: {
     fontFamily: F_ARABIC,
-    fontSize: 68,
+    fontSize: 75,
     color: GOLD,
     includeFontPadding: false,
-    lineHeight: 76,
+    lineHeight: 86,
   },
   goldLine: {
-    width: 36,
+    width: 37,
     height: 1.5,
     backgroundColor: GOLD,
     borderRadius: 1,
     marginTop: 6,
-    marginBottom: 10,
-    opacity: 0.75,
+    marginBottom: 9,
+    opacity: 0.8,
   },
   splashBrand: {
-    fontFamily: F_BRAND,
-    fontSize: 32,
+    fontFamily: F_BRAND_SB,
+    fontSize: 33,
     color: SPLASH_GREEN,
-    letterSpacing: 4,
+    letterSpacing: 4.5,
+    fontWeight: '600',
   },
 
   // ── splash root + background depth (beige dominant / green secondary / gold accent) ──
@@ -465,6 +397,39 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: SPLASH_BEIGE,
   },
+
+  // ── deep green design elements ───────────────────────────────────────────────
+  spGreenFormTop: {
+    position: 'absolute',
+    top: -180,
+    right: -120,
+    width: 400,
+    height: 400,
+    borderRadius: 200,
+    backgroundColor: SPLASH_GREEN,
+  },
+  spGreenFormBot: {
+    position: 'absolute',
+    bottom: -140,
+    left: -100,
+    width: 320,
+    height: 320,
+    borderRadius: 160,
+    backgroundColor: SPLASH_GREEN,
+    opacity: 0.85,
+  },
+  spGoldAccent: {
+    position: 'absolute',
+    top: 120,
+    left: -40,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: GOLD,
+    opacity: 0.12,
+  },
+
+  // ── welcome background elements (shared with old splash design) ───────────────
   spWash: {
     position: 'absolute',
     top: -140, left: -90, right: -90,
@@ -484,8 +449,6 @@ const styles = StyleSheet.create({
     height: 110,
     backgroundColor: SPLASH_GREEN_FAINT,
   },
-
-  // ── barely-felt geometric corner motifs — texture, not pattern ─────────────
   spPattern: {
     ...StyleSheet.absoluteFillObject,
   },
@@ -508,49 +471,6 @@ const styles = StyleSheet.create({
     position: 'absolute', bottom: 96, right: 30,
     width: 46, height: 1, backgroundColor: SPLASH_GREEN,
     opacity: 0.08, transform: [{ rotate: '45deg' }],
-  },
-
-  // ── golden halo + light sweep behind the arabic mark ───────────────────────
-  spHalo: {
-    position: 'absolute',
-    top: '50%', left: '50%',
-    width: 260, height: 260,
-    marginTop: -130, marginLeft: -130,
-    borderRadius: 130,
-    backgroundColor: SPLASH_GOLD_GLOW_SOFT,
-  },
-  spSweep: {
-    position: 'absolute',
-    top: -12, bottom: -12,
-    width: 60,
-    backgroundColor: 'rgba(255,250,235,0.18)',
-    transform: [{ rotate: '16deg' }],
-  },
-
-  // ── splash-only hadith treatment — quieter, more discreet than welcome's ───
-  spHadithBlock: {
-    alignItems: 'center',
-    paddingHorizontal: 22,
-    marginTop: 6,
-  },
-  spHadithText: {
-    fontFamily: F_DISPLAY_LIGHT,
-    fontSize: 14,
-    color: SPLASH_SOURCE_INK,
-    opacity: 0.92,
-    textAlign: 'center',
-    lineHeight: 22,
-    letterSpacing: 0.4,
-    fontStyle: 'italic',
-  },
-  spHadithSource: {
-    fontFamily: F_ARABIC_R,
-    fontSize: 10,
-    color: SPLASH_HADITH_INK,
-    opacity: 0.72,
-    marginTop: 8,
-    letterSpacing: 0.8,
-    textAlign: 'center',
   },
 
   // ── welcome root — same beige backdrop as the splash, full-bleed ──────────
