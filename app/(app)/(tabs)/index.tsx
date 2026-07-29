@@ -322,10 +322,6 @@ export default function TodayScreen() {
   const heroAnim     = useRef(new Animated.Value(0)).current;
   const card1Anim    = useRef(new Animated.Value(0)).current;
   const card2Anim    = useRef(new Animated.Value(0)).current;
-  const card3Anim    = useRef(new Animated.Value(0)).current;
-  const card4Anim    = useRef(new Animated.Value(0)).current;
-  const card5Anim    = useRef(new Animated.Value(0)).current;
-  const statsAnim    = useRef(new Animated.Value(0)).current;
   const goldLineAnim = useRef(new Animated.Value(0)).current;
   const ctaGlowAnim  = useRef(new Animated.Value(0.25)).current;
   const ctaShineAnim = useRef(new Animated.Value(-1)).current;
@@ -353,10 +349,6 @@ export default function TodayScreen() {
       Animated.timing(heroAnim,  { toValue: 1, duration: 520, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       Animated.timing(card1Anim, { toValue: 1, duration: 460, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       Animated.timing(card2Anim, { toValue: 1, duration: 430, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(card3Anim, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(card4Anim, { toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(statsAnim, { toValue: 1, duration: 360, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(card5Anim, { toValue: 1, duration: 340, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
     ]);
     seq.start();
 
@@ -604,17 +596,6 @@ export default function TodayScreen() {
     );
   }
 
-  // ── "Zainly prépare la suite" text ──
-  const suiteText = (() => {
-    if (prog.sessionFinishesSurah && prog.nextSurahName)
-      return `Après cette sourate, Zainly te guidera vers ${prog.nextSurahName}.`;
-    if (prog.remainingAfterSession > 0)
-      return `Après aujourd'hui, il te restera ${prog.remainingAfterSession} ayat${prog.remainingAfterSession > 1 ? 's' : ''} dans ${prog.surahName ?? 'cette sourate'}.`;
-    if (!prog.nextSurahName)
-      return "Ton ordre actuel arrive à sa fin. Zainly gardera tes révisions organisées.";
-    return `Zainly te préparera la prochaine étape avec ${prog.nextSurahName}.`;
-  });
-
   // ── derived display values ──
   const memLabel = (() => {
     if (prog.surahExhausted && prog.nextSurahName) return prog.nextSurahName;
@@ -624,31 +605,6 @@ export default function TodayScreen() {
         : `${prog.surahName} — ayats ${prog.memStart} à ${prog.memEnd}`;
     }
     return prog.surahName ?? '—';
-  })();
-
-  const coachText = (() => {
-    if (prog.dueReviewCount >= 6)
-      return "Aujourd'hui, la priorité est la consolidation. Ajouter du nouveau maintenant risquerait de fragiliser ton Hifz.";
-    if (prog.dueReviewCount >= 2)
-      return "Ta charge est légère aujourd'hui. On révise d'abord, puis tu pourras avancer.";
-    if (prog.dueReviewCount === 1)
-      return "Avant d'ajouter du nouveau, Zainly protège ce que tu as déjà mémorisé.";
-    if (prog.sessionDoneToday)
-      return "Tu as terminé ta session du jour. Reviens demain pour continuer avec régularité.";
-    return "Aujourd'hui, ton Hifz est à jour. Concentre-toi sur ta nouvelle mémorisation.";
-  })();
-
-  const nextStepText = (() => {
-    if (prog.surahExhausted) {
-      return prog.nextSurahName
-        ? `Tu passes bientôt à ${prog.nextSurahName}.`
-        : "Ton ordre actuel est terminé. Zainly préparera la suite.";
-    }
-    if (prog.sessionFinishesSurah && prog.nextSurahName)
-      return `Tu peux terminer cette sourate aujourd'hui. Prochaine : ${prog.nextSurahName}.`;
-    if (prog.remainingAfterSession > 0)
-      return `Il te restera ${prog.remainingAfterSession} ayat${prog.remainingAfterSession > 1 ? 's' : ''} dans ${prog.surahName ?? 'cette sourate'}.`;
-    return "Zainly préparera la suite de ton programme.";
   })();
 
   const durLabel  = estimatedDuration(prog.todayAyatCount, prog.dueReviewCount > 0);
@@ -1020,90 +976,6 @@ export default function TodayScreen() {
         </Animated.View>
       )}
 
-      {/* section connector strip */}
-      <View style={s.sectionConnector} pointerEvents="none" />
-
-      {/* ══ 4. COACH CARD ════════════════════════════════════════ */}
-      <Animated.View style={fadeStyle(card3Anim)}>
-        <View style={s.coachCard}>
-          <View style={s.coachBorder} />
-          <View style={s.coachInner}>
-            <View style={s.coachTitleRow}>
-              <Text style={s.coachQuoteMark}>“</Text>
-              <Text style={s.cardEyebrow}>POURQUOI AUJOURD'HUI ?</Text>
-            </View>
-            <Text style={s.coachText}>{coachText}</Text>
-            <View style={s.coachFooterRow}>
-              <View style={s.coachFooterLine} />
-              <Text style={s.coachFooterText}>Zainly ajuste ton effort pour protéger ta régularité.</Text>
-            </View>
-          </View>
-        </View>
-      </Animated.View>
-
-      {/* gold ornament between coach and stats */}
-      <View style={s.sectionOrnament} pointerEvents="none">
-        <View style={s.ornDot} />
-        <View style={s.ornLineShort} />
-        <View style={s.ornDot} />
-        <View style={s.ornLineShort} />
-        <View style={s.ornDot} />
-      </View>
-
-      {/* ══ 5. STATS ROW ════════════════════════════════════════ */}
-      {/* gold connector line behind stats */}
-      <View style={s.statsConnector} pointerEvents="none" />
-      <Animated.View style={[s.statsRow, fadeStyle(statsAnim)]}>
-        <View style={s.statCard}>
-          <View style={s.statTopDot} />
-          <Text style={s.statValue}>{prog.totalMemorized}</Text>
-          <Text style={s.statLabel}>{"Ayats\nmémorisés"}</Text>
-        </View>
-        <View style={s.statCard}>
-          <View style={s.statTopDot} />
-          <Text style={s.statValue}>{prog.streak}</Text>
-          <Text style={s.statLabel}>{"Jours\nde série"}</Text>
-        </View>
-        <View style={[s.statCard, s.statCardLast]}>
-          <View style={s.statTopDot} />
-          <Text style={s.statValue}>{prog.ayahPerDay}</Text>
-          <Text style={s.statLabel}>{"Ayats\npar jour"}</Text>
-        </View>
-      </Animated.View>
-
-      {/* ══ 6. NEXT STEP CARD ════════════════════════════════════ */}
-      <Animated.View style={fadeStyle(card4Anim)}>
-        <View style={s.nextCard}>
-          <View style={s.nextCardAccent} />
-          <View style={s.nextCardBody}>
-            <View style={s.nextChip}>
-              <View style={s.nextChipDot} />
-              <Text style={s.nextChipText}>Après ta session</Text>
-            </View>
-            <Text style={s.nextText}>{nextStepText}</Text>
-          </View>
-        </View>
-      </Animated.View>
-
-      {/* ══ 7. ZAINLY PRÉPARE LA SUITE ═══════════════════════════ */}
-      <Animated.View style={fadeStyle(card5Anim)}>
-        <View style={s.suiteCard}>
-          <View style={s.suiteHeader}>
-            <View style={s.suiteDot} />
-            <Text style={s.suiteEyebrow}>ZAINLY PRÉPARE LA SUITE</Text>
-          </View>
-          <Text style={s.suiteText}>{suiteText()}</Text>
-          <View style={s.suiteChips}>
-            <View style={s.suiteChip}>
-              <Text style={s.suiteChipText}>✓ Révisions suivies</Text>
-            </View>
-            <View style={s.suiteChip}>
-              <Text style={s.suiteChipText}>✓ Rythme adapté</Text>
-            </View>
-          </View>
-        </View>
-      </Animated.View>
-
     </Screen>
   );
 }
@@ -1161,11 +1033,6 @@ const s = StyleSheet.create({
   sectionConnector: {
     height: 1, marginHorizontal: spacing.lg, marginBottom: spacing.md,
     backgroundColor: 'rgba(184,150,46,0.18)',
-  },
-  statsConnector: {
-    position: 'absolute', height: 1,
-    left: spacing.lg * 2, right: spacing.lg * 2,
-    backgroundColor: 'rgba(184,150,46,0.25)', zIndex: 0,
   },
   // ── background blobs & ornaments ──
   blobTopRight: {
@@ -1509,111 +1376,4 @@ const s = StyleSheet.create({
   progressFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
   progressFraction: { fontSize: 13, fontWeight: '700', color: colors.primary },
   progressHelper:   { fontSize: 12, color: colors.muted, lineHeight: 17, flex: 1, textAlign: 'right', marginLeft: 8 },
-
-  // ── coach card ──
-  coachFooterRow: { flexDirection: 'row', alignItems: 'center', marginTop: spacing.sm },
-  coachFooterLine: { width: 18, height: 1, backgroundColor: colors.gold, opacity: 0.6, marginRight: 8 },
-  coachFooterText: { fontSize: 11, color: colors.muted, fontStyle: 'italic', flex: 1, lineHeight: 16 },
-
-  coachCard: {
-    flexDirection: 'row',
-    backgroundColor: '#FBF6E9',
-    borderRadius: 22, borderWidth: 1.5, borderColor: 'rgba(184,150,46,0.25)',
-    marginBottom: spacing.md, overflow: 'hidden',
-    shadowColor: colors.gold, shadowOpacity: 0.12,
-    shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 2,
-  },
-  coachBorder: { width: 5, backgroundColor: colors.gold, borderTopLeftRadius: 22, borderBottomLeftRadius: 22 },
-  coachInner:  { flex: 1, padding: spacing.lg },
-  coachTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 5 },
-  coachQuoteMark: { fontSize: 26, color: colors.gold, lineHeight: 28, marginRight: 4, fontWeight: '700' },
-  coachText:   { fontSize: 14, color: colors.primary, lineHeight: 24, fontStyle: 'italic' },
-  coachFooterDot: {
-    width: 5, height: 5, borderRadius: 2.5,
-    backgroundColor: colors.gold, marginTop: spacing.sm, opacity: 0.6,
-  },
-
-  // ── Zainly suite card ──
-  suiteCard: {
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: 22, borderWidth: 1, borderColor: 'rgba(22,48,38,0.12)',
-    padding: spacing.lg, marginBottom: spacing.lg,
-    shadowColor: colors.primary, shadowOpacity: 0.06,
-    shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 2,
-  },
-  suiteHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
-  suiteDot: {
-    width: 6, height: 6, borderRadius: 3,
-    backgroundColor: colors.gold, marginRight: 7,
-  },
-  suiteEyebrow: {
-    fontSize: 9, fontWeight: '700', letterSpacing: 2,
-    color: colors.gold, textTransform: 'uppercase',
-  },
-  suiteText: { fontSize: 14, color: colors.primary, lineHeight: 22, marginBottom: spacing.md },
-  suiteChips: { flexDirection: 'row', gap: 8 },
-  suiteChip: {
-    backgroundColor: 'rgba(22,48,38,0.07)',
-    borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5,
-    borderWidth: 1, borderColor: 'rgba(22,48,38,0.14)',
-  },
-  suiteChipText: { fontSize: 11, fontWeight: '600', color: colors.primarySoft },
-  // section ornament
-  sectionOrnament: {
-    flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'center', marginBottom: spacing.md,
-    gap: 8,
-  },
-  ornDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: 'rgba(184,150,46,0.45)' },
-  ornLineShort: { width: 28, height: 1, backgroundColor: 'rgba(184,150,46,0.3)' },
-
-  // ── stats row ──
-  statsRow: {
-    flexDirection: 'row', gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  statCard: {
-    flex: 1, backgroundColor: colors.surface,
-    borderRadius: 18, borderWidth: 1, borderColor: 'rgba(184,150,46,0.22)',
-    padding: spacing.md, alignItems: 'center',
-    shadowColor: colors.gold, shadowOpacity: 0.12,
-    shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2,
-  },
-  statCardLast: {},
-  statTopDot: {
-    width: 6, height: 6, borderRadius: 3,
-    backgroundColor: colors.gold, marginBottom: spacing.sm,
-    opacity: 0.75,
-  },
-  statValue: { fontSize: 24, fontWeight: '900', color: colors.primary, marginBottom: 3 },
-  statLabel: { fontSize: 10, color: colors.muted, fontWeight: '600', letterSpacing: 0.3, textAlign: 'center', lineHeight: 14 },
-
-  // ── next step card ──
-  nextCard: {
-    flexDirection: 'row', alignItems: 'stretch',
-    backgroundColor: colors.goldSoft,
-    borderRadius: 22, borderWidth: 1.5, borderColor: 'rgba(184,150,46,0.30)',
-    marginBottom: spacing.md, overflow: 'hidden',
-    shadowColor: colors.gold, shadowOpacity: 0.14,
-    shadowRadius: 10, shadowOffset: { width: 0, height: 3 }, elevation: 2,
-  },
-  nextCardAccent: {
-    width: 5, backgroundColor: colors.gold,
-    borderTopLeftRadius: 22, borderBottomLeftRadius: 22,
-  },
-  nextCardBody: { flex: 1, padding: spacing.lg },
-  nextChip: {
-    flexDirection: 'row', alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(184,150,46,0.15)',
-    borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3,
-    borderWidth: 1, borderColor: 'rgba(184,150,46,0.3)',
-    marginBottom: spacing.sm,
-  },
-  nextChipDot: {
-    width: 5, height: 5, borderRadius: 2.5,
-    backgroundColor: colors.gold, marginRight: 5,
-  },
-  nextChipText: { fontSize: 10, fontWeight: '700', color: colors.gold, letterSpacing: 0.8 },
-  nextText: { fontSize: 14, color: colors.primary, lineHeight: 22 },
 });
