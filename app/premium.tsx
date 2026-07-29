@@ -1,6 +1,11 @@
 // ─── Paywall Zainly+ ────────────────────────────────────────────────────────────
 // Phase 2: real RevenueCat purchase/restore flow. Offerings are fetched only
 // while this screen is mounted (via useRevenueCatPaywall), never at app launch.
+//
+// Design: compact single-screen paywall — the whole content (header, promise,
+// compare, plans, CTA, free option, legal footer) must fit on a standard
+// iPhone screen without requiring the user to scroll. The ScrollView wrapper
+// is kept only as a safety net for very small devices (e.g. iPhone SE).
 
 import React from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -10,6 +15,7 @@ import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
 import { useAuthStore } from '@/store/authStore';
 import { useRevenueCatPaywall, PaywallPlan } from '@/hooks/useRevenueCatPaywall';
+import { PurchasesPackage } from '@/lib/revenueCat';
 
 type PaywallContext = 'daily_limit' | 'profile' | 'onboarding';
 
@@ -17,43 +23,58 @@ type ContextCopy = { title: string; subtitle: string };
 
 const CONTEXT_COPY: Record<PaywallContext, ContextCopy> = {
   daily_limit: {
-    title: 'Tu as terminé ton ayat du jour',
-    subtitle: 'Reviens demain gratuitement, ou continue maintenant avec Zainly+.',
+    title: 'Garde ton élan dans ton Hifz.',
+    subtitle: 'Sessions guidées sans limite quotidienne, pour continuer quand tu es concentré.',
   },
   onboarding: {
-    title: 'Ton parcours est prêt',
-    subtitle: 'Continue gratuitement avec 1 ayat guidé par jour, ou débloque Zainly+ pour avancer sans limite quotidienne.',
+    title: 'Garde ton élan dans ton Hifz.',
+    subtitle: 'Sessions guidées sans limite quotidienne, pour continuer quand tu es concentré.',
   },
   profile: {
-    title: 'Découvre Zainly+',
-    subtitle: 'Débloque les sessions guidées sans limite quotidienne.',
+    title: 'Garde ton élan dans ton Hifz.',
+    subtitle: 'Sessions guidées sans limite quotidienne, pour continuer quand tu es concentré.',
   },
 };
 
-const BENEFITS = [
-  {
-    title: 'Sessions guidées sans limite quotidienne',
-    desc: 'Mémorise plusieurs ayats le même jour.',
-  },
-  {
-    title: 'Continue sans attendre demain',
-    desc: 'Ton prochain ayat est disponible immédiatement.',
-  },
-  {
-    title: 'Avance à ton rythme',
-    desc: 'Garde ton élan quand tu es motivé.',
-  },
-];
+// Single compact psychological-benefit line — no invented promise, no
+// invented statistic. Rendered only if it fits without causing a scroll.
+const MICRO_BENEFIT = 'Garde ton élan les jours où tu es prêt à avancer.';
 
-function legalText(plan: PaywallPlan, priceString: string | undefined): string {
+/**
+ * Defensive discount calculation, computed strictly from RevenueCat's real
+ * numeric prices. Returns null (hide the badge) unless every guard passes —
+ * never hardcoded, never invented.
+ */
+function computeAnnualDiscountPercent(
+  monthlyPackage: PurchasesPackage | null,
+  annualPackage: PurchasesPackage | null
+): number | null {
+  const monthlyPrice = monthlyPackage?.product.price;
+  const annualPrice = annualPackage?.product.price;
+
+  if (typeof monthlyPrice !== 'number' || typeof annualPrice !== 'number') return null;
+  if (!Number.isFinite(monthlyPrice) || !Number.isFinite(annualPrice)) return null;
+  if (!(monthlyPrice > 0) || !(annualPrice > 0)) return null;
+  if (!(annualPrice < monthlyPrice * 12)) return null;
+
+  const discount = Math.round((1 - annualPrice / (monthlyPrice * 12)) * 100);
+  if (!(discount > 0) || !(discount < 100)) return null;
+
+  return discount;
+}
+
+/**
+ * Apple-compliant legal text. Only mentions a free trial when a real trial
+ * was detected via RevenueCat's introPrice (hasTrial) — never hardcoded.
+ */
+function legalText(plan: PaywallPlan, priceString: string | undefined, hasTrial: boolean): string {
   if (plan === 'annual') {
-    return `Après 7 jours gratuits, l’abonnement annuel se renouvelle automatiquement${
-      priceString ? ` à ${priceString} / an` : ''
-    }, sauf annulation au moins 24 h avant la fin de la période en cours. Le paiement sera débité de votre compte Apple à la confirmation de l’achat. Vous pouvez gérer ou annuler votre abonnement dans les réglages de votre compte Apple.`;
+    const trialPrefix = hasTrial ? 'Après 7 jours gratuits, ' : '';
+    const pricePart = priceString ? ` à ${priceString} / an` : '';
+    return `${trialPrefix}Renouvellement automatique${pricePart}. Annulable dans les réglages Apple au moins 24 h avant la fin de la période.`;
   }
-  return `L’abonnement mensuel se renouvelle automatiquement${
-    priceString ? ` à ${priceString} / mois` : ''
-  }, sauf annulation au moins 24 h avant la fin de la période en cours. Le paiement sera débité de votre compte Apple à la confirmation de l’achat. Vous pouvez gérer ou annuler votre abonnement dans les réglages de votre compte Apple.`;
+  const pricePart = priceString ? ` à ${priceString} / mois` : '';
+  return `Renouvellement automatique${pricePart}. Annulable dans les réglages Apple au moins 24 h avant la fin de la période.`;
 }
 
 export default function PremiumScreen() {
@@ -80,6 +101,8 @@ export default function PremiumScreen() {
 
   const plan: PaywallPlan = selectedPackage === monthlyPackage && monthlyPackage ? 'monthly' : 'annual';
   const offeringsUnavailable = !isLoadingOfferings && (!!offeringsError || (!annualPackage && !monthlyPackage));
+  const hasTrial = plan === 'annual' && annualPackage?.product.introPrice?.price === 0;
+  const annualDiscountPercent = computeAnnualDiscountPercent(monthlyPackage, annualPackage);
 
   function goBackAfterPurchase() {
     if (router.canGoBack()) {
@@ -163,6 +186,7 @@ export default function PremiumScreen() {
       <ScrollView
         contentContainerStyle={s.scroll}
         showsVerticalScrollIndicator={false}
+        bounces={false}
       >
         {/* ── Close button ── */}
         <Pressable style={s.closeBtn} onPress={() => router.back()} hitSlop={12}>
@@ -170,49 +194,32 @@ export default function PremiumScreen() {
           <View style={s.closeLine2} />
         </Pressable>
 
-        {/* ── Header ── */}
+        {/* ── Header — centered, compact ── */}
         <View style={s.header}>
           <View style={s.badge}>
-            <View style={s.badgeDot} />
             <Text style={s.badgeText}>ZAINLY+</Text>
           </View>
-          <Text style={s.title}>{copy.title}</Text>
-          <Text style={s.subtitle}>{copy.subtitle}</Text>
+          <Text style={s.title} numberOfLines={2}>{copy.title}</Text>
+          <Text style={s.subtitle} numberOfLines={2}>{copy.subtitle}</Text>
         </View>
 
-        {/* ── Free vs Plus summary ── */}
+        {/* ── Free vs Plus summary — compact comparison ── */}
         <View style={s.compareRow}>
           <View style={s.compareItem}>
-            <View style={s.compareDot} />
-            <Text style={s.compareText}>Gratuit : 1 ayat guidé par jour.</Text>
+            <Text style={s.compareLabelFree}>GRATUIT</Text>
+            <Text style={s.compareValueFree} numberOfLines={1}>1 ayat guidée par jour</Text>
           </View>
+          <View style={s.compareDivider} />
           <View style={s.compareItem}>
-            <View style={[s.compareDot, s.compareDotGold]} />
-            <Text style={[s.compareText, s.compareTextGold]}>Zainly+ : sessions guidées sans limite quotidienne.</Text>
+            <Text style={s.compareLabelPlus}>ZAINLY+</Text>
+            <Text style={s.compareValuePlus} numberOfLines={1}>Sessions guidées sans limite quotidienne</Text>
           </View>
         </View>
 
-        {/* ── Benefits ── */}
-        <View style={s.benefitsBlock}>
-          {BENEFITS.map((b, i) => (
-            <View key={i} style={s.benefitRow}>
-              <View style={s.benefitCheck}>
-                <View style={s.checkDot} />
-              </View>
-              <View style={s.benefitText}>
-                <Text style={s.benefitTitle}>{b.title}</Text>
-                <Text style={s.benefitDesc}>{b.desc}</Text>
-              </View>
-            </View>
-          ))}
-        </View>
+        {/* ── Micro benefit — single compact line ── */}
+        <Text style={s.microBenefit} numberOfLines={2}>{MICRO_BENEFIT}</Text>
 
-        {/* ── Social proof ── */}
-        <Text style={s.socialProof}>
-          Déjà utilisé par des apprenants sur Zainly web.
-        </Text>
-
-        {/* ── Plan selector ── */}
+        {/* ── Plan selector — vertical: monthly then annual ── */}
         {isLoadingOfferings ? (
           <View style={s.offeringsLoading}>
             <ActivityIndicator color={colors.primary} />
@@ -224,40 +231,62 @@ export default function PremiumScreen() {
             </Text>
           </View>
         ) : (
-          <View style={s.plansRow}>
-            {/* Annual */}
-            {annualPackage && (
+          <View style={s.plansColumn}>
+            {/* Monthly — sober, secondary */}
+            {monthlyPackage && (
               <Pressable
-                style={[s.planCard, plan === 'annual' && s.planCardSelected]}
-                onPress={() => setSelectedPackage('annual')}
+                style={[s.monthlyCard, plan === 'monthly' && s.monthlyCardSelected]}
+                onPress={() => setSelectedPackage('monthly')}
               >
-                <View style={s.planBestBadge}>
-                  <Text style={s.planBestText}>MEILLEURE OFFRE</Text>
+                <View style={s.monthlyCardBody}>
+                  <Text style={s.monthlyName}>Mensuel</Text>
+                  <Text style={s.monthlySub} numberOfLines={1}>Sans engagement annuel</Text>
                 </View>
-                <Text style={s.planName}>Annuel</Text>
-                {annualPackage.product.introPrice?.price === 0 && (
-                  <View style={s.planTagsRow}>
-                    <View style={s.planTag}><Text style={s.planTagText}>7 jours gratuits</Text></View>
+                <View style={s.monthlyCardRight}>
+                  <Text style={s.monthlyPrice}>{monthlyPackage.product.priceString}</Text>
+                  <View style={[s.radioOuter, plan === 'monthly' && s.radioOuterSelected]}>
+                    {plan === 'monthly' && <View style={s.radioInner} />}
                   </View>
-                )}
-                <Text style={s.planPrice}>{annualPackage.product.priceString} / an</Text>
-                {annualPackage.product.pricePerMonthString && (
-                  <Text style={s.planSub}>soit {annualPackage.product.pricePerMonthString} / mois</Text>
-                )}
+                </View>
               </Pressable>
             )}
 
-            {/* Monthly */}
-            {monthlyPackage && (
-              <Pressable
-                style={[s.planCard, plan === 'monthly' && s.planCardSelected]}
-                onPress={() => setSelectedPackage('monthly')}
-              >
-                <View style={s.planNameRow}>
-                  <Text style={s.planName}>Mensuel</Text>
+            {/* Annual — premium, dominant, selected by default */}
+            {annualPackage && (
+              <View style={s.annualWrap}>
+                <View style={s.annualBadgeOverlap}>
+                  <Text style={s.annualBadgeText}>MEILLEURE OFFRE</Text>
                 </View>
-                <Text style={s.planPrice}>{monthlyPackage.product.priceString} / mois</Text>
-              </Pressable>
+                <Pressable
+                  style={[s.annualCard, plan === 'annual' && s.annualCardSelected]}
+                  onPress={() => setSelectedPackage('annual')}
+                >
+                  <View style={s.annualTopRow}>
+                    <Text style={s.annualName}>Annuel</Text>
+                    <View style={[s.radioOuter, plan === 'annual' && s.radioOuterSelected]}>
+                      {plan === 'annual' && <View style={s.radioInner} />}
+                    </View>
+                  </View>
+
+                  <View style={s.annualPriceRow}>
+                    <Text style={s.annualPrice}>{annualPackage.product.priceString}</Text>
+                    {annualDiscountPercent !== null && (
+                      <View style={s.discountBadge}>
+                        <Text style={s.discountBadgeText}>-{annualDiscountPercent}%</Text>
+                      </View>
+                    )}
+                  </View>
+                  {annualPackage.product.pricePerMonthString && (
+                    <Text style={s.annualSub} numberOfLines={1}>soit {annualPackage.product.pricePerMonthString} / mois</Text>
+                  )}
+
+                  {annualPackage.product.introPrice?.price === 0 && (
+                    <View style={s.planTagsRow}>
+                      <View style={s.planTag}><Text style={s.planTagText}>7 jours gratuits</Text></View>
+                    </View>
+                  )}
+                </Pressable>
+              </View>
             )}
           </View>
         )}
@@ -276,9 +305,7 @@ export default function PremiumScreen() {
             <ActivityIndicator color="#FFFFFF" />
           ) : (
             <Text style={s.ctaBtnText}>
-              {plan === 'annual' && annualPackage?.product.introPrice?.price === 0
-                ? 'Commencer 7 jours gratuits'
-                : 'Continuer avec Zainly+'}
+              {hasTrial ? 'Commencer mes 7 jours gratuits' : 'Continuer avec Zainly+'}
             </Text>
           )}
         </Pressable>
@@ -286,13 +313,13 @@ export default function PremiumScreen() {
         {/* ── Legal ── */}
         {!offeringsUnavailable && selectedPackage && (
           <Text style={s.legal}>
-            {legalText(plan, selectedPackage.product.priceString)}
+            {legalText(plan, selectedPackage.product.priceString, hasTrial)}
           </Text>
         )}
 
         {/* ── Bouton gratuit ── */}
         <Pressable style={s.freeBtn} onPress={() => router.back()}>
-          <Text style={s.freeBtnText}>Continuer gratuitement — 1 ayat / jour</Text>
+          <Text style={s.freeBtnText} numberOfLines={1}>Continuer gratuitement — 1 ayat / jour</Text>
         </Pressable>
 
         {/* ── Footer links ── */}
@@ -316,157 +343,194 @@ export default function PremiumScreen() {
 
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
-  scroll: { paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.xxl },
+  // flexGrow:1 lets the ScrollView act purely as a small-screen safety net —
+  // on a standard/large iPhone this content never exceeds the viewport, so
+  // there is nothing to scroll to.
+  scroll: {
+    flexGrow: 1,
+    paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12,
+  },
 
   // ── close ──
   closeBtn: {
-    alignSelf: 'flex-end', width: 32, height: 32,
+    alignSelf: 'flex-end', width: 26, height: 26,
     alignItems: 'center', justifyContent: 'center',
-    marginBottom: spacing.sm,
+    marginBottom: 2,
   },
   closeLine1: {
-    position: 'absolute', width: 18, height: 2,
+    position: 'absolute', width: 16, height: 2,
     borderRadius: 1, backgroundColor: colors.muted,
     transform: [{ rotate: '45deg' }],
   },
   closeLine2: {
-    position: 'absolute', width: 18, height: 2,
+    position: 'absolute', width: 16, height: 2,
     borderRadius: 1, backgroundColor: colors.muted,
     transform: [{ rotate: '-45deg' }],
   },
 
-  // ── header ──
-  header: { marginBottom: spacing.lg },
+  // ── header — centered, compact, badge more prominent ──
+  header: { alignItems: 'center', marginBottom: 10 },
   badge: {
-    flexDirection: 'row', alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: colors.goldSoft,
-    borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4,
-    borderWidth: 1, borderColor: 'rgba(184,150,46,0.35)',
-    marginBottom: spacing.sm,
+    alignSelf: 'center',
+    backgroundColor: colors.primary,
+    borderRadius: 20, paddingHorizontal: 16, paddingVertical: 7,
+    marginBottom: 10,
   },
-  badgeDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: colors.gold, marginRight: 5 },
-  badgeText: { fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: colors.gold },
-  title: { fontSize: 26, fontWeight: '800', color: colors.primary, lineHeight: 34, marginBottom: 8 },
-  subtitle: { fontSize: 14, color: colors.muted, lineHeight: 22 },
+  badgeText: { fontSize: 15, fontWeight: '800', letterSpacing: 2, color: '#FFFFFF' },
+  title: {
+    fontSize: 21, fontWeight: '800', color: colors.primary,
+    lineHeight: 26, marginBottom: 5, textAlign: 'center',
+  },
+  subtitle: {
+    fontSize: 13, color: colors.muted, lineHeight: 18,
+    textAlign: 'center', paddingHorizontal: 8,
+  },
 
-  // ── compare ──
+  // ── compare — compact two-column comparison ──
   compareRow: {
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: 16, borderWidth: 1, borderColor: colors.border,
-    padding: spacing.md, marginBottom: spacing.lg, gap: 8,
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderRadius: 14, borderWidth: 1, borderColor: colors.border,
+    paddingVertical: 10, paddingHorizontal: 12,
+    marginBottom: 10,
+    shadowColor: colors.primary, shadowOpacity: 0.05,
+    shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 1,
   },
-  compareItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
-  compareDot: {
-    width: 7, height: 7, borderRadius: 3.5,
-    backgroundColor: colors.muted, marginTop: 5,
+  compareItem: { flex: 1 },
+  compareDivider: { width: 1, backgroundColor: colors.border, marginHorizontal: 12 },
+  compareLabelFree: {
+    fontSize: 9, fontWeight: '700', letterSpacing: 1.1,
+    color: colors.muted, marginBottom: 3,
   },
-  compareDotGold: { backgroundColor: colors.gold },
-  compareText: { flex: 1, fontSize: 13, color: colors.muted, lineHeight: 20 },
-  compareTextGold: { color: colors.primary, fontWeight: '600' },
+  compareValueFree: { fontSize: 12, color: colors.muted, lineHeight: 16 },
+  compareLabelPlus: {
+    fontSize: 9, fontWeight: '700', letterSpacing: 1.1,
+    color: colors.gold, marginBottom: 3,
+  },
+  compareValuePlus: { fontSize: 12.5, fontWeight: '700', color: colors.primary, lineHeight: 16 },
 
-  // ── benefits ──
-  benefitsBlock: { marginBottom: spacing.md, gap: 12 },
-  benefitRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  benefitCheck: {
-    width: 22, height: 22, borderRadius: 11,
-    backgroundColor: 'rgba(45,106,79,0.12)',
-    alignItems: 'center', justifyContent: 'center',
-    marginTop: 1,
-    borderWidth: 1, borderColor: 'rgba(45,106,79,0.22)',
-  },
-  checkDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: colors.success },
-  benefitText: { flex: 1 },
-  benefitTitle: { fontSize: 14, fontWeight: '700', color: colors.primary, marginBottom: 2 },
-  benefitDesc: { fontSize: 12, color: colors.muted, lineHeight: 18 },
-
-  // ── social proof ──
-  socialProof: {
-    fontSize: 12, color: colors.muted, textAlign: 'center',
-    marginBottom: spacing.lg, fontStyle: 'italic',
+  // ── micro benefit — single compact line ──
+  microBenefit: {
+    fontSize: 11.5, color: colors.muted, textAlign: 'center',
+    lineHeight: 15, marginBottom: 10, paddingHorizontal: 6,
   },
 
   // ── offerings states ──
   offeringsLoading: {
-    height: 96, alignItems: 'center', justifyContent: 'center',
-    marginBottom: spacing.lg,
+    height: 80, alignItems: 'center', justifyContent: 'center',
+    marginBottom: 10,
   },
   offeringsUnavailable: {
     backgroundColor: colors.surfaceMuted,
-    borderRadius: 16, borderWidth: 1, borderColor: colors.border,
-    padding: spacing.md, marginBottom: spacing.lg,
+    borderRadius: 14, borderWidth: 1, borderColor: colors.border,
+    padding: 12, marginBottom: 10,
   },
   offeringsUnavailableText: {
-    fontSize: 13, color: colors.muted, textAlign: 'center', lineHeight: 20,
+    fontSize: 12, color: colors.muted, textAlign: 'center', lineHeight: 17,
   },
 
-  // ── plans ──
-  plansRow: { flexDirection: 'row', gap: 10, marginBottom: spacing.lg },
-  planCard: {
-    flex: 1,
+  // ── plans — vertical stack: sober monthly on top, dominant annual below ──
+  plansColumn: { gap: 8, marginBottom: 10 },
+
+  // radio indicator, shared between both cards
+  radioOuter: {
+    width: 20, height: 20, borderRadius: 10,
+    borderWidth: 1.5, borderColor: colors.disabled,
+    alignItems: 'center', justifyContent: 'center',
     backgroundColor: colors.surface,
-    borderRadius: 18, borderWidth: 1.5, borderColor: colors.border,
-    padding: spacing.md,
-    shadowColor: colors.primary, shadowOpacity: 0.05,
-    shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 1,
   },
-  planCardSelected: {
-    borderColor: colors.gold,
-    backgroundColor: colors.goldSoft,
-    shadowColor: colors.gold, shadowOpacity: 0.18,
-    shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 3,
+  radioOuterSelected: { borderColor: colors.gold },
+  radioInner: { width: 9, height: 9, borderRadius: 4.5, backgroundColor: colors.gold },
+
+  // monthly — sober, compact, secondary
+  monthlyCard: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: 14, borderWidth: 1, borderColor: colors.border,
+    paddingVertical: 10, paddingHorizontal: 12,
   },
-  planBestBadge: {
-    alignSelf: 'flex-start',
+  monthlyCardSelected: { borderColor: colors.gold, backgroundColor: colors.surface },
+  monthlyCardBody: { flex: 1 },
+  monthlyName: { fontSize: 13, fontWeight: '700', color: colors.primary, marginBottom: 1 },
+  monthlySub: { fontSize: 10.5, color: colors.muted },
+  monthlyCardRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  monthlyPrice: { fontSize: 13.5, fontWeight: '700', color: colors.primary },
+
+  // annual — premium, dominant, badge overlapping the top edge
+  annualWrap: { marginTop: 6 },
+  annualBadgeOverlap: {
+    position: 'absolute', top: -9, left: 12, zIndex: 1,
     backgroundColor: colors.gold,
-    borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2,
+    borderRadius: 9, paddingHorizontal: 8, paddingVertical: 3,
+    shadowColor: colors.gold, shadowOpacity: 0.3,
+    shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 3,
+  },
+  annualBadgeText: { fontSize: 9, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.5 },
+  annualCard: {
+    backgroundColor: colors.goldSoft,
+    borderRadius: 16, borderWidth: 1.5, borderColor: 'rgba(184,150,46,0.35)',
+    padding: 12, paddingTop: 16,
+    shadowColor: colors.primary, shadowOpacity: 0.05,
+    shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 2,
+  },
+  annualCardSelected: {
+    borderColor: colors.gold, borderWidth: 2,
+    shadowColor: colors.gold, shadowOpacity: 0.22,
+    shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 4,
+  },
+  annualTopRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     marginBottom: 6,
   },
-  planBestText: { fontSize: 9, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.5 },
-  planNameRow: { marginBottom: 6 },
-  planName: { fontSize: 15, fontWeight: '700', color: colors.primary, marginBottom: 4 },
-  planTagsRow: { flexDirection: 'row', gap: 5, marginBottom: 8, flexWrap: 'wrap' },
+  annualName: { fontSize: 14.5, fontWeight: '800', color: colors.primary },
+  annualPriceRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 1 },
+  annualPrice: { fontSize: 19, fontWeight: '800', color: colors.primary },
+  discountBadge: {
+    backgroundColor: colors.success,
+    borderRadius: 7, paddingHorizontal: 6, paddingVertical: 1.5,
+  },
+  discountBadgeText: { fontSize: 10, fontWeight: '700', color: '#FFFFFF' },
+  annualSub: { fontSize: 11, color: colors.muted, marginBottom: 6 },
+  planTagsRow: { flexDirection: 'row', gap: 5, marginBottom: 4, flexWrap: 'wrap' },
   planTag: {
     backgroundColor: 'rgba(45,106,79,0.10)',
-    borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2,
+    borderRadius: 7, paddingHorizontal: 5, paddingVertical: 1.5,
     borderWidth: 1, borderColor: 'rgba(45,106,79,0.18)',
   },
-  planTagText: { fontSize: 10, fontWeight: '600', color: colors.success },
-  planPrice: { fontSize: 16, fontWeight: '800', color: colors.primary },
-  planSub: { fontSize: 11, color: colors.muted, marginTop: 2 },
+  planTagText: { fontSize: 9, fontWeight: '600', color: colors.success },
 
   // ── CTA ──
   ctaBtn: {
     backgroundColor: colors.primary,
-    borderRadius: 16, height: 56,
+    borderRadius: 14, height: 50,
     alignItems: 'center', justifyContent: 'center',
-    marginBottom: spacing.sm,
-    shadowColor: colors.primary, shadowOpacity: 0.40,
-    shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 5,
+    marginBottom: 6,
+    shadowColor: colors.primary, shadowOpacity: 0.35,
+    shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 4,
   },
   ctaBtnPressed: { opacity: 0.82, transform: [{ scale: 0.977 }] },
   ctaBtnDisabled: { opacity: 0.5 },
-  ctaBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
+  ctaBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '800', letterSpacing: 0.3 },
 
-  // ── legal ──
+  // ── legal — Apple-compliant, no truncation, fits within no-scroll layout ──
   legal: {
-    fontSize: 11, color: colors.muted, lineHeight: 17,
-    textAlign: 'center', marginBottom: spacing.md,
+    fontSize: 9, color: colors.muted, lineHeight: 12,
+    textAlign: 'center', marginBottom: 5,
     paddingHorizontal: spacing.xs,
   },
 
   // ── free btn ──
   freeBtn: {
-    height: 48, alignItems: 'center', justifyContent: 'center',
-    marginBottom: spacing.md,
+    height: 36, alignItems: 'center', justifyContent: 'center',
+    marginBottom: 2,
   },
-  freeBtnText: { fontSize: 14, color: colors.muted, fontWeight: '500' },
+  freeBtnText: { fontSize: 12.5, color: colors.muted, fontWeight: '500' },
 
   // ── footer ──
   footerLinks: {
     flexDirection: 'row', alignItems: 'center',
     justifyContent: 'center', gap: 6,
   },
-  footerLink: { fontSize: 11, color: colors.muted },
-  footerSep: { fontSize: 11, color: colors.disabled },
+  footerLink: { fontSize: 10, color: colors.muted },
+  footerSep: { fontSize: 10, color: colors.disabled },
 });
