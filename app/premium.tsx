@@ -64,12 +64,35 @@ function computeAnnualDiscountPercent(
 }
 
 /**
+ * Extracts trial duration text from RevenueCat's introPrice if available.
+ * Returns null if no trial or duration cannot be determined.
+ * Uses introPrice.period (e.g., "P7D" for 7 days) if present.
+ * Falls back to generic "offre gratuite" if period is not available.
+ */
+function getTrialDurationText(introPrice: PurchasesPackage['product']['introPrice']): string | null {
+  if (!introPrice || introPrice.price !== 0) return null;
+
+  // RevenueCat introPrice.period is an ISO 8601 duration string (e.g., "P7D", "P3D")
+  const period = (introPrice as any).period;
+  if (typeof period === 'string' && period.startsWith('P') && period.endsWith('D')) {
+    const days = parseInt(period.slice(1, -1), 10);
+    if (!isNaN(days) && days > 0) {
+      return `${days} jours gratuits`;
+    }
+  }
+
+  // Fallback: generic text when period is not available
+  return 'offre gratuite';
+}
+
+/**
  * Apple-compliant legal text. Only mentions a free trial when a real trial
  * was detected via RevenueCat's introPrice (hasTrial) — never hardcoded.
+ * Uses actual trial duration from introPrice.period if available.
  */
-function legalText(plan: PaywallPlan, priceString: string | undefined, hasTrial: boolean): string {
+function legalText(plan: PaywallPlan, priceString: string | undefined, trialDurationText: string | null): string {
   if (plan === 'annual') {
-    const trialPrefix = hasTrial ? 'Après 7 jours gratuits, ' : '';
+    const trialPrefix = trialDurationText ? `Après ${trialDurationText}, ` : '';
     const pricePart = priceString ? ` à ${priceString} / an` : '';
     return `${trialPrefix}Renouvellement automatique${pricePart}. Annulable dans les réglages Apple au moins 24 h avant la fin de la période.`;
   }
@@ -102,6 +125,7 @@ export default function PremiumScreen() {
   const plan: PaywallPlan = selectedPackage === monthlyPackage && monthlyPackage ? 'monthly' : 'annual';
   const offeringsUnavailable = !isLoadingOfferings && (!!offeringsError || (!annualPackage && !monthlyPackage));
   const hasTrial = plan === 'annual' && annualPackage?.product.introPrice?.price === 0;
+  const trialDurationText = plan === 'annual' ? getTrialDurationText(annualPackage?.product.introPrice ?? null) : null;
   const annualDiscountPercent = computeAnnualDiscountPercent(monthlyPackage, annualPackage);
 
   function goBackAfterPurchase() {
@@ -196,9 +220,11 @@ export default function PremiumScreen() {
 
         {/* ── Header — centered, compact ── */}
         <View style={s.header}>
-          <View style={s.badge}>
-            <Text style={s.badgeText}>ZAINLY+</Text>
+          <View style={s.brandRow}>
+            <Text style={s.brandZainly}>ZAINLY</Text>
+            <Text style={s.brandPlus}>+</Text>
           </View>
+          <View style={s.brandLine} />
           <Text style={s.title} numberOfLines={2}>{copy.title}</Text>
           <Text style={s.subtitle} numberOfLines={2}>{copy.subtitle}</Text>
         </View>
@@ -212,7 +238,7 @@ export default function PremiumScreen() {
           <View style={s.compareDivider} />
           <View style={s.compareItem}>
             <Text style={s.compareLabelPlus}>ZAINLY+</Text>
-            <Text style={s.compareValuePlus} numberOfLines={1}>Sessions guidées sans limite quotidienne</Text>
+            <Text style={s.compareValuePlus} numberOfLines={2}>Sessions guidées sans limite quotidienne</Text>
           </View>
         </View>
 
@@ -280,9 +306,9 @@ export default function PremiumScreen() {
                     <Text style={s.annualSub} numberOfLines={1}>soit {annualPackage.product.pricePerMonthString} / mois</Text>
                   )}
 
-                  {annualPackage.product.introPrice?.price === 0 && (
+                  {trialDurationText && (
                     <View style={s.planTagsRow}>
-                      <View style={s.planTag}><Text style={s.planTagText}>7 jours gratuits</Text></View>
+                      <View style={s.planTag}><Text style={s.planTagText}>{trialDurationText}</Text></View>
                     </View>
                   )}
                 </Pressable>
@@ -305,7 +331,7 @@ export default function PremiumScreen() {
             <ActivityIndicator color="#FFFFFF" />
           ) : (
             <Text style={s.ctaBtnText}>
-              {hasTrial ? 'Commencer mes 7 jours gratuits' : 'Continuer avec Zainly+'}
+              {hasTrial ? 'Essayer pour 0,00 €' : 'Continuer avec Zainly+'}
             </Text>
           )}
         </Pressable>
@@ -313,7 +339,7 @@ export default function PremiumScreen() {
         {/* ── Legal ── */}
         {!offeringsUnavailable && selectedPackage && (
           <Text style={s.legal}>
-            {legalText(plan, selectedPackage.product.priceString, hasTrial)}
+            {legalText(plan, selectedPackage.product.priceString, trialDurationText)}
           </Text>
         )}
 
@@ -368,15 +394,28 @@ const s = StyleSheet.create({
     transform: [{ rotate: '-45deg' }],
   },
 
-  // ── header — centered, compact, badge more prominent ──
-  header: { alignItems: 'center', marginBottom: 10 },
-  badge: {
-    alignSelf: 'center',
-    backgroundColor: colors.primary,
-    borderRadius: 20, paddingHorizontal: 16, paddingVertical: 7,
-    marginBottom: 10,
+  // ── header — centered, compact ──
+  header: { alignItems: 'center', marginBottom: 8 },
+  // ZAINLY+ — typographic brand signature (serif, minimal, not a badge).
+  // Cinzel is the same serif family used for the real Zainly wordmark
+  // (see app/index.tsx and app/onboarding/intro.tsx brand lockups).
+  brandRow: {
+    flexDirection: 'row', alignItems: 'flex-start',
+    alignSelf: 'center', marginBottom: 6,
   },
-  badgeText: { fontSize: 15, fontWeight: '800', letterSpacing: 2, color: '#FFFFFF' },
+  brandZainly: {
+    fontFamily: 'Cinzel_500Medium',
+    fontSize: 17, letterSpacing: 3.5, color: colors.primary,
+  },
+  brandPlus: {
+    fontFamily: 'Cinzel_500Medium',
+    fontSize: 13, color: colors.gold,
+    marginLeft: 2, marginTop: 1,
+  },
+  brandLine: {
+    width: 24, height: 1, backgroundColor: colors.gold,
+    opacity: 0.55, marginBottom: 10,
+  },
   title: {
     fontSize: 21, fontWeight: '800', color: colors.primary,
     lineHeight: 26, marginBottom: 5, textAlign: 'center',
