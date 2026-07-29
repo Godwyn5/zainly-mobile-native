@@ -151,13 +151,11 @@ export default function PremiumScreen() {
   }
 
   function handlePrivacy() {
-    // TODO Zainly+: open privacy policy URL.
-    Alert.alert('Confidentialité', 'La politique de confidentialité sera disponible prochainement.');
+    router.push('/legal/privacy');
   }
 
   function handleTerms() {
-    // TODO Zainly+: open terms of service URL.
-    Alert.alert('CGU', 'Les conditions générales d’utilisation seront disponibles prochainement.');
+    router.push('/legal/terms');
   }
 
   return (

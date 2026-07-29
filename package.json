@@ -6,7 +6,9 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "legal:build": "node scripts/generate-legal-pages.js",
+    "legal:check": "node scripts/generate-legal-pages.js --check"
   },
   "dependencies": {
     "@expo-google-fonts/amiri": "^0.4.1",

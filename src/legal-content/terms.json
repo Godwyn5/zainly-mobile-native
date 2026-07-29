@@ -1,0 +1,67 @@
+{
+  "title": "Conditions Générales d'Utilisation",
+  "lastUpdated": "20 juillet 2026",
+  "contactEmail": "zainlyapp@gmail.com",
+  "sections": [
+    {
+      "title": "1. Objet",
+      "content": "Les présentes Conditions Générales d'Utilisation (CGU) régissent l'accès et l'usage de l'application Zainly, dédiée à la mémorisation et à la révision guidées d'ayat du Coran."
+    },
+    {
+      "title": "2. Accès à l'application",
+      "content": "L'application est disponible sur iOS. Une partie des fonctionnalités est accessible gratuitement ; l'accès complet nécessite un abonnement Zainly+."
+    },
+    {
+      "title": "3. Compte utilisateur",
+      "content": "L'utilisation de Zainly nécessite la création d'un compte. Tu es responsable de la confidentialité de tes identifiants et de l'exactitude des informations fournies."
+    },
+    {
+      "title": "4. Fonctionnement de Zainly",
+      "content": "L'application propose des séances guidées de mémorisation et de révision d'ayat. En version gratuite, une séance guidée est disponible par jour. Ta progression (position, rythme, série de jours, historique) est enregistrée pour te permettre de reprendre où tu t'étais arrêté."
+    },
+    {
+      "title": "5. Abonnement Zainly+",
+      "content": "Zainly+ est un abonnement payant qui donne accès à des sessions guidées sans limite quotidienne. Aucune autre fonctionnalité n'est incluse au-delà de celle-ci."
+    },
+    {
+      "title": "6. Essai gratuit si applicable",
+      "content": "Certaines offres peuvent inclure une période d'essai gratuite, dont la durée est affichée sur l'écran d'abonnement avant tout paiement. Si tu ne souhaites pas être facturé à l'issue de l'essai, tu dois annuler avant la fin de la période d'essai."
+    },
+    {
+      "title": "7. Renouvellement automatique",
+      "content": "L'abonnement Zainly+ se renouvelle automatiquement pour une durée identique (mois ou an, selon l'offre choisie), sauf annulation au moins 24 heures avant la fin de la période en cours. Le montant du renouvellement est celui affiché sur l'écran d'abonnement au moment de l'achat."
+    },
+    {
+      "title": "8. Annulation",
+      "content": "Tu peux annuler ton abonnement à tout moment depuis les réglages de ton compte Apple (Réglages > ton nom > Abonnements). La désinstallation de l'application ne résilie pas automatiquement l'abonnement : seule une annulation dans les réglages Apple met fin au renouvellement."
+    },
+    {
+      "title": "9. Restauration des achats",
+      "content": "Si tu changes d'appareil ou réinstalles l'application, le bouton « Restaurer mes achats » du paywall permet de récupérer un abonnement actif déjà reconnu par ton compte Apple via RevenueCat."
+    },
+    {
+      "title": "10. Usage autorisé",
+      "content": "Tu t'engages à utiliser Zainly conformément à sa finalité et à ne pas tenter d'en contourner les mécanismes techniques (accès, abonnement, authentification)."
+    },
+    {
+      "title": "11. Disponibilité du service",
+      "content": "Nous mettons en œuvre des moyens raisonnables pour assurer la disponibilité de l'application, sans pouvoir garantir un fonctionnement ininterrompu ou exempt de toute erreur."
+    },
+    {
+      "title": "12. Limitation de responsabilité",
+      "content": "Zainly est un outil d'accompagnement à la mémorisation et à la révision. Nous ne garantissons ni la mémorisation, ni la progression, ni un quelconque résultat spirituel ou religieux : ces résultats dépendent de l'effort et de l'assiduité de chaque utilisateur."
+    },
+    {
+      "title": "13. Suppression de compte",
+      "content": "Tu peux demander la suppression de ton compte depuis l'application. Cette action est définitive et entraîne la suppression de tes données de progression. Elle n'annule pas automatiquement un abonnement actif : celui-ci doit être annulé séparément dans les réglages de ton compte Apple."
+    },
+    {
+      "title": "14. Données personnelles",
+      "content": "Le traitement de tes données personnelles est détaillé dans notre Politique de confidentialité, accessible depuis l'écran d'abonnement."
+    },
+    {
+      "title": "15. Contact",
+      "content": "Pour toute question relative à ces CGU, tu peux nous écrire à zainlyapp@gmail.com."
+    }
+  ]
+}

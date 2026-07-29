@@ -1,0 +1,63 @@
+{
+  "title": "Politique de confidentialité",
+  "lastUpdated": "20 juillet 2026",
+  "contactEmail": "zainlyapp@gmail.com",
+  "sections": [
+    {
+      "title": "1. Introduction",
+      "content": "Zainly (« l'application ») aide les utilisateurs à mémoriser et réviser des ayat du Coran à travers des séances guidées. Cette politique explique quelles données sont collectées, pourquoi, et comment elles sont protégées."
+    },
+    {
+      "title": "2. Données que nous collectons",
+      "content": "Nous collectons uniquement les données nécessaires au fonctionnement de l'application : ton adresse e-mail (pour créer et sécuriser ton compte), ainsi que les données de progression que tu génères en utilisant l'app (surah et ayat en cours, rythme de mémorisation quotidien, série de jours consécutifs, historique des séances, planning de révision). Nous ne collectons pas de données de localisation, pas de contacts, et pas de données biométriques."
+    },
+    {
+      "title": "3. Utilisation des données",
+      "content": "Ces données servent exclusivement à faire fonctionner l'application : afficher ta progression, calculer ton prochain passage de révision, synchroniser ton compte entre tes appareils, et gérer ton statut d'abonnement. Nous ne les utilisons pour aucune autre finalité."
+    },
+    {
+      "title": "4. Compte utilisateur",
+      "content": "La création de compte et l'authentification sont gérées par Supabase Auth. Ton e-mail et ton mot de passe (chiffré) sont stockés par Supabase, notre fournisseur d'infrastructure. Ta session est conservée localement sur ton appareil pour éviter de te reconnecter à chaque ouverture."
+    },
+    {
+      "title": "5. Programme de mémorisation et progression",
+      "content": "Ta position dans le Coran, ton rythme quotidien, ta série de jours consécutifs et ton historique de séances sont stockés dans la base de données Supabase, associés à ton compte, afin de reprendre exactement où tu t'es arrêté et de planifier tes révisions."
+    },
+    {
+      "title": "6. Abonnements et achats",
+      "content": "La gestion des abonnements Zainly+ est assurée par RevenueCat, qui reçoit un identifiant technique lié à ton compte pour déterminer si ton accès premium est actif. Les paiements eux-mêmes sont entièrement traités par Apple via les achats intégrés (In-App Purchase) : Zainly n'a jamais accès à tes coordonnées bancaires."
+    },
+    {
+      "title": "7. Notifications",
+      "content": "Si tu actives les rappels de séance, ils sont programmés localement sur ton appareil via expo-notifications. Aucune donnée n'est envoyée à un serveur pour cette fonctionnalité : ni jeton de notification, ni contenu, ne quittent ton téléphone."
+    },
+    {
+      "title": "8. Stockage local",
+      "content": "Certaines préférences (réglages de notifications, identifiants de rappels programmés) sont stockées uniquement sur ton appareil via un stockage local sécurisé, et ne sont jamais transmises à nos serveurs."
+    },
+    {
+      "title": "9. Services tiers",
+      "content": "Zainly s'appuie sur trois prestataires techniques, chacun limité au strict nécessaire : Supabase (authentification et base de données), RevenueCat (gestion des abonnements) et Apple (traitement des paiements in-app). Aucun autre service tiers — aucune régie publicitaire, aucun outil d'analytics ou de suivi — n'est utilisé par l'application."
+    },
+    {
+      "title": "10. Conservation des données",
+      "content": "Tes données sont conservées tant que ton compte existe, afin de te permettre de reprendre ta progression à tout moment. Elles sont supprimées lorsque tu demandes la suppression de ton compte."
+    },
+    {
+      "title": "11. Suppression du compte",
+      "content": "Tu peux demander la suppression définitive de ton compte et de tes données depuis l'application. Cette demande déclenche une suppression réelle de ton compte et de tes données associées côté serveur."
+    },
+    {
+      "title": "12. Sécurité",
+      "content": "Les données sont hébergées et protégées par Supabase, qui applique le chiffrement en transit et au repos. L'accès à ta base de données personnelle est restreint à ton compte authentifié."
+    },
+    {
+      "title": "13. Droits de l'utilisateur",
+      "content": "Tu peux à tout moment consulter, corriger ou supprimer tes données en nous contactant, ou en utilisant la suppression de compte disponible dans l'application."
+    },
+    {
+      "title": "14. Contact",
+      "content": "Pour toute question relative à cette politique ou à tes données personnelles, tu peux nous écrire à zainlyapp@gmail.com."
+    }
+  ]
+}
