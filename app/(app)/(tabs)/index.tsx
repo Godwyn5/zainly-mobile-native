@@ -20,47 +20,6 @@ import { hapticLight } from '@/utils/haptics';
 
 const SW = Dimensions.get('window').width;
 
-// ─── FreeLimitCountdown ───────────────────────────────────────────────────────
-// Isolated sub-component so its setInterval does not re-render TodayScreen.
-
-function FreeLimitCountdown() {
-  const [label, setLabel] = useState('');
-
-  const tick = useCallback(() => {
-    const now = new Date();
-    const nextMidnight = new Date(now);
-    nextMidnight.setHours(24, 0, 0, 0);
-    const diff = Math.max(0, nextMidnight.getTime() - now.getTime());
-    const h = Math.floor(diff / 3_600_000);
-    const m = Math.floor((diff % 3_600_000) / 60_000);
-    const sec = Math.floor((diff % 60_000) / 1_000);
-    setLabel(`${h}h${String(m).padStart(2, '0')}min${String(sec).padStart(2, '0')}s`);
-  }, []);
-
-  useEffect(() => {
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [tick]);
-
-  if (!label) return null;
-  return (
-    <Text style={cd.text}>
-      Prochain ayat gratuit dans {label}
-    </Text>
-  );
-}
-
-const cd = StyleSheet.create({
-  text: {
-    fontSize: 13,
-    color: colors.muted,
-    fontWeight: '500',
-    textAlign: 'center',
-    marginBottom: 12,
-  },
-});
-
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 function localDateStr(): string {
@@ -340,6 +299,9 @@ export default function TodayScreen() {
   const dotLoops = useRef<Array<Animated.CompositeAnimation | null>>(
     Array.from({ length: 8 }, () => null)
   );
+  // Entry shimmer for premium CTA
+  const premiumCtaEntryAnim = useRef(new Animated.Value(-1)).current;
+  const premiumCtaEntryDone = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -426,6 +388,18 @@ export default function TodayScreen() {
       );
       dotLoops.current[i]!.start();
     });
+
+    // Premium CTA entry shimmer - runs once on mount
+    if (!premiumCtaEntryDone.current) {
+      Animated.timing(premiumCtaEntryAnim, {
+        toValue: 1,
+        duration: 1200,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: false,
+      }).start(() => {
+        premiumCtaEntryDone.current = true;
+      });
+    }
 
     return () => {
       ctaGlowLoop.current?.stop();
@@ -691,212 +665,261 @@ export default function TodayScreen() {
       </Animated.View>
 
       {/* ══ 2. SESSION CARD ══════════════════════════════════════ */}
-      <Animated.View style={[fadeStyle(card1Anim), s.sessionCardWrap]}>
-        {/* gold glow border behind card */}
-        <View style={s.cardGlowBorder} />
-        <View style={s.sessionCard}>
-          {/* session ready ribbon */}
-          <View style={s.sessionRibbon}>
-            <View style={s.sessionRibbonDot} />
-            <Text style={s.sessionRibbonText}>
-              {prog.sessionDoneToday ? 'Session complétée aujourd\'hui' : 'Ton plan du jour est prêt'}
-            </Text>
-          </View>
-          <Text style={s.cardEyebrow}>TA SESSION DU JOUR</Text>
-          <View style={s.sessionCardHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={s.cardTitle}>
-                {prog.dueReviewCount >= 6
-                  ? 'Journée consolidation'
-                  : prog.dueReviewCount >= 2
-                    ? `${prog.dueReviewCount} ayats à consolider`
-                    : prog.dueReviewCount === 1
-                      ? '1 ayat à consolider'
-                      : prog.sessionDoneToday
-                        ? 'Session terminée'
-                        : 'Prête à commencer'}
-              </Text>
-              <Text style={s.cardSubtitle}>
-                {prog.dueReviewCount >= 6
-                  ? 'Zainly recommande de consolider avant d’avancer.'
-                  : prog.dueReviewCount > 0
-                    ? 'Zainly protège d’abord ce que tu as mémorisé.'
-                    : 'Zainly te guide étape par étape.'}
-              </Text>
-            </View>
-            {/* Charge chip with pulse dot */}
-            <View style={[
-              s.chargeChip,
-              charge.level === 'light'   && s.chargeLight,
-              charge.level === 'normal'  && s.chargeNormal,
-              charge.level === 'intense' && s.chargeIntense,
-            ]}>
-              <View style={[
-                s.chargeDot,
-                charge.level === 'light'   && s.chargeDotLight,
-                charge.level === 'normal'  && s.chargeDotNormal,
-                charge.level === 'intense' && s.chargeDotIntense,
-              ]} />
-              <Text style={s.chargeChipValue}>{charge.label}</Text>
-            </View>
-          </View>
-
-          {/* session composition mini-bar */}
-          <View style={s.compBar}>
-            {prog.dueReviewCount > 0 && (
-              <View style={[s.compSegment, s.compSegmentGreen]}>
-                <Text style={s.compSegLabel}>RÉVISIONS</Text>
-                <Text style={s.compSegValue}>{prog.dueReviewCount}</Text>
+      {!hasZainlyPlus && prog.sessionDoneToday ? (
+        // State B — Free post-session: compact premium card only
+        <Animated.View style={[fadeStyle(card1Anim), s.sessionCardWrap]}>
+          <View style={s.premiumDoneCard}>
+            {/* Large deep green form - top right, peripheral only */}
+            <View style={s.premiumBlobTopRight} pointerEvents="none" />
+            <View style={s.premiumDoneInner}>
+              <View style={s.premiumDoneHeader}>
+                <View style={s.premiumDoneDot} />
+                <Text style={s.cardEyebrow}>TA SESSION DU JOUR</Text>
               </View>
-            )}
-            {prog.todayAyatCount > 0 && (
-              <View style={[s.compSegment, s.compSegmentGold]}>
-                <Text style={s.compSegLabel}>NOUVEAUX</Text>
-                <Text style={[s.compSegValue, s.compSegValueGold]}>{prog.todayAyatCount}</Text>
-              </View>
-            )}
-            <View style={[s.compSegment, s.compSegmentLast]}>
-              <Text style={s.compSegLabel}>DURÉE</Text>
-              <Text style={s.compSegValue}>{durLabel}</Text>
-            </View>
-          </View>
-
-          <View style={s.sessionDivider} />
-
-          {/* Timeline */}
-          <View style={s.timeline}>
-            {/* Step 1: Révisions */}
-            <View style={s.tlRow}>
-              <View style={s.tlLeft}>
-                <View style={[
-                  s.tlDot,
-                  prog.dueReviewCount > 0 ? s.tlDotGold : s.tlDotMuted,
-                  prog.dueReviewCount > 0 && s.tlDotActive,
-                ]} />
-                <View style={s.tlLine} />
-              </View>
-              <View style={s.tlContent}>
-                <Text style={s.tlLabel}>RÉVISIONS</Text>
-                <Text style={[s.tlValue, prog.dueReviewCount === 0 && s.tlMuted]}>
-                  {prog.dueReviewCount > 0
-                    ? `${prog.dueReviewCount} ayat${prog.dueReviewCount > 1 ? 's' : ''} à revoir`
-                    : "Aucune révision aujourd'hui"}
+              <View style={s.premiumMessageBlock}>
+                <Text style={s.premiumDoneTextMain}>
+                  Ta session du jour est terminée.
+                </Text>
+                <Text style={s.premiumDoneTextSub}>
+                  Envie de continuer ?
                 </Text>
               </View>
-            </View>
-
-            {/* Step 2: Mémorisation */}
-            <View style={s.tlRow}>
-              <View style={s.tlLeft}>
-                <View style={[
-                  s.tlDot,
-                  prog.sessionDoneToday ? s.tlDotMuted : s.tlDotGreen,
-                  !prog.sessionDoneToday && s.tlDotActive,
-                ]} />
-                <View style={s.tlLine} />
-              </View>
-              <View style={s.tlContent}>
-                <Text style={s.tlLabel}>NOUVELLE MÉMORISATION</Text>
-                {prog.sessionDoneToday ? (
-                  <Text style={[s.tlValue, s.tlMuted]}>Session du jour terminée</Text>
-                ) : prog.surahExhausted ? (
-                  <Text style={s.tlValue}>
-                    {prog.nextSurahName ? `Passage à ${prog.nextSurahName}` : 'Sourate terminée'}
-                  </Text>
-                ) : (
-                  <Text style={s.tlValue}>{memLabel}</Text>
-                )}
-              </View>
-            </View>
-
-            {/* Step 3: Durée */}
-            <View style={[s.tlRow, s.tlRowLast]}>
-              <View style={s.tlLeft}>
-                <View style={[s.tlDot, prog.sessionDoneToday ? s.tlDotMuted : s.tlDotBorder]} />
-              </View>
-              <View style={s.tlContent}>
-                <Text style={s.tlLabel}>DURÉE ESTIMÉE</Text>
-                <Text style={[s.tlValue, prog.sessionDoneToday && s.tlMuted]}>
-                  {prog.sessionDoneToday ? '—' : durLabel}
-                </Text>
-              </View>
+              <Animated.View style={s.premiumCtaWrap}>
+                <View style={s.premiumCtaGlow} />
+                <Pressable
+                  style={({ pressed }) => [
+                    s.premiumCta,
+                    pressed && s.premiumCtaPressed,
+                  ]}
+                  onPress={() => {
+                    if (isPushing.current) return;
+                    isPushing.current = true;
+                    hapticLight();
+                    router.push('/premium?context=daily_limit');
+                    setTimeout(() => { isPushing.current = false; }, 1000);
+                  }}
+                >
+                  <Animated.View
+                    style={[
+                      s.premiumCtaShine,
+                      {
+                        left: ctaShineAnim.interpolate({
+                          inputRange: [-1, 1],
+                          outputRange: ['-60%', '160%'],
+                        }),
+                      },
+                    ]}
+                  />
+                  <Animated.View
+                    style={[
+                      s.premiumCtaEntryShimmer,
+                      {
+                        left: premiumCtaEntryAnim.interpolate({
+                          inputRange: [-1, 1],
+                          outputRange: ['-40%', '140%'],
+                        }),
+                      },
+                    ]}
+                  />
+                  <Text style={s.premiumCtaText}>Mémoriser un nouvel ayat</Text>
+                </Pressable>
+              </Animated.View>
             </View>
           </View>
-
-          <View style={s.sessionDivider} />
-
-          {/* CTA — five cases:
-               1) révisions dues → /revision (tous)
-               2) gratuit, session pas faite → /session
-               3) gratuit, session faite → carte limite + countdown + /premium
-               4) Zainly+, session faite → continuer /session
-               5) Zainly+, session pas faite → /session */}
-          {prog.dueReviewCount > 0 ? (
-            // Cas 1 — révisions prioritaires (gratuit et Zainly+)
-            <View style={s.ctaWrap}>
-              <Animated.View style={[s.ctaGlow, { opacity: ctaGlowAnim }]} />
-              <Pressable
-                style={({ pressed }) => [s.cta, pressed && s.ctaPressed]}
-                onPress={() => {
-                  if (isPushing.current) return;
-                  isPushing.current = true;
-                  hapticLight();
-                  router.push('/(app)/revision');
-                  setTimeout(() => { isPushing.current = false; }, 1000);
-                }}
-              >
-                <Text style={s.ctaText}>
+        </Animated.View>
+      ) : (
+        // State A — Session available: full session card
+        <Animated.View style={[fadeStyle(card1Anim), s.sessionCardWrap]}>
+          {/* gold glow border behind card */}
+          <View style={s.cardGlowBorder} />
+          <View style={s.sessionCard}>
+            {/* session ready ribbon */}
+            <View style={s.sessionRibbon}>
+              <View style={s.sessionRibbonDot} />
+              <Text style={s.sessionRibbonText}>
+                {prog.sessionDoneToday ? 'Session complétée aujourd\'hui' : 'Ton plan du jour est prêt'}
+              </Text>
+            </View>
+            <Text style={s.cardEyebrow}>TA SESSION DU JOUR</Text>
+            <View style={s.sessionCardHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={s.cardTitle}>
                   {prog.dueReviewCount >= 6
-                    ? 'Consolider mon Hifz →'
+                    ? 'Journée consolidation'
                     : prog.dueReviewCount >= 2
-                      ? 'Commencer mes révisions →'
-                      : 'Réviser maintenant →'}
+                      ? `${prog.dueReviewCount} ayats à consolider`
+                      : prog.dueReviewCount === 1
+                        ? '1 ayat à consolider'
+                        : prog.sessionDoneToday
+                          ? 'Session terminée'
+                          : 'Prête à commencer'}
                 </Text>
-                <Animated.View pointerEvents="none" style={[s.ctaShine, { left: ctaShineX }]} />
-              </Pressable>
-            </View>
-          ) : !hasZainlyPlus && prog.sessionDoneToday ? (
-            // Cas 3 — gratuit, limite atteinte
-            <View style={s.limitCard}>
-              <View style={s.limitHeader}>
-                <View style={s.limitDot} />
-                <Text style={s.limitEyebrow}>AYAT DU JOUR TERMINÉ</Text>
+                <Text style={s.cardSubtitle}>
+                  {prog.dueReviewCount >= 6
+                    ? 'Zainly recommande de consolider avant d’avancer.'
+                    : prog.dueReviewCount > 0
+                      ? 'Zainly protège d’abord ce que tu as mémorisé.'
+                      : 'Zainly te guide étape par étape.'}
+                </Text>
               </View>
-              <Text style={s.limitTitle}>Ayat du jour terminé</Text>
-              <Text style={s.limitSubtitle}>
-                Tu peux revenir demain gratuitement, ou passer à Zainly+ pour avancer sans limite aujourd'hui.
-              </Text>
-              <FreeLimitCountdown />
-              <Pressable
-                style={({ pressed }) => [s.limitCta, pressed && s.limitCtaPressed]}
-                onPress={() => {
-                  if (isPushing.current) return;
-                  isPushing.current = true;
-                  hapticLight();
-                  router.push('/premium?context=daily_limit');
-                  setTimeout(() => { isPushing.current = false; }, 1000);
-                }}
-              >
-                <Text style={s.limitCtaText}>Continuer avec Zainly+</Text>
-              </Pressable>
-              <Pressable
-                style={s.limitSecondary}
-                onPress={() => {
-                  hapticLight();
-                  router.replace('/(app)/(tabs)/progression');
-                }}
-              >
-                <Text style={s.limitSecondaryText}>Voir ma progression</Text>
-              </Pressable>
+              {/* Charge chip with pulse dot */}
+              <View style={[
+                s.chargeChip,
+                charge.level === 'light'   && s.chargeLight,
+                charge.level === 'normal'  && s.chargeNormal,
+                charge.level === 'intense' && s.chargeIntense,
+              ]}>
+                <View style={[
+                  s.chargeDot,
+                  charge.level === 'light'   && s.chargeDotLight,
+                  charge.level === 'normal'  && s.chargeDotNormal,
+                  charge.level === 'intense' && s.chargeDotIntense,
+                ]} />
+                <Text style={s.chargeChipValue}>{charge.label}</Text>
+              </View>
             </View>
-          ) : hasZainlyPlus && prog.sessionDoneToday ? (
-            // Cas 4 — Zainly+, peut continuer
-            <View style={s.zplusDoneCard}>
-              <Text style={s.zplusDoneTitle}>Session terminée</Text>
-              <Text style={s.zplusDoneSub}>
-                Tu peux continuer avec l'ayat suivant quand tu veux.
-              </Text>
+
+            {/* session composition mini-bar */}
+            <View style={s.compBar}>
+              {prog.dueReviewCount > 0 && (
+                <View style={[s.compSegment, s.compSegmentGreen]}>
+                  <Text style={s.compSegLabel}>RÉVISIONS</Text>
+                  <Text style={s.compSegValue}>{prog.dueReviewCount}</Text>
+                </View>
+              )}
+              {prog.todayAyatCount > 0 && (
+                <View style={[s.compSegment, s.compSegmentGold]}>
+                  <Text style={s.compSegLabel}>NOUVEAUX</Text>
+                  <Text style={[s.compSegValue, s.compSegValueGold]}>{prog.todayAyatCount}</Text>
+                </View>
+              )}
+              <View style={[s.compSegment, s.compSegmentLast]}>
+                <Text style={s.compSegLabel}>DURÉE</Text>
+                <Text style={s.compSegValue}>{durLabel}</Text>
+              </View>
+            </View>
+
+            <View style={s.sessionDivider} />
+
+            {/* Timeline */}
+            <View style={s.timeline}>
+              {/* Step 1: Révisions */}
+              <View style={s.tlRow}>
+                <View style={s.tlLeft}>
+                  <View style={[
+                    s.tlDot,
+                    prog.dueReviewCount > 0 ? s.tlDotGold : s.tlDotMuted,
+                    prog.dueReviewCount > 0 && s.tlDotActive,
+                  ]} />
+                  <View style={s.tlLine} />
+                </View>
+                <View style={s.tlContent}>
+                  <Text style={s.tlLabel}>RÉVISIONS</Text>
+                  <Text style={[s.tlValue, prog.dueReviewCount === 0 && s.tlMuted]}>
+                    {prog.dueReviewCount > 0
+                      ? `${prog.dueReviewCount} ayat${prog.dueReviewCount > 1 ? 's' : ''} à revoir`
+                      : "Aucune révision aujourd'hui"}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Step 2: Mémorisation */}
+              <View style={s.tlRow}>
+                <View style={s.tlLeft}>
+                  <View style={[
+                    s.tlDot,
+                    prog.sessionDoneToday ? s.tlDotMuted : s.tlDotGreen,
+                    !prog.sessionDoneToday && s.tlDotActive,
+                  ]} />
+                  <View style={s.tlLine} />
+                </View>
+                <View style={s.tlContent}>
+                  <Text style={s.tlLabel}>NOUVELLE MÉMORISATION</Text>
+                  {prog.sessionDoneToday ? (
+                    <Text style={[s.tlValue, s.tlMuted]}>Session du jour terminée</Text>
+                  ) : prog.surahExhausted ? (
+                    <Text style={s.tlValue}>
+                      {prog.nextSurahName ? `Passage à ${prog.nextSurahName}` : 'Sourate terminée'}
+                    </Text>
+                  ) : (
+                    <Text style={s.tlValue}>{memLabel}</Text>
+                  )}
+                </View>
+              </View>
+
+              {/* Step 3: Durée */}
+              <View style={[s.tlRow, s.tlRowLast]}>
+                <View style={s.tlLeft}>
+                  <View style={[s.tlDot, prog.sessionDoneToday ? s.tlDotMuted : s.tlDotBorder]} />
+                </View>
+                <View style={s.tlContent}>
+                  <Text style={s.tlLabel}>DURÉE ESTIMÉE</Text>
+                  <Text style={[s.tlValue, prog.sessionDoneToday && s.tlMuted]}>
+                    {prog.sessionDoneToday ? '—' : durLabel}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={s.sessionDivider} />
+
+            {/* CTA — five cases:
+                 1) révisions dues → /revision (tous)
+                 2) gratuit, session pas faite → /session
+                 3) gratuit, session faite → carte limite + countdown + /premium
+                 4) Zainly+, session faite → continuer /session
+                 5) Zainly+, session pas faite → /session */}
+            {prog.dueReviewCount > 0 ? (
+              // Cas 1 — révisions prioritaires (gratuit et Zainly+)
               <View style={s.ctaWrap}>
+                <Animated.View style={[s.ctaGlow, { opacity: ctaGlowAnim }]} />
+                <Pressable
+                  style={({ pressed }) => [s.cta, pressed && s.ctaPressed]}
+                  onPress={() => {
+                    if (isPushing.current) return;
+                    isPushing.current = true;
+                    hapticLight();
+                    router.push('/(app)/revision');
+                    setTimeout(() => { isPushing.current = false; }, 1000);
+                  }}
+                >
+                  <Text style={s.ctaText}>
+                    {prog.dueReviewCount >= 6
+                      ? 'Consolider mon Hifz →'
+                      : prog.dueReviewCount >= 2
+                        ? 'Commencer mes révisions →'
+                        : 'Réviser maintenant →'}
+                  </Text>
+                  <Animated.View pointerEvents="none" style={[s.ctaShine, { left: ctaShineX }]} />
+                </Pressable>
+              </View>
+            ) : hasZainlyPlus && prog.sessionDoneToday ? (
+              // Cas 4 — Zainly+, peut continuer
+              <View style={s.zplusDoneCard}>
+                <Text style={s.zplusDoneTitle}>Session terminée</Text>
+                <Text style={s.zplusDoneSub}>
+                  Tu peux continuer avec l'ayat suivant quand tu veux.
+                </Text>
+                <View style={s.ctaWrap}>
+                  <Pressable
+                    style={({ pressed }) => [s.cta, pressed && s.ctaPressed]}
+                    onPress={() => {
+                      if (isPushing.current) return;
+                      isPushing.current = true;
+                      hapticLight();
+                      router.push('/(app)/session');
+                      setTimeout(() => { isPushing.current = false; }, 1000);
+                    }}
+                  >
+                    <Text style={s.ctaText}>Continuer ma mémorisation →</Text>
+                    <Animated.View pointerEvents="none" style={[s.ctaShine, { left: ctaShineX }]} />
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              // Cas 2 + 5 — session pas encore faite (gratuit ou Zainly+)
+              <View style={s.ctaWrap}>
+                <Animated.View style={[s.ctaGlow, { opacity: ctaGlowAnim }]} />
                 <Pressable
                   style={({ pressed }) => [s.cta, pressed && s.ctaPressed]}
                   onPress={() => {
@@ -907,32 +930,14 @@ export default function TodayScreen() {
                     setTimeout(() => { isPushing.current = false; }, 1000);
                   }}
                 >
-                  <Text style={s.ctaText}>Continuer ma mémorisation →</Text>
+                  <Text style={s.ctaText}>Lancer ma session →</Text>
                   <Animated.View pointerEvents="none" style={[s.ctaShine, { left: ctaShineX }]} />
                 </Pressable>
               </View>
-            </View>
-          ) : (
-            // Cas 2 + 5 — session pas encore faite (gratuit ou Zainly+)
-            <View style={s.ctaWrap}>
-              <Animated.View style={[s.ctaGlow, { opacity: ctaGlowAnim }]} />
-              <Pressable
-                style={({ pressed }) => [s.cta, pressed && s.ctaPressed]}
-                onPress={() => {
-                  if (isPushing.current) return;
-                  isPushing.current = true;
-                  hapticLight();
-                  router.push('/(app)/session');
-                  setTimeout(() => { isPushing.current = false; }, 1000);
-                }}
-              >
-                <Text style={s.ctaText}>Lancer ma session →</Text>
-                <Animated.View pointerEvents="none" style={[s.ctaShine, { left: ctaShineX }]} />
-              </Pressable>
-            </View>
-          )}
-        </View>
-      </Animated.View>
+            )}
+          </View>
+        </Animated.View>
+      )}
 
       {/* ══ 3. SURAH PROGRESS CARD ════════════════════════════════ */}
       {!prog.surahExhausted && prog.currentSurah != null && prog.surahTotalAyats > 0 && (
@@ -1299,44 +1304,6 @@ const s = StyleSheet.create({
   },
   ctaDoneText: { fontSize: 15, fontWeight: '600', color: colors.muted },
 
-  // ── Free limit card (cas 3) ──
-  limitCard: {
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: 20, borderWidth: 1, borderColor: 'rgba(184,150,46,0.25)',
-    padding: spacing.lg,
-  },
-  limitHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
-  limitDot: {
-    width: 6, height: 6, borderRadius: 3,
-    backgroundColor: colors.gold, marginRight: 6,
-  },
-  limitEyebrow: {
-    fontSize: 9, fontWeight: '700', letterSpacing: 1.5,
-    color: colors.gold, textTransform: 'uppercase',
-  },
-  limitTitle: {
-    fontSize: 16, fontWeight: '700', color: colors.primary,
-    marginBottom: 6,
-  },
-  limitSubtitle: {
-    fontSize: 13, color: colors.muted, lineHeight: 20,
-    marginBottom: spacing.md,
-  },
-  limitCta: {
-    backgroundColor: colors.primary,
-    borderRadius: 14, height: 52,
-    alignItems: 'center', justifyContent: 'center',
-    marginBottom: spacing.sm,
-    shadowColor: colors.primary, shadowOpacity: 0.30,
-    shadowRadius: 8, shadowOffset: { width: 0, height: 4 }, elevation: 4,
-  },
-  limitCtaPressed: { opacity: 0.82, transform: [{ scale: 0.977 }] },
-  limitCtaText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
-  limitSecondary: {
-    height: 40, alignItems: 'center', justifyContent: 'center',
-  },
-  limitSecondaryText: { fontSize: 13, color: colors.muted, fontWeight: '500' },
-
   // ── Zainly+ done card (cas 4) ──
   zplusDoneCard: {
     backgroundColor: colors.surfaceMuted,
@@ -1350,6 +1317,74 @@ const s = StyleSheet.create({
   zplusDoneSub: {
     fontSize: 13, color: colors.muted, lineHeight: 20,
     marginBottom: spacing.md,
+  },
+
+  // ── Premium done card (cas 3 - Free post-session redesign) ──
+  premiumDoneCard: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderRadius: 22, borderWidth: 1.5, borderColor: 'rgba(184,150,46,0.35)',
+    marginBottom: spacing.md, overflow: 'hidden',
+    shadowColor: colors.gold, shadowOpacity: 0.12,
+    shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 4,
+  },
+  // Large deep green form - top right, peripheral only
+  premiumBlobTopRight: {
+    position: 'absolute', top: -100, right: -80,
+    width: 180, height: 180, borderRadius: 90,
+    backgroundColor: 'rgba(22,48,38,0.88)',
+    zIndex: 0,
+  },
+  premiumDoneInner: { flex: 1, padding: spacing.lg, zIndex: 1 },
+  premiumDoneHeader: {
+    flexDirection: 'row', alignItems: 'center', marginBottom: spacing.sm,
+  },
+  premiumDoneDot: {
+    width: 6, height: 6, borderRadius: 3,
+    backgroundColor: colors.gold, marginRight: 7,
+  },
+  premiumMessageBlock: { marginBottom: spacing.md },
+  premiumDoneTextMain: {
+    fontSize: 16, fontWeight: '700', color: colors.primary, lineHeight: 24,
+    marginBottom: 4,
+  },
+  premiumDoneTextSub: {
+    fontSize: 15, fontWeight: '500', color: colors.muted, lineHeight: 22,
+  },
+  premiumCtaWrap: { position: 'relative' },
+  premiumCtaGlow: {
+    position: 'absolute', top: -6, left: -6, right: -6, bottom: -6,
+    borderRadius: 20,
+    backgroundColor: colors.gold,
+    opacity: 0.25,
+    zIndex: 0,
+  },
+  premiumCta: {
+    backgroundColor: colors.gold,
+    borderRadius: 16, height: 56,
+    alignItems: 'center', justifyContent: 'center',
+    overflow: 'hidden',
+    zIndex: 1,
+    shadowColor: colors.primary, shadowOpacity: 0.28,
+    shadowRadius: 12, shadowOffset: { width: 0, height: 5 }, elevation: 6,
+    borderWidth: 1, borderColor: 'rgba(184,150,46,0.4)',
+  },
+  premiumCtaPressed: { opacity: 0.90, transform: [{ scale: 0.97 }] },
+  premiumCtaShine: {
+    position: 'absolute', top: 0, width: '40%', height: '100%',
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    transform: [{ skewX: '-20deg' }],
+    zIndex: 2,
+  },
+  premiumCtaEntryShimmer: {
+    position: 'absolute', top: 0, width: '30%', height: '100%',
+    backgroundColor: 'rgba(255,255,255,0.35)',
+    transform: [{ skewX: '-20deg' }],
+    zIndex: 2,
+  },
+  premiumCtaText: {
+    color: '#FFFFFF', fontSize: 16, fontWeight: '800',
+    letterSpacing: 0.5, zIndex: 3,
   },
 
   // ── surah progress ──
