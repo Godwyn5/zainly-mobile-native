@@ -23,7 +23,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import { hapticLight, hapticMedium } from '@/utils/haptics';
 import { hasValidPendingOnboardingPlan } from '@/lib/pendingOnboardingPlan';
-import { planQueryOptions, progressQueryOptions, dueReviewsQueryOptions, profileQueryOptions } from '@/queries';
+import { planQueryOptions, progressQueryOptions, dueReviewsQueryOptions, profileQueryOptions, learnedItemsQueryOptions } from '@/queries';
 
 // ─── gold accent tokens — shared between splash & welcome ───────────────────
 const GOLD         = '#C6A15B';
@@ -115,6 +115,7 @@ export default function EntryScreen() {
 
     const mountedRef = { current: true };
 
+    // Critical warm-up: blocks navigation to Today
     Promise.all([
       queryClient.prefetchQuery(planQueryOptions(userId)),
       queryClient.prefetchQuery(progressQueryOptions(userId)),
@@ -127,6 +128,13 @@ export default function EntryScreen() {
       .catch(() => {
         if (mountedRef.current) setWarmupReady(true);
       });
+
+    // Non-blocking warm-up: Mon Hifz data
+    // Starts in parallel but does NOT block warmupReady or navigation
+    // Errors are isolated and do not affect Today launch
+    queryClient.prefetchQuery(learnedItemsQueryOptions(userId)).catch(() => {
+      // Silently ignore errors - Mon Hifz will handle its own loading state
+    });
 
     return () => { mountedRef.current = false; };
   }, [fontsLoaded, ready, userId, hasPendingOnboarding, queryClient]);

@@ -3,6 +3,7 @@ import { fetchPlan } from '@/db/plans';
 import { fetchProgress } from '@/db/progress';
 import { fetchDueCount } from '@/db/reviewItems';
 import { fetchProfile } from '@/db/profiles';
+import { fetchLearnedItems } from '@/db/reviewItems';
 
 // ─── Date helpers (must match useDueReviews exactly) ────────────────────────
 
@@ -56,5 +57,14 @@ export function profileQueryOptions(userId: string | undefined): UseQueryOptions
     queryFn: () => fetchProfile(userId!),
     enabled: !!userId,
     staleTime: 60_000,
+  };
+}
+
+export function learnedItemsQueryOptions(userId: string | undefined): UseQueryOptions {
+  return {
+    queryKey: ['learnedItems', userId],
+    queryFn: () => fetchLearnedItems(userId!),
+    enabled: !!userId,
+    staleTime: 5 * 60_000,
   };
 }
