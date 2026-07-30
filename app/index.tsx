@@ -5,16 +5,15 @@ import {
 } from 'react-native';
 import { useFonts } from 'expo-font';
 import {
-  CormorantGaramond_600SemiBold,
-  CormorantGaramond_700Bold,
-} from '@expo-google-fonts/cormorant-garamond';
-import {
   Amiri_700Bold,
 } from '@expo-google-fonts/amiri';
 import {
   Cinzel_500Medium,
   Cinzel_600SemiBold,
 } from '@expo-google-fonts/cinzel';
+import {
+  Lora_500Medium,
+} from '@expo-google-fonts/lora';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
@@ -36,8 +35,6 @@ const SPLASH_GOLD_DIM       = '#8A744A';
 // ─── font family names ───────────────────────────────────────────────────────
 const F_BRAND        = 'Cinzel_500Medium';
 const F_BRAND_SB     = 'Cinzel_600SemiBold';
-const F_DISPLAY_BOLD = 'CormorantGaramond_700Bold';
-const F_DISPLAY      = 'CormorantGaramond_600SemiBold';
 const F_ARABIC       = 'Amiri_700Bold';
 
 // ─── hadith removed — no longer used in Welcome ─────────────────────────────
@@ -55,11 +52,10 @@ export default function EntryScreen() {
   const navigatedRef = useRef(false);
 
   const [fontsLoaded] = useFonts({
-    CormorantGaramond_600SemiBold,
-    CormorantGaramond_700Bold,
     Amiri_700Bold,
     Cinzel_500Medium,
     Cinzel_600SemiBold,
+    Lora_500Medium,
   });
 
   // ─── crossfade animation values ────────────────────────────────────────────
@@ -245,7 +241,7 @@ export default function EntryScreen() {
 
                 {/* Headline */}
                 <View style={styles.headlineWrap}>
-                  <Text style={styles.headline}>Mémorise le Coran</Text>
+                  <Text style={styles.headline} numberOfLines={1} adjustsFontSizeToFit={true}>Mémorise le Coran</Text>
                   <Text style={styles.headlineAccent}>avec constance.</Text>
                 </View>
 
@@ -433,21 +429,23 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   headline: {
-    fontFamily: F_DISPLAY_BOLD,
-    fontSize: 42,
+    fontFamily: 'Lora_500Medium',
+    fontSize: 40,
     color: SPLASH_GREEN,
-    lineHeight: 50,
+    lineHeight: 48,
     textAlign: 'center',
+    flexShrink: 0,
   },
   headlineAccent: {
-    fontFamily: F_DISPLAY_BOLD,
-    fontSize: 42,
+    fontFamily: 'Lora_500Medium',
+    fontSize: 40,
     color: GOLD_DARK,
-    lineHeight: 50,
+    lineHeight: 48,
     textAlign: 'center',
+    flexShrink: 0,
   },
   subtitle: {
-    fontFamily: F_DISPLAY,
+    fontWeight: '500',
     fontSize: 16,
     color: SPLASH_GREEN,
     lineHeight: 24,
