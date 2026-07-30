@@ -6,16 +6,16 @@ import {
   Animated,
   Easing,
   StyleSheet,
+  Platform,
   useWindowDimensions,
 } from 'react-native';
-import { GlassView } from 'expo-glass-effect';
+import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 
-// NOTE — Uses expo-glass-effect for authentic Liquid Glass material (UIGlassEffect).
-// On iOS 26+ this renders the real Liquid Glass with refraction and specular highlights.
-// On iOS <26 and Android, it gracefully degrades to a standard blur effect.
-// Requires a dev client rebuild that includes expo-glass-effect.
+// NOTE — Uses expo-blur for stable, cross-platform glass material.
+// On iOS this renders a true system blur. On Android, it renders a real blur
+// on API 31+ and gracefully degrades to a translucent view on older devices.
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -368,14 +368,16 @@ export function PremiumTabBar({ state, navigation }: BottomTabBarProps) {
       <View style={t.barShadow}>
         <View style={t.bar}>
 
-          {/* Liquid Glass material — authentic UIGlassEffect via expo-glass-effect */}
-          <GlassView
+          {/* Premium glass material — stable expo-blur */}
+          <BlurView
             style={StyleSheet.absoluteFill}
-            glassEffectStyle="regular"
-            isInteractive={false}
+            intensity={Platform.OS === 'ios' ? 40 : 60}
+            tint="dark"
+            experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
+            pointerEvents="none"
           />
 
-          {/* sliding active capsule — neutral glass, same material as bar */}
+          {/* sliding active capsule — same glass material as bar */}
           <Animated.View
             pointerEvents="none"
             style={[
@@ -383,10 +385,11 @@ export function PremiumTabBar({ state, navigation }: BottomTabBarProps) {
               { width: BUBBLE_W, transform: [{ translateX: bubbleX }] },
             ]}
           >
-            <GlassView
+            <BlurView
               style={StyleSheet.absoluteFill}
-              glassEffectStyle="regular"
-              isInteractive={false}
+              intensity={Platform.OS === 'ios' ? 40 : 60}
+              tint="dark"
+              experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
             />
           </Animated.View>
 
