@@ -201,6 +201,7 @@ function MethodCards({ anims }: { anims: Animated.Value[] }) {
         const isActive    = state === 'active';
         const isCompleted = state === 'completed';
         const isLocked    = state === 'locked';
+        const isRightCard = i % 2 === 1; // Second card in each row
 
         const cardBorder  = isActive    ? 'rgba(184,150,46,0.55)'
                           : isCompleted ? 'rgba(45,106,79,0.40)'
@@ -223,6 +224,8 @@ function MethodCards({ anims }: { anims: Animated.Value[] }) {
             style={[
               mc.card,
               { borderColor: cardBorder, backgroundColor: cardBg },
+              !isRightCard && mc.cardMarginRight,
+              i < 2 && mc.cardMarginBottom,
               isActive && mc.cardActive,
               isCompleted && mc.cardCompleted,
               isLocked && mc.cardLocked,
@@ -248,7 +251,7 @@ function MethodCards({ anims }: { anims: Animated.Value[] }) {
   );
 }
 const mc = StyleSheet.create({
-  grid:          { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginBottom: spacing.md },
+  grid:          { flexDirection: 'row', flexWrap: 'wrap', marginBottom: spacing.md },
   card:          {
     width: (SW - spacing.lg * 2 - spacing.sm) / 2,
     backgroundColor: colors.surface,
@@ -257,6 +260,8 @@ const mc = StyleSheet.create({
     shadowColor: colors.gold, shadowOpacity: 0.10, shadowRadius: 8,
     shadowOffset: { width: 0, height: 3 }, elevation: 2,
   },
+  cardMarginRight: { marginRight: spacing.sm },
+  cardMarginBottom: { marginBottom: spacing.sm },
   cardActive:    {
     shadowColor: colors.gold, shadowOpacity: 0.22, shadowRadius: 14,
     shadowOffset: { width: 0, height: 4 }, elevation: 4,
