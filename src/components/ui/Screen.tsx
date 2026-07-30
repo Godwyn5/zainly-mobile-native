@@ -3,11 +3,7 @@ import { ScrollView, StyleSheet, ViewStyle } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
-
-// Floating pill tab bar constants (mirrors PremiumTabBar.tsx)
-const TAB_BAR_H   = 64;  // pill height
-const TAB_BAR_GAP = 8;   // gap above bottom inset (bottomInset + 8 in PremiumTabBar)
-const BREATHE     = 24;  // extra breathing room below last card
+import { TAB_BAR_HEIGHT, TAB_BAR_BOTTOM_GAP, TAB_BAR_BREATHING_ROOM } from '@/theme/tabBar';
 
 interface ScreenProps {
   children: ReactNode;
@@ -18,7 +14,7 @@ interface ScreenProps {
 export function Screen({ children, scroll = true, contentStyle }: ScreenProps) {
   const insets = useSafeAreaInsets();
   // Total clearance needed: pill height + inset + gap + breathing room
-  const bottomPad = TAB_BAR_H + Math.max(insets.bottom, 8) + TAB_BAR_GAP + BREATHE;
+  const bottomPad = TAB_BAR_HEIGHT + Math.max(insets.bottom, TAB_BAR_BOTTOM_GAP) + TAB_BAR_BOTTOM_GAP + TAB_BAR_BREATHING_ROOM;
 
   if (scroll) {
     // Flatten contentStyle so we can extract any caller-provided paddingBottom,
