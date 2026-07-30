@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { colors } from '@/theme/colors';
+import { hapticSelection } from '@/utils/haptics';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -329,6 +330,7 @@ export function PremiumTabBar({ state, navigation }: BottomTabBarProps) {
         springTo(bubbleTargetX(targetIdx), true);
 
         if (targetIdx !== prevIdxRef.current) {
+          hapticSelection();
           prevIdxRef.current = targetIdx;
           const route = visibleRoutes[targetIdx];
           if (route) navigation.navigate(route.name, undefined);
@@ -345,6 +347,7 @@ export function PremiumTabBar({ state, navigation }: BottomTabBarProps) {
   // ── tap handler ───────────────────────────────────────────────────────────
 
   const handlePress = useCallback((routeName: string, tabIdx: number, isFocused: boolean) => {
+    hapticSelection();
     // taps use fast timing — feels crisper than spring for point-to-point jumps
     timingTo(bubbleTargetX(tabIdx));
     if (!isFocused) {
