@@ -789,43 +789,19 @@ function EmptyState({ anim }: { anim: Animated.Value }) {
   );
 }
 
-// ─── LoadingState ─────────────────────────────────────────────────────────────
-
-function LoadingState() {
-  return (
-    <View style={{ padding: spacing.lg, gap: 16 }}>
-      <View style={[hc.card, { paddingVertical: 28, gap: 14 }]}>
-        <Skeleton w={80}  h={48} style={{ alignSelf: 'center' }} />
-        <Skeleton w={140} h={13} style={{ alignSelf: 'center' }} />
-      </View>
-      <View style={{ gap: 10 }}>
-        <Skeleton w={120}   h={9}  />
-        <Skeleton w="100%"  h={72} />
-      </View>
-      <View style={{ gap: 10 }}>
-        <Skeleton w={150}   h={9}  />
-        <Skeleton w="100%"  h={56} />
-      </View>
-      <View style={{ gap: 10 }}>
-        <Skeleton w={100}   h={9}  />
-        <Skeleton w="100%"  h={70} />
-        <Skeleton w="100%"  h={70} />
-      </View>
-    </View>
-  );
-}
-
 // ─── HifzScreen ───────────────────────────────────────────────────────────────
 
 export default function HifzScreen() {
   const insets = useSafeAreaInsets();
   const userId = useAuthStore((s: { user: { id?: string } | null }) => s.user?.id);
 
-  const { data: progress, isLoading: pLoading, isError: pError, refetch: pRefetch } = useProgress(userId);
-  const { data: items,    isLoading: iLoading, isError: iError,  refetch: iRefetch } = useLearnedItems(userId);
+  const { data: progress, isLoading: pLoading, isError: pError, isFetched: pFetched, refetch: pRefetch } = useProgress(userId);
+  const { data: items,    isLoading: iLoading, isError: iError,  isFetched: iFetched, refetch: iRefetch } = useLearnedItems(userId);
 
   const isLoading = pLoading || iLoading;
   const isError   = pError   || iError;
+  const hasFetchedOnce = pFetched && iFetched;
+  const isInitialLoading = (pLoading && !pFetched) || (iLoading && !iFetched);
   const refetch   = () => { pRefetch(); iRefetch(); };
 
   // ── detail modal ──
@@ -930,17 +906,21 @@ export default function HifzScreen() {
   const surahCount = surahGroups.length;
   const isSingle   = totalMemorized <= 1;
 
-  // ── loading ──
-  if (isLoading) {
+  // ── initial loading state ──
+  // Only show a minimal loading indicator during the very first fetch.
+  // Once queries have fetched at least once (isFetched), we can render
+  // EmptyState or content directly without any skeleton flash.
+  // This prevents the Dashboard Skeleton from ever appearing in Mon Hifz.
+  // isInitialLoading handles the case where userId is undefined (hooks disabled):
+  // - userId undefined → hooks don't execute → isInitialLoading=false → render EmptyState
+  // - userId defined, first fetch → isInitialLoading=true → show spinner
+  // - userId defined, fetched → isInitialLoading=false → render content
+  if (isInitialLoading) {
     return (
       <SafeAreaView style={g.safe}>
-        <ScrollView style={g.scroll} contentContainerStyle={{ paddingBottom: scrollPb }} showsVerticalScrollIndicator={false}>
-          <View style={g.header}>
-            <Text style={g.eyebrow}>MON HIFZ</Text>
-            <Text style={g.pageTitle}>Bibliothèque</Text>
-          </View>
-          <LoadingState />
-        </ScrollView>
+        <View style={g.centeredFill}>
+          <ActivityIndicator color={GREEN} />
+        </View>
       </SafeAreaView>
     );
   }
