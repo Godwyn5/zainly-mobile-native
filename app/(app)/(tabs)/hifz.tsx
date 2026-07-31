@@ -22,7 +22,6 @@ import { useAuthStore }    from '@/store/authStore';
 import { useProgress }     from '@/hooks/useProgress';
 import { useLearnedItems } from '@/hooks/useLearnedItems';
 import { useAyatAudio }    from '@/hooks/useAyatAudio';
-import { REVIEW_OFFSETS }  from '@/db/reviewItems';
 import { getQuranAyahRange, getSurahName } from '@/core/quranContent';
 import { getAyatAudioUrl } from '@/core/quranAudio';
 import type { QuranAyahContent } from '@/core/quranContent';
@@ -51,8 +50,6 @@ function stopAllHifzAudio(except?: () => void) {
 
 const GOLD  = colors.gold;
 const GREEN = colors.primary;
-const REVIEW_CHIPS = REVIEW_OFFSETS.map((n: number) => `J+${n}`);
-
 const SURAH_TOTAL: Record<number, number> = {
   1:7,2:286,3:200,4:176,5:120,6:165,7:206,8:75,9:129,10:109,11:123,12:111,
   13:43,14:52,15:99,16:128,17:111,18:110,19:98,20:135,21:112,22:78,23:118,
@@ -743,35 +740,6 @@ function LastAyatCard({
   );
 }
 
-// ─── ReviewCard ───────────────────────────────────────────────────────────────
-
-function ReviewCard({ isSingle, anim }: { isSingle: boolean; anim: Animated.Value }) {
-  return (
-    <Animated.View style={[rv.wrap, {
-      opacity: anim,
-      transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
-    }]}>
-      <Text style={g.sectionLabel}>RÉVISIONS À VENIR</Text>
-      <View style={rv.card}>
-        <View style={rv.accentBar} />
-        <View style={rv.body}>
-          <Text style={rv.sub}>
-            {isSingle ? 'Ton ayat sera revu selon ce calendrier.' : 'Tes ayats seront revus selon ce calendrier.'}
-          </Text>
-          <View style={rv.chips}>
-            {REVIEW_CHIPS.map(c => (
-              <View key={c} style={rv.chip}>
-                <Text style={rv.chipText}>{c}</Text>
-              </View>
-            ))}
-          </View>
-          <Text style={rv.note}>Zainly adapte automatiquement selon ta récitation.</Text>
-        </View>
-      </View>
-    </Animated.View>
-  );
-}
-
 // ─── EmptyState ───────────────────────────────────────────────────────────────
 
 function EmptyState({ anim }: { anim: Animated.Value }) {
@@ -829,7 +797,6 @@ export default function HifzScreen() {
   const a0 = useRef(new Animated.Value(0)).current;
   const a1 = useRef(new Animated.Value(0)).current;
   const a2 = useRef(new Animated.Value(0)).current;
-  const a3 = useRef(new Animated.Value(0)).current;
   const a4 = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -838,7 +805,6 @@ export default function HifzScreen() {
       Animated.timing(a0, { toValue: 1, duration: 340, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       Animated.timing(a1, { toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       Animated.timing(a2, { toValue: 1, duration: 340, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-      Animated.timing(a3, { toValue: 1, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       Animated.timing(a4, { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
     ]).start();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -904,8 +870,6 @@ export default function HifzScreen() {
   }, [baseGroups]);
 
   const surahCount = surahGroups.length;
-  const isSingle   = totalMemorized <= 1;
-
   // ── initial loading state ──
   // Only show a minimal loading indicator during the very first fetch.
   // Once queries have fetched at least once (isFetched), we can render
@@ -969,9 +933,6 @@ export default function HifzScreen() {
         {latestRow && latestSurahName && (
           <LastAyatCard row={latestRow} surahName={latestSurahName} onPress={openDetail} anim={a2} />
         )}
-
-        {/* Reviews */}
-        {!isEmpty && <ReviewCard isSingle={isSingle} anim={a3} />}
 
         {/* Surah accordion library */}
         {surahGroups.length > 0 && (
@@ -1056,22 +1017,6 @@ const la = StyleSheet.create({
   chevWrap:  { width: 22, alignItems: 'center', justifyContent: 'center', paddingRight: 10 },
   chev1: { position: 'absolute', width: 7, height: 1.5, backgroundColor: colors.muted, transform: [{ rotate: '45deg' }, { translateY: -2.5 }] },
   chev2: { position: 'absolute', width: 7, height: 1.5, backgroundColor: colors.muted, transform: [{ rotate: '-45deg' }, { translateY: 2.5 }] },
-});
-
-const rv = StyleSheet.create({
-  wrap: { marginBottom: spacing.md },
-  card: {
-    flexDirection: 'row', backgroundColor: colors.surface,
-    borderRadius: 18, borderWidth: 1, borderColor: colors.border, overflow: 'hidden',
-    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, shadowOffset: { width: 0, height: 2 }, elevation: 2,
-  },
-  accentBar: { width: 4, backgroundColor: GOLD },
-  body:      { flex: 1, paddingHorizontal: 14, paddingVertical: 12 },
-  sub:       { fontSize: 12, color: colors.muted, lineHeight: 17, marginBottom: 10 },
-  chips:     { flexDirection: 'row', gap: 6, flexWrap: 'wrap', marginBottom: 8 },
-  chip:      { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(184,150,46,0.40)', backgroundColor: 'rgba(184,150,46,0.08)' },
-  chipText:  { fontSize: 11, fontWeight: '700', color: GOLD, letterSpacing: 0.5 },
-  note:      { fontSize: 10, color: colors.muted, fontStyle: 'italic', lineHeight: 15 },
 });
 
 const sc = StyleSheet.create({
