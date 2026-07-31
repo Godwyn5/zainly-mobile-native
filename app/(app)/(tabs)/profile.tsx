@@ -13,27 +13,6 @@ import { PRESETS, NotificationPreset } from '@/notifications/types';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
 
-// ─── ProfileRow – "Bientôt" placeholder row ───────────────────────────────────
-
-interface ProfileRowProps {
-  title: string;
-  description: string;
-}
-
-function ProfileRow({ title, description }: ProfileRowProps) {
-  return (
-    <View style={styles.row}>
-      <View style={styles.rowContent}>
-        <Text style={styles.rowTitle}>{title}</Text>
-        <Text style={styles.rowDesc}>{description}</Text>
-      </View>
-      <View style={styles.soonBadge}>
-        <Text style={styles.soonText}>Bientôt</Text>
-      </View>
-    </View>
-  );
-}
-
 // ─── NotificationsCard ────────────────────────────────────────────────────────
 
 function NotificationsCard() {
@@ -313,20 +292,6 @@ export default function ProfileScreen() {
       <SectionLabel text="Abonnement" style={styles.sectionLabel} />
       <SubscriptionCard hasZainlyPlus={hasZainlyPlus} />
 
-      {/* ── Bientôt ── */}
-      <SectionLabel text="Personnalisation" style={styles.sectionLabel} />
-      <View style={styles.card}>
-        <ProfileRow
-          title="Récitateur"
-          description="Choisir la voix qui accompagnera tes sessions."
-        />
-        <View style={styles.divider} />
-        <ProfileRow
-          title="Programme"
-          description="Modifier ton rythme ou ton objectif."
-        />
-      </View>
-
       {/* ── Compte section ── */}
       <SectionLabel text="Compte" style={styles.sectionLabel} />
       <View style={styles.card}>
@@ -388,39 +353,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     overflow: 'hidden',
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  rowContent: {
-    flex: 1,
-    marginRight: spacing.sm,
-  },
-  rowTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.primary,
-    marginBottom: 3,
-  },
-  rowDesc: {
-    fontSize: 12,
-    color: colors.muted,
-    lineHeight: 17,
-  },
-  soonBadge: {
-    backgroundColor: colors.goldSoft,
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  soonText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.gold,
-    letterSpacing: 0.2,
   },
   divider: {
     height: 1,
