@@ -7,6 +7,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useFonts } from 'expo-font';
 import { Lora_500Medium } from '@expo-google-fonts/lora';
+import { Amiri_700Bold } from '@expo-google-fonts/amiri';
+import { Cinzel_500Medium } from '@expo-google-fonts/cinzel';
 import { hapticLight, hapticMedium } from '@/utils/haptics';
 import ZainlyLogo from '@/components/auth/ZainlyLogo';
 import AppleIcon from '@/components/auth/icons/AppleIcon';
@@ -30,6 +32,8 @@ export default function LoginMethodsScreen() {
 
   const [fontsLoaded] = useFonts({
     Lora_500Medium,
+    Amiri_700Bold,
+    Cinzel_500Medium,
   });
 
   // ─── entrance animations ───────────────────────────────────────────────────

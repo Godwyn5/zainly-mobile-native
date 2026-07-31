@@ -8,7 +8,7 @@ export default function AppLayout() {
   useEffect(() => {
     if (!ready) return;
     if (!session) {
-      router.replace('/(auth)/login');
+      router.replace('/(auth)/login-methods');
     }
   }, [session, ready]);
 

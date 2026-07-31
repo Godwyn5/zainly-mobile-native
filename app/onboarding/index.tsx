@@ -1380,7 +1380,7 @@ export default function OnboardingScreen() {
   // ── routing guard ──
   useEffect(() => {
     if (!ready) return;
-    if (!user) { router.replace('/(auth)/login'); return; }
+    if (!user) { router.replace('/(auth)/login-methods'); return; }
     if (isLoading) return;
     // Do not redirect while the creation animation is running —
     // CreatingPlanScreen.onFinished() is the only navigation path after creation.

@@ -96,7 +96,7 @@ export default function SignupEmailScreen() {
       'Programme non enregistré',
       'Ton compte a été créé, mais l’enregistrement de ton programme a échoué. Connecte-toi pour réessayer.'
     );
-    router.replace(fromOnboarding ? '/(auth)/login?context=onboarding' : '/(auth)/login');
+    router.replace(fromOnboarding ? '/(auth)/login-methods?context=onboarding' : '/(auth)/login-methods');
   }
 
   async function handleSignup() {

@@ -274,7 +274,7 @@ export default function EntryScreen() {
                 <TouchableOpacity
                   style={styles.secondaryBtn}
                   activeOpacity={0.6}
-                  onPress={() => { hapticLight(); router.push('/(auth)/login'); }}
+                  onPress={() => { hapticLight(); router.push('/(auth)/login-methods'); }}
                 >
                   <Text style={styles.secondaryBtnText}>J'ai déjà un compte</Text>
                 </TouchableOpacity>

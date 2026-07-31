@@ -152,7 +152,7 @@ export default function OnboardingProgramSummaryScreen() {
       // plan right after a real session exists (from the draft if it is
       // still alive, otherwise from the payload just saved above), then
       // routes to the real, auth-protected dashboard.
-      router.push('/(auth)/signup?context=onboarding');
+      router.push('/(auth)/signup-methods?context=onboarding');
     } finally {
       isSubmittingRef.current = false;
     }

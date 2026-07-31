@@ -1,7 +1,4 @@
 import { View, Text, StyleSheet } from 'react-native';
-import { useFonts } from 'expo-font';
-import { Amiri_700Bold } from '@expo-google-fonts/amiri';
-import { Cinzel_500Medium } from '@expo-google-fonts/cinzel';
 
 // ─── palette — matches reset-password.tsx exactly ───────────────────────────
 const GREEN = '#031A12';
@@ -12,15 +9,6 @@ const F_BRAND = 'Cinzel_500Medium';
 const F_ARABIC = 'Amiri_700Bold';
 
 export default function ZainlyLogo() {
-  const [fontsLoaded] = useFonts({
-    Amiri_700Bold,
-    Cinzel_500Medium,
-  });
-
-  if (!fontsLoaded) {
-    return <View style={styles.brandBlock} />;
-  }
-
   return (
     <View style={styles.brandBlock}>
       <Text style={styles.brandArabic}>زينلي</Text>

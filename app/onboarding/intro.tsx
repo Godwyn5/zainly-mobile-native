@@ -318,7 +318,7 @@ export default function OnboardingIntroScreen() {
   // auth guard
   useEffect(() => {
     if (!ready) return;
-    if (!user) { router.replace('/(auth)/login'); }
+    if (!user) { router.replace('/(auth)/login-methods'); }
   }, [ready, user]);
 
   // brand fade on mount, then first slide animate in
