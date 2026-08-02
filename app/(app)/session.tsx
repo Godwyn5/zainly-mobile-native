@@ -3564,6 +3564,47 @@ export default function SessionScreen() {
     setTimeout(() => { isAdvancing.current = false; }, 600);
   }, []);
 
+  // ── derived values used in phase renders ──
+  // Computed before early returns so that hooks below (useCallback) are
+  // always called in the same order.  The null-coalescing defaults (?? 1,
+  // ?? memStart) are safe: when prog.memStart / prog.memEnd are null the
+  // early returns below prevent these values from being used in any
+  // meaningful render path.
+  const memStart          = prog.memStart ?? 1;
+  const memEnd            = prog.memEnd   ?? memStart;
+  const totalAyatsToday   = memEnd - memStart + 1;
+  const currentAyatNumber = memStart + currentAyatIndex;
+  const isLastAyat        = currentAyatIndex >= totalAyatsToday - 1;
+
+  // ── helper: advance to next ayat (reset per-ayat state) ──
+  const goNextAyat = useCallback(() => {
+    hapticMedium();
+    setDiscoveredAyat(null);
+    setCurrentAyatIndex(prev => prev + 1);
+    setPhase('discovery');
+  }, []);
+
+  // ── helper: restart the whole learning passage from ayat 1 ──
+  const restartLearningPassage = useCallback(() => {
+    hapticMedium();
+    setCurrentAyatIndex(0);
+    setDiscoveredAyat(null);
+    setAllTodayAyats([]);
+    setPhase('discovery');
+  }, []);
+
+  // ── helper: load all today ayats for final test ──
+  const goFinalTest = useCallback(() => {
+    hapticMedium();
+    if (prog.currentSurah == null) { setPhase('finalTest'); return; }
+    getQuranAyahRange({ surahNumber: prog.currentSurah, fromAyah: memStart, toAyah: memEnd })
+      .then(result => {
+        if (result.ok) setAllTodayAyats(result.ayahs);
+        setPhase('finalTest');
+      })
+      .catch(() => setPhase('finalTest'));
+  }, [prog.currentSurah, memStart, memEnd]);
+
   // ── loading ──
   if (isLoading) return <LoadingScreen />;
 
@@ -3602,42 +3643,6 @@ export default function SessionScreen() {
       />
     );
   }
-
-  // ── derived values used in phase renders ──
-  const memStart        = prog.memStart ?? 1;
-  const memEnd          = prog.memEnd   ?? memStart;
-  const totalAyatsToday = memEnd - memStart + 1;
-  const currentAyatNumber = memStart + currentAyatIndex;
-  const isLastAyat      = currentAyatIndex >= totalAyatsToday - 1;
-
-  // ── helper: advance to next ayat (reset per-ayat state) ──
-  const goNextAyat = useCallback(() => {
-    hapticMedium();
-    setDiscoveredAyat(null);
-    setCurrentAyatIndex(prev => prev + 1);
-    setPhase('discovery');
-  }, []);
-
-  // ── helper: restart the whole learning passage from ayat 1 ──
-  const restartLearningPassage = useCallback(() => {
-    hapticMedium();
-    setCurrentAyatIndex(0);
-    setDiscoveredAyat(null);
-    setAllTodayAyats([]);
-    setPhase('discovery');
-  }, []);
-
-  // ── helper: load all today ayats for final test ──
-  const goFinalTest = useCallback(() => {
-    hapticMedium();
-    if (prog.currentSurah == null) { setPhase('finalTest'); return; }
-    getQuranAyahRange({ surahNumber: prog.currentSurah, fromAyah: memStart, toAyah: memEnd })
-      .then(result => {
-        if (result.ok) setAllTodayAyats(result.ayahs);
-        setPhase('finalTest');
-      })
-      .catch(() => setPhase('finalTest'));
-  }, [prog.currentSurah, memStart, memEnd]);
 
   // ── discovery step 2 ──
   if (phase === 'discovery') {
