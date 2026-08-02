@@ -1377,10 +1377,9 @@ export default function OnboardingScreen() {
     || (!!user?.id && introSeen === null)
     || (!!user?.id && personalDone === null);
 
-  // ── routing guard ──
+  // ── routing guard (authenticated users only) ──
   useEffect(() => {
-    if (!ready) return;
-    if (!user) { router.replace('/(auth)/login-methods'); return; }
+    if (!ready || !user) return;
     if (isLoading) return;
     // Do not redirect while the creation animation is running —
     // CreatingPlanScreen.onFinished() is the only navigation path after creation.
@@ -1421,6 +1420,8 @@ export default function OnboardingScreen() {
     setPersonalDone(true);
     setPersonalStep('startMode');
   }
+
+  if (ready && !user) { return null; }
 
   // ── loading / gate ──
   // Exclude creating step from the plan-exists short-circuit so the animation

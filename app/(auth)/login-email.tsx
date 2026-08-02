@@ -2,24 +2,20 @@ import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, StyleSheet,
   TouchableOpacity, KeyboardAvoidingView,
-  Platform, ActivityIndicator, Alert, ScrollView,
+  Platform, ActivityIndicator, ScrollView,
   Animated, Easing, StatusBar,
 } from 'react-native';
 import { useFonts } from 'expo-font';
 import { Lora_500Medium } from '@expo-google-fonts/lora';
-import { router, useLocalSearchParams } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
 import { supabase } from '@/db/client';
 import { hapticLight, hapticMedium, hapticSelection } from '@/utils/haptics';
-import { useOnboardingV2AuthFinalize } from '@/hooks/useOnboardingV2AuthFinalize';
-import type { FinalizeOnboardingV2Result } from '@/lib/onboardingFinalize';
 import ZainlyLogo from '@/components/auth/ZainlyLogo';
 
 // ─── palette — matches Splash/Welcome identity ───────────────────────────────
 const BG = '#F7F2E7';              // cream (from Welcome)
 const GREEN = '#163026';          // deep green (from Welcome)
 const GOLD = '#C6A15B';           // gold (from Welcome)
-const GOLD_DARK = '#9F7628';      // dark gold (from Welcome)
 const MUTED = '#7A6E61';          // warm grey for subtitles/placeholders
 const BORDER = 'rgba(22,48,38,0.12)'; // subtle green-tinted border
 const SURF = '#FFFFFF';          // white for inputs
@@ -33,22 +29,13 @@ function friendlyAuthError(msg: string): string {
 }
 
 export default function LoginEmailScreen() {
-  const { context } = useLocalSearchParams<{ context?: string }>();
-  const fromOnboarding = context === 'onboarding';
-
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showDeletionBanner, setShowDeletionBanner] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
-
-  const {
-    premiumGateIssue, isResolvingPremiumGate,
-    runFinalize, retryPremiumGate, restorePremiumPurchase,
-  } = useOnboardingV2AuthFinalize();
 
   const [fontsLoaded] = useFonts({
     Lora_500Medium,
@@ -65,18 +52,6 @@ export default function LoginEmailScreen() {
   const btnsY = useRef(new Animated.Value(12)).current;
   const passwordInputRef = useRef<TextInput>(null);
 
-  // ─── check for account deletion success flag ───────────────────────────────
-  useEffect(() => {
-    AsyncStorage.getItem('account_deleted_success').then((value) => {
-      if (value === 'true') {
-        setShowDeletionBanner(true);
-        setEmail('');
-        setPassword('');
-        AsyncStorage.removeItem('account_deleted_success').catch(() => {});
-      }
-    }).catch(() => {});
-  }, []);
-
   useEffect(() => {
     if (!fontsLoaded) return;
     const E = Easing.out(Easing.cubic);
@@ -92,18 +67,6 @@ export default function LoginEmailScreen() {
     ]).start();
   }, [fontsLoaded]);
 
-  // Shared branching for a resolved (non-premium-gated) finalization result
-  function applyFinalizedResult(finalized: FinalizeOnboardingV2Result) {
-    if (!finalized.ok && finalized.reason !== 'no_source') {
-      Alert.alert(
-        'Programme non enregistré',
-        'La connexion a réussi, mais l’enregistrement de ton programme a échoué. Réessaie de te connecter dans un instant.'
-      );
-      return;
-    }
-    router.replace('/(app)/(tabs)/');
-  }
-
   async function handleLogin() {
     if (loading) return;
     setError(null);
@@ -115,28 +78,11 @@ export default function LoginEmailScreen() {
     setLoading(false);
     if (authError) { setError(friendlyAuthError(authError.message)); return; }
     if (data.session) {
-      const finalized = await runFinalize(data.session.user.id);
-      if (!finalized) return;
-      applyFinalizedResult(finalized);
+      // Session created — Stack.Protected will redirect to (app) automatically.
+      // The dashboard's recovery mechanism finalizes any pending onboarding-v2 plan.
       return;
     }
-    router.replace('/(app)/(tabs)/');
-  }
-
-  async function handlePremiumGateRetry() {
-    hapticLight();
-    const finalized = await retryPremiumGate();
-    if (finalized) applyFinalizedResult(finalized);
-  }
-
-  async function handlePremiumGateRestore() {
-    hapticLight();
-    const finalized = await restorePremiumPurchase();
-    if (finalized) {
-      applyFinalizedResult(finalized);
-      return;
-    }
-    Alert.alert('Aucun achat trouvé', 'Aucun abonnement Zainly+ actif n’a été trouvé sur ce compte Apple.');
+    setError('Connexion impossible pour le moment. Réessaie dans un instant.');
   }
 
   function handleBack() {
@@ -170,13 +116,6 @@ export default function LoginEmailScreen() {
         <Animated.View style={[styles.titleBlock, { opacity: titleO, transform: [{ translateY: titleY }] }]}>
           <Text style={styles.title}>Heureux de te revoir</Text>
         </Animated.View>
-
-        {/* ─── Account deletion success banner ─────────────────────────────── */}
-        {showDeletionBanner && (
-          <View style={styles.deletionBanner} accessible accessibilityLabel="Compte supprimé avec succès" accessibilityRole="alert">
-            <Text style={styles.deletionBannerText}>Ton compte et tes données ont bien été supprimés.</Text>
-          </View>
-        )}
 
         {/* ─── Form ───────────────────────────────────────────────────────── */}
         <Animated.View style={[styles.formBlock, { opacity: formO, transform: [{ translateY: formY }] }]}>
@@ -227,40 +166,7 @@ export default function LoginEmailScreen() {
           </TouchableOpacity>
         </Animated.View>
 
-        {/* ─── Premium verification gate ─────────────────────────────────────── */}
-        {premiumGateIssue && (
-          <View style={styles.premiumGateBox}>
-            <Text style={styles.premiumGateText}>
-              {premiumGateIssue === 'entitlement_missing'
-                ? 'Nous n’avons pas encore pu vérifier ton accès premium. Tu peux réessayer ou restaurer ton achat.'
-                : 'Nous n’avons pas pu vérifier ton accès Zainly+ pour le moment. Réessaie dans quelques instants.'}
-            </Text>
-            <TouchableOpacity
-              style={[styles.primaryBtn, isResolvingPremiumGate && styles.btnDim]}
-              onPress={handlePremiumGateRetry}
-              activeOpacity={0.85}
-              disabled={isResolvingPremiumGate}
-            >
-              {isResolvingPremiumGate
-                ? <ActivityIndicator color={BG} />
-                : <Text style={styles.primaryBtnText}>Réessayer</Text>
-              }
-            </TouchableOpacity>
-            {premiumGateIssue === 'entitlement_missing' && (
-              <TouchableOpacity
-                style={[styles.secondaryBtn, { marginBottom: 0 }, isResolvingPremiumGate && styles.btnDim]}
-                onPress={handlePremiumGateRestore}
-                activeOpacity={0.8}
-                disabled={isResolvingPremiumGate}
-              >
-                <Text style={styles.secondaryBtnText}>Restaurer mon achat</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-
         {/* ─── Buttons ───────────────────────────────────────────────────────── */}
-        {!premiumGateIssue && (
         <Animated.View style={[styles.btnsBlock, { opacity: btnsO, transform: [{ translateY: btnsY }] }]}>
           <TouchableOpacity style={[styles.primaryBtn, loading && styles.btnDim]} onPress={handleLogin} activeOpacity={0.85} disabled={loading}>
             {loading ? (
@@ -272,7 +178,6 @@ export default function LoginEmailScreen() {
             )}
           </TouchableOpacity>
         </Animated.View>
-        )}
 
       </ScrollView>
     </KeyboardAvoidingView>
@@ -312,16 +217,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     letterSpacing: -0.3,
   },
-  deletionBanner: {
-    backgroundColor: '#ECFDF5',
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    marginBottom: 12,
-  },
-  deletionBannerText: { fontSize: 13, color: '#047857', lineHeight: 18 },
   formBlock: {
     width: '100%',
     marginBottom: 20,
@@ -369,22 +264,6 @@ const styles = StyleSheet.create({
   errorText: { fontSize: 13, color: '#B91C1C', lineHeight: 18 },
   forgotRow: { alignItems: 'center', paddingVertical: 6, marginBottom: 4 },
   forgotText: { fontSize: 13, color: MUTED },
-  premiumGateBox: {
-    width: '100%',
-    backgroundColor: SURF,
-    borderWidth: 1,
-    borderColor: 'rgba(198,161,91,0.30)',
-    borderRadius: 14,
-    padding: 18,
-    gap: 12,
-  },
-  premiumGateText: {
-    fontSize: 14,
-    color: GREEN,
-    lineHeight: 20,
-    textAlign: 'center',
-    marginBottom: 4,
-  },
   btnsBlock: { width: '100%' },
   primaryBtn: {
     backgroundColor: GREEN,
@@ -406,19 +285,5 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: BG,
     letterSpacing: 0.2,
-  },
-  secondaryBtn: {
-    backgroundColor: SURF,
-    borderWidth: 1,
-    borderColor: 'rgba(198,161,91,0.30)',
-    borderRadius: 16,
-    paddingVertical: 18,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  secondaryBtnText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: GREEN,
   },
 });

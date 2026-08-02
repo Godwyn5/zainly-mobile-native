@@ -315,12 +315,6 @@ export default function OnboardingIntroScreen() {
     ]).start();
   }
 
-  // auth guard
-  useEffect(() => {
-    if (!ready) return;
-    if (!user) { router.replace('/(auth)/login-methods'); }
-  }, [ready, user]);
-
   // brand fade on mount, then first slide animate in
   useEffect(() => {
     if (!fontsLoaded) return;
@@ -387,6 +381,8 @@ export default function OnboardingIntroScreen() {
     hapticMedium();
     markIntroSeen().then(() => router.replace('/onboarding'));
   }
+
+  if (ready && !user) { return null; }
 
   if (!fontsLoaded) {
     return <View style={styles.root}><StatusBar barStyle="dark-content" /></View>;

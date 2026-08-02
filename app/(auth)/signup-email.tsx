@@ -2,23 +2,20 @@ import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, StyleSheet,
   TouchableOpacity, KeyboardAvoidingView,
-  Platform, ActivityIndicator, Alert, ScrollView,
+  Platform, ActivityIndicator, ScrollView,
   Animated, Easing, StatusBar,
 } from 'react-native';
 import { useFonts } from 'expo-font';
 import { Lora_500Medium } from '@expo-google-fonts/lora';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router } from 'expo-router';
 import { supabase } from '@/db/client';
 import { hapticLight, hapticMedium, hapticSelection } from '@/utils/haptics';
-import { useOnboardingV2AuthFinalize } from '@/hooks/useOnboardingV2AuthFinalize';
-import type { FinalizeOnboardingV2Result } from '@/lib/onboardingFinalize';
 import ZainlyLogo from '@/components/auth/ZainlyLogo';
 
 // ─── palette — matches Splash/Welcome identity ───────────────────────────────
 const BG = '#F7F2E7';              // cream (from Welcome)
 const GREEN = '#163026';          // deep green (from Welcome)
 const GOLD = '#C6A15B';           // gold (from Welcome)
-const GOLD_DARK = '#9F7628';      // dark gold (from Welcome)
 const MUTED = '#7A6E61';          // warm grey for subtitles/placeholders
 const BORDER = 'rgba(22,48,38,0.12)'; // subtle green-tinted border
 const SURF = '#FFFFFF';          // white for inputs
@@ -34,9 +31,6 @@ function friendlySignupError(msg: string): string {
 }
 
 export default function SignupEmailScreen() {
-  const { context } = useLocalSearchParams<{ context?: string }>();
-  const fromOnboarding = context === 'onboarding';
-
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -48,11 +42,6 @@ export default function SignupEmailScreen() {
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
   const [confirmFocused, setConfirmFocused] = useState(false);
-
-  const {
-    premiumGateIssue, isResolvingPremiumGate,
-    runFinalize, retryPremiumGate, restorePremiumPurchase,
-  } = useOnboardingV2AuthFinalize();
 
   const [fontsLoaded] = useFonts({
     Lora_500Medium,
@@ -85,20 +74,6 @@ export default function SignupEmailScreen() {
     ]).start();
   }, [fontsLoaded]);
 
-  // Shared branching for a resolved (non-premium-gated) finalization result
-  function applyFinalizedResult(finalized: FinalizeOnboardingV2Result) {
-    if (finalized.ok) { router.replace('/(app)/(tabs)'); return; }
-    if (finalized.reason === 'no_source') {
-      router.replace('/onboarding/intro');
-      return;
-    }
-    Alert.alert(
-      'Programme non enregistré',
-      'Ton compte a été créé, mais l’enregistrement de ton programme a échoué. Connecte-toi pour réessayer.'
-    );
-    router.replace(fromOnboarding ? '/(auth)/login-methods?context=onboarding' : '/(auth)/login-methods');
-  }
-
   async function handleSignup() {
     if (loading) return;
     setError(null);
@@ -113,28 +88,11 @@ export default function SignupEmailScreen() {
     setLoading(false);
     if (signupError) { setError(friendlySignupError(signupError.message)); return; }
     if (data.session) {
-      const finalized = await runFinalize(data.session.user.id);
-      if (!finalized) return;
-      applyFinalizedResult(finalized);
+      // Session created — Stack.Protected will redirect to (app) automatically.
+      // The dashboard's recovery mechanism finalizes the onboarding-v2 plan.
       return;
     }
     setEmailSent(true);
-  }
-
-  async function handlePremiumGateRetry() {
-    hapticLight();
-    const finalized = await retryPremiumGate();
-    if (finalized) applyFinalizedResult(finalized);
-  }
-
-  async function handlePremiumGateRestore() {
-    hapticLight();
-    const finalized = await restorePremiumPurchase();
-    if (finalized) {
-      applyFinalizedResult(finalized);
-      return;
-    }
-    Alert.alert('Aucun achat trouvé', 'Aucun abonnement Zainly+ actif n’a été trouvé sur ce compte Apple.');
   }
 
   function handleBack() {
@@ -248,40 +206,7 @@ export default function SignupEmailScreen() {
           )}
         </Animated.View>
 
-        {/* ─── Premium verification gate ─────────────────────────────────────── */}
-        {premiumGateIssue && (
-          <View style={styles.premiumGateBox}>
-            <Text style={styles.premiumGateText}>
-              {premiumGateIssue === 'entitlement_missing'
-                ? 'Nous n’avons pas encore pu vérifier ton accès premium. Tu peux réessayer ou restaurer ton achat.'
-                : 'Nous n’avons pas pu vérifier ton accès Zainly+ pour le moment. Réessaie dans quelques instants.'}
-            </Text>
-            <TouchableOpacity
-              style={[styles.primaryBtn, isResolvingPremiumGate && styles.btnDim]}
-              onPress={handlePremiumGateRetry}
-              activeOpacity={0.85}
-              disabled={isResolvingPremiumGate}
-            >
-              {isResolvingPremiumGate
-                ? <ActivityIndicator color={BG} />
-                : <Text style={styles.primaryBtnText}>Réessayer</Text>
-              }
-            </TouchableOpacity>
-            {premiumGateIssue === 'entitlement_missing' && (
-              <TouchableOpacity
-                style={[styles.secondaryBtn, { marginBottom: 0 }, isResolvingPremiumGate && styles.btnDim]}
-                onPress={handlePremiumGateRestore}
-                activeOpacity={0.8}
-                disabled={isResolvingPremiumGate}
-              >
-                <Text style={styles.secondaryBtnText}>Restaurer mon achat</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-
         {/* ─── Buttons ───────────────────────────────────────────────────────── */}
-        {!premiumGateIssue && (
         <Animated.View style={[styles.btnsBlock, { opacity: btnsO, transform: [{ translateY: btnsY }] }]}>
           <TouchableOpacity style={[styles.primaryBtn, loading && styles.btnDim]} onPress={handleSignup} activeOpacity={0.85} disabled={loading}>
             {loading ? (
@@ -293,7 +218,6 @@ export default function SignupEmailScreen() {
             )}
           </TouchableOpacity>
         </Animated.View>
-        )}
 
       </ScrollView>
     </KeyboardAvoidingView>
@@ -391,22 +315,6 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   errorText: { fontSize: 13, color: '#B91C1C', lineHeight: 18 },
-  premiumGateBox: {
-    width: '100%',
-    backgroundColor: SURF,
-    borderWidth: 1,
-    borderColor: 'rgba(198,161,91,0.30)',
-    borderRadius: 14,
-    padding: 18,
-    gap: 12,
-  },
-  premiumGateText: {
-    fontSize: 14,
-    color: GREEN,
-    lineHeight: 20,
-    textAlign: 'center',
-    marginBottom: 4,
-  },
   btnsBlock: { width: '100%' },
   primaryBtn: {
     backgroundColor: GREEN,
@@ -428,20 +336,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: BG,
     letterSpacing: 0.2,
-  },
-  secondaryBtn: {
-    backgroundColor: SURF,
-    borderWidth: 1,
-    borderColor: 'rgba(198,161,91,0.30)',
-    borderRadius: 16,
-    paddingVertical: 18,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  secondaryBtnText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: GREEN,
   },
   simpleBackButton: {
     alignItems: 'center',

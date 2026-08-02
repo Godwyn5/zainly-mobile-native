@@ -77,7 +77,7 @@ function AuthBootstrap() {
       });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      (event, session) => {
         setSession(session);
       }
     );
@@ -89,12 +89,39 @@ function AuthBootstrap() {
 }
 
 export default function RootLayout() {
+  const { session, ready } = useAuthStore();
+
+  // Until auth is hydrated, treat all routes as accessible to avoid
+  // flashing or redirecting during the initial session check.
+  const authed = ready && !!session;
+  const guest = ready && !session;
+
   return (
     <QueryClientProvider client={queryClient}>
       <StatusBar style="dark" />
       <AuthBootstrap />
       <RevenueCatProvider />
-      <Stack screenOptions={{ headerShown: false }} />
+      <Stack screenOptions={{ headerShown: false }}>
+        {/* Private routes — accessible ONLY when authenticated.
+            When session becomes null, these are automatically removed
+            and their history is cleared by Stack.Protected. */}
+        <Stack.Protected guard={authed}>
+          <Stack.Screen name="(app)" />
+          <Stack.Screen name="onboarding" />
+        </Stack.Protected>
+
+        {/* Public routes — accessible when NOT authenticated.
+            When session becomes true, these are automatically removed. */}
+        <Stack.Protected guard={guest || !ready}>
+          <Stack.Screen name="welcome" />
+          <Stack.Screen name="index" />
+          <Stack.Screen name="(auth)" />
+          <Stack.Screen name="onboarding-v2" />
+        </Stack.Protected>
+
+        {/* Premium paywall — accessible in any auth state */}
+        <Stack.Screen name="premium" />
+      </Stack>
     </QueryClientProvider>
   );
 }

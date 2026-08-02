@@ -306,7 +306,7 @@ export default function ProfileScreen() {
 
     if (result.ok) {
       await AsyncStorage.setItem('account_deleted_success', 'true').catch(() => {});
-      await performLogout();
+      await performLogout({ preserveDeletionFlag: true });
       return;
     }
 

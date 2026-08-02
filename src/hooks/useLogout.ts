@@ -1,8 +1,8 @@
 // ─── useLogout ────────────────────────────────────────────────────────────────
 // Full identity reset: Supabase signOut → clear RQ cache → clear Zustand stores
 // → wipe user-scoped AsyncStorage keys.
-// The app/(app)/_layout.tsx auth guard will handle navigation automatically
-// once authStore.session becomes null.
+// Navigation is handled declaratively by Stack.Protected in app/_layout.tsx:
+// when session becomes null, the (app) group is automatically removed.
 
 import { useState } from 'react';
 import { Alert } from 'react-native';
@@ -23,7 +23,7 @@ export function useLogout() {
   const userId         = useAuthStore(s => s.user?.id);
   const clearResult    = useSessionResultStore(s => s.clearResult);
 
-  async function performLogout() {
+  async function performLogout(opts?: { preserveDeletionFlag?: boolean }) {
     if (isLoggingOut) return;
     setIsLoggingOut(true);
 
@@ -57,7 +57,15 @@ export function useLogout() {
         await AsyncStorage.multiRemove(keys).catch(() => {/* non-fatal */});
       }
 
-      // 6. Reset auth Zustand store — triggers app/(app)/_layout.tsx guard → /(auth)/login
+      // 5b. Clean any stale account-deletion flag — a simple logout must never
+      //     display the "account deleted" banner. When called from
+      //     performAccountDeletion (preserveDeletionFlag), the flag is kept so
+      //     welcome.tsx can show the confirmation banner after navigation.
+      if (!opts?.preserveDeletionFlag) {
+        await AsyncStorage.removeItem('account_deleted_success').catch(() => {});
+      }
+
+      // 6. Reset auth Zustand store — Stack.Protected handles navigation
       setSession(null);
 
     } catch (err) {
@@ -75,7 +83,7 @@ export function useLogout() {
       'Tu devras te reconnecter pour accéder à ton plan.',
       [
         { text: 'Annuler', style: 'cancel' },
-        { text: 'Se déconnecter', style: 'destructive', onPress: performLogout },
+        { text: 'Se déconnecter', style: 'destructive', onPress: () => performLogout() },
       ],
     );
   }
