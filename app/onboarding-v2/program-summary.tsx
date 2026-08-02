@@ -132,6 +132,7 @@ export default function OnboardingProgramSummaryScreen() {
       // Supabase email-confirmation detour — durably save it BEFORE leaving
       // for signup, never before this validated point.
       const saved = await savePendingOnboardingPlan({
+        firstName: draft.firstName,
         learningMode: draft.learningMode,
         knownSurahs: draft.knownSurahs,
         startingSurah: draft.startingSurah,

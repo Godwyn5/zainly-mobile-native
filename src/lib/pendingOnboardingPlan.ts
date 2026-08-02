@@ -11,8 +11,11 @@
 // (program-summary.tsx, right before navigating to signup), never earlier.
 //
 // Deliberately stores the strict minimum needed to rebuild a PlanInput and
-// to know whether a reminder should be scheduled — never firstName, never
-// motivationReason, never any RevenueCat/auth/token data.
+// to know whether a reminder should be scheduled — never motivationReason,
+// never any RevenueCat/auth/token data. firstName IS included (added
+// alongside profiles.first_name persistence in onboardingFinalize.ts) so a
+// finalization surviving an app kill / email-confirmation detour can still
+// personalize the account it creates.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { LearningMode, NotificationPreference, DiscoverySource, ExperienceChoice } from './onboardingDraft';
@@ -33,6 +36,7 @@ const VALID_EXPERIENCE_CHOICES: ExperienceChoice[] = ['unlimited', 'daily_limite
 export interface PendingOnboardingPlanV1 {
   version: 1;
   createdAt: string;
+  firstName: string | null;
   learningMode: LearningMode;
   knownSurahs: number[];
   startingSurah: number | null;
@@ -56,6 +60,7 @@ function isValidShape(raw: unknown): raw is PendingOnboardingPlanV1 {
 
   if (d.version !== CURRENT_VERSION) return false;
   if (typeof d.createdAt !== 'string' || !d.createdAt) return false;
+  if (d.firstName !== null && typeof d.firstName !== 'string') return false;
   if (typeof d.learningMode !== 'string' || !VALID_LEARNING_MODES.includes(d.learningMode as LearningMode)) return false;
   if (!Array.isArray(d.knownSurahs) || !d.knownSurahs.every(n => typeof n === 'number')) return false;
   if (d.startingSurah !== null && typeof d.startingSurah !== 'number') return false;

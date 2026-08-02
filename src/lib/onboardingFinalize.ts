@@ -20,6 +20,7 @@
 import { computePlan, isPlanError } from '@/core/planEngine';
 import { upsertPlan } from '@/db/plans';
 import { upsertProgress } from '@/db/progress';
+import { upsertProfileFirstName } from '@/db/profiles';
 import { readOnboardingDraft, clearOnboardingDraft } from './onboardingDraft';
 import {
   buildPlanInputFromDraft, isPlanValidationError, PlanInputSource,
@@ -118,15 +119,18 @@ async function runFinalize(userId: string): Promise<FinalizeOnboardingV2Result> 
 
   let source: PlanInputSource | null = null;
   let notificationPreference: NotificationPreference | null = null;
+  let firstName: string | null = null;
 
   if (draft) {
     source = draft;
     notificationPreference = draft.notificationPreference;
+    firstName = draft.firstName;
   } else {
     const pending = await readPendingOnboardingPlan();
     if (!pending) return { ok: false, reason: 'no_source' };
     source = pending;
     notificationPreference = pending.notificationPreference;
+    firstName = pending.firstName;
   }
 
   const validation = buildPlanInputFromDraft(source, userId);
@@ -154,6 +158,17 @@ async function runFinalize(userId: string): Promise<FinalizeOnboardingV2Result> 
       reason: 'persist_error',
       message: err instanceof Error ? err.message : 'Erreur de sauvegarde.',
     };
+  }
+
+  // Best-effort — persisting the first name is a nice-to-have (used to
+  // personalize the Profile screen) and must never block the user from
+  // reaching their freshly created, already-persisted plan.
+  if (firstName) {
+    try {
+      await upsertProfileFirstName(userId, firstName);
+    } catch {
+      // Non-fatal — the plan itself is already safely persisted above.
+    }
   }
 
   // Best-effort — a reminder-scheduling failure must never block the user

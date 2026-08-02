@@ -1,233 +1,301 @@
-import { useState, useRef } from 'react';
-import { ActivityIndicator, Alert, View, Text, StyleSheet, Pressable } from 'react-native';
+import { useState, useRef, useEffect } from 'react';
+import { ActivityIndicator, Alert, View, Text, StyleSheet, Pressable, Animated, Easing, Platform, Linking } from 'react-native';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Screen } from '@/components/ui/Screen';
-import { SectionLabel } from '@/components/ui/SectionLabel';
 import { useAuthStore } from '@/store/authStore';
+import { useProfile } from '@/hooks/useProfile';
 import { useZainlyPlusAccess } from '@/hooks/useZainlyPlusAccess';
 import { useLogout } from '@/hooks/useLogout';
 import { deleteAccountSelfService } from '@/db/accountDeletion';
 import { useNotificationSettings } from '@/hooks/useNotificationSettings';
-import { PRESETS, NotificationPreset } from '@/notifications/types';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
+import { hapticLight } from '@/utils/haptics';
 
-// ─── NotificationsCard ────────────────────────────────────────────────────────
+// ─── PremiumCard ────────────────────────────────────────────────────────────
+// The focal point of the screen. Deep multi-tone green gradient, a barely-
+// perceptible gold shimmer sweep (~7s cycle), and a whole-card tap target
+// with a very light scale response. No gradient exists elsewhere in the
+// palette scale beyond colors.primary/primarySoft/gold — this only layers
+// those existing tones for depth, never introduces a new color.
 
-function NotificationsCard() {
-  const {
-    uiState, settings, isBusy, testSent, testMsg, errorMsg,
-    enable, disable, changePreset, sendTest, openSystemSettings,
-  } = useNotificationSettings();
+function PremiumCard({ hasZainlyPlus, anim }: { hasZainlyPlus: boolean; anim: Animated.Value }) {
+  const isPushing = useRef(false);
+  const shimmerAnim = useRef(new Animated.Value(-1)).current;
+  const shimmerLoop = useRef<Animated.CompositeAnimation | null>(null);
+  const breatheAnim = useRef(new Animated.Value(0)).current;
+  const breatheLoop = useRef<Animated.CompositeAnimation | null>(null);
+  const scaleAnim = useRef(new Animated.Value(1)).current;
 
-  const presetKeys: NotificationPreset[] = ['morning', 'afternoon', 'evening'];
-
-  const subtitle = uiState === 'enabled'
-    ? `Rappel quotidien à ${String(settings.hour).padStart(2, '0')}h${String(settings.minute).padStart(2, '0')}.`
-    : uiState === 'denied'
-      ? 'Notifications désactivées dans les réglages.'
-      : 'Reçois un rappel doux pour garder ton Hifz vivant.';
-
-  if (uiState === 'loading') {
-    return (
-      <View style={n.card}>
-        <View style={n.accentBar} />
-        <View style={n.body}>
-          <ActivityIndicator size="small" color={colors.primary} />
-        </View>
-      </View>
+  useEffect(() => {
+    // Extremely slow, rare sweep — a light pause between each pass so the
+    // motion never reads as "active"/urgent.
+    shimmerLoop.current = Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmerAnim, { toValue: 1, duration: 3600, easing: Easing.inOut(Easing.quad), useNativeDriver: false }),
+        Animated.delay(4800),
+        Animated.timing(shimmerAnim, { toValue: -1, duration: 0, useNativeDriver: false }),
+      ])
     );
+    shimmerLoop.current.start();
+
+    // "The card breathes" — extremely subtle translateY (1.5px) + opacity
+    // shift on the soft tone overlay, on an 8s loop. Kept well under the
+    // threshold where motion reads as "alive"/animated rather than static.
+    breatheLoop.current = Animated.loop(
+      Animated.sequence([
+        Animated.timing(breatheAnim, { toValue: 1, duration: 4000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(breatheAnim, { toValue: 0, duration: 4000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      ])
+    );
+    breatheLoop.current.start();
+
+    return () => {
+      shimmerLoop.current?.stop();
+      breatheLoop.current?.stop();
+    };
+  }, []);
+
+  const shimmerLeft = shimmerAnim.interpolate({ inputRange: [-1, 1], outputRange: ['-30%', '130%'] });
+  const breatheY = breatheAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -1.5] });
+
+  function handlePressIn() {
+    Animated.timing(scaleAnim, { toValue: 0.98, duration: 140, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+  }
+  function handlePressOut() {
+    Animated.timing(scaleAnim, { toValue: 1, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+  }
+  function handlePress() {
+    if (isPushing.current) return;
+    isPushing.current = true;
+    hapticLight();
+    if (hasZainlyPlus) {
+      Alert.alert(
+        'Bientôt disponible',
+        'La gestion de l\u2019abonnement sera disponible avec les achats intégrés.'
+      );
+    } else {
+      router.push('/premium?context=profile');
+    }
+    setTimeout(() => { isPushing.current = false; }, 800);
   }
 
   return (
-    <View style={n.card}>
-      <View style={n.accentBar} />
-      <View style={n.body}>
+    <Animated.View
+      style={[
+        p.wrap,
+        {
+          opacity: anim,
+          transform: [
+            { translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [18, 0] }) },
+            { scale: scaleAnim },
+          ],
+        },
+      ]}
+    >
+      <Pressable
+        style={p.pressable}
+        onPress={handlePress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        accessibilityRole="button"
+        accessibilityLabel={hasZainlyPlus ? 'Gérer mon abonnement Zainly+' : 'Découvrir Zainly+'}
+      >
+        <View style={p.card}>
+          {/* Base deep-green fill */}
+          <View style={p.cardBg} pointerEvents="none" />
 
-        {/* Header row */}
-        <View style={n.headerRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={n.title}>Notifications</Text>
-            <Text style={n.subtitle}>{subtitle}</Text>
+          {/* Layered organic circles — several green tones, softly
+              overlapping, simulate depth/gradient using only existing
+              palette tones (no gradient lib, no new colors). The lightest
+              layer breathes very faintly (translateY + opacity). */}
+          <Animated.View
+            style={[p.toneLight, { transform: [{ translateY: breatheY }] }]}
+            pointerEvents="none"
+          />
+          <View style={p.toneMid} pointerEvents="none" />
+          <View style={p.toneDark} pointerEvents="none" />
+
+          {/* Subtle gold accent — soft radial wash, top right */}
+          <View style={p.goldAccent} pointerEvents="none" />
+
+          {/* Extremely slow, faint shimmer sweep */}
+          <Animated.View pointerEvents="none" style={[p.shimmer, { left: shimmerLeft }]} />
+
+          {/* Fine corner ornaments — thin gold L-brackets, top-left and
+              bottom-right, matching the reference mockup */}
+          <View style={p.cornerTL} pointerEvents="none" />
+          <View style={p.cornerBR} pointerEvents="none" />
+
+          <View style={p.content}>
+            <View style={p.headerRow}>
+              <Text style={p.brandName}>Zainly+</Text>
+              {hasZainlyPlus ? (
+                <View style={p.badgeActive}>
+                  <Text style={p.badgeActiveText}>Actif</Text>
+                </View>
+              ) : null}
+            </View>
+
+            {hasZainlyPlus ? (
+              <>
+                <Text style={p.headline}>Sessions illimitées</Text>
+                <Text style={p.subline}>
+                  Ton accès est actif. Mémorise sans limite quotidienne.
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={p.headline}>Passe à Zainly+</Text>
+                <Text style={p.subline}>
+                  Débloque les sessions guidées sans limite quotidienne.
+                </Text>
+                <View style={p.ctaRow}>
+                  <Text style={p.ctaText}>Découvrir</Text>
+                  <Text style={p.ctaArrow}>{'\u2192'}</Text>
+                </View>
+              </>
+            )}
           </View>
-          {/* Toggle pill when enabled */}
-          {uiState === 'enabled' && (
-            <Pressable
-              style={[n.togglePill, n.toggleOn]}
-              onPress={disable}
-              disabled={isBusy}
-            >
-              {isBusy
-                ? <ActivityIndicator size="small" color={colors.surface} style={{ width: 14, height: 14 }} />
-                : <Text style={n.toggleOnText}>Activé</Text>}
-            </Pressable>
-          )}
         </View>
+      </Pressable>
+    </Animated.View>
+  );
+}
 
-        {/* Error message */}
-        {errorMsg ? (
-          <Text style={n.errorMsg}>{errorMsg}</Text>
-        ) : null}
+// ─── BellIcon — pure-View bell silhouette, no SVG/emoji ────────────────────
+// Drawn with nested Views and border-radius to create a clean, premium bell
+// shape in beige on a deep-green circle — avoids the cheap emoji glyph look.
 
-        {/* Preset selector — only when enabled */}
-        {uiState === 'enabled' && (
-          <View style={n.presetRow}>
-            {presetKeys.map(key => {
-              const p     = PRESETS[key];
-              const active = settings.preset === key;
-              return (
-                <Pressable
-                  key={key}
-                  style={[n.presetBtn, active && n.presetBtnActive]}
-                  onPress={() => changePreset(key)}
-                  disabled={isBusy}
-                >
-                  <Text style={[n.presetLabel, active && n.presetLabelActive]}>
-                    {p.label}
-                  </Text>
-                  <Text style={[n.presetTime, active && n.presetTimeActive]}>
-                    {String(p.hour).padStart(2, '0')}h{String(p.minute).padStart(2, '0')}
-                  </Text>
-                  {key === 'evening' && (
-                    <View style={n.recoBadge}>
-                      <Text style={n.recoBadgeText}>Recommandé</Text>
-                    </View>
-                  )}
-                </Pressable>
-              );
-            })}
-          </View>
-        )}
-
-        {/* CTA row */}
-        <View style={n.ctaRow}>
-          {uiState === 'disabled' && (
-            <Pressable
-              style={[n.ctaBtn, n.ctaBtnPrimary, isBusy && n.ctaBtnDisabled]}
-              onPress={enable}
-              disabled={isBusy}
-            >
-              {isBusy
-                ? <ActivityIndicator size="small" color={colors.surface} style={{ width: 14, height: 14 }} />
-                : <Text style={n.ctaBtnPrimaryText}>Activer</Text>}
-            </Pressable>
-          )}
-
-          {uiState === 'denied' && (
-            <Pressable style={[n.ctaBtn, n.ctaBtnSecondary]} onPress={openSystemSettings}>
-              <Text style={n.ctaBtnSecondaryText}>Ouvrir les réglages</Text>
-            </Pressable>
-          )}
-
-          {uiState === 'enabled' && (
-            <Pressable
-              style={[n.ctaBtn, n.ctaBtnSecondary, isBusy && n.ctaBtnDisabled]}
-              onPress={sendTest}
-              disabled={isBusy}
-            >
-              {testSent
-                ? <Text style={[n.ctaBtnSecondaryText, { color: colors.success }]}>Envoyé !</Text>
-                : isBusy
-                  ? <ActivityIndicator size="small" color={colors.primary} style={{ width: 14, height: 14 }} />
-                  : <Text style={n.ctaBtnSecondaryText}>Envoyer un test</Text>}
-            </Pressable>
-          )}
-        </View>
-
-        {/* Test status line */}
-        {testMsg ? (
-          <Text style={n.testStatus}>{testMsg}</Text>
-        ) : null}
-
-        {/* Fine print */}
-        {uiState === 'disabled' && (
-          <Text style={n.finePrint}>
-            Une seule notification par jour. Tu peux la désactiver à tout moment.
-          </Text>
-        )}
-
-      </View>
+function BellIcon({ color, size = 24 }: { color: string; size?: number }) {
+  const s = size;
+  const knob = Math.round(s * 0.14);
+  const bodyW = Math.round(s * 0.58);
+  const bodyH = Math.round(s * 0.50);
+  const rimW = Math.round(s * 0.72);
+  const rimH = Math.round(s * 0.10);
+  const clapper = Math.round(s * 0.12);
+  return (
+    <View style={{ width: s, height: s, alignItems: 'center', justifyContent: 'flex-end' }}>
+      {/* Knob */}
+      <View style={{
+        width: knob, height: knob, borderRadius: knob / 2,
+        backgroundColor: color, marginBottom: 1,
+      }} />
+      {/* Bell body — dome via asymmetric border radii */}
+      <View style={{
+        width: bodyW, height: bodyH,
+        borderTopLeftRadius: bodyW / 2, borderTopRightRadius: bodyW / 2,
+        borderBottomLeftRadius: 2, borderBottomRightRadius: 2,
+        backgroundColor: color,
+      }} />
+      {/* Rim — slightly wider than body */}
+      <View style={{
+        width: rimW, height: rimH, borderRadius: rimH / 2,
+        backgroundColor: color, marginTop: -1,
+      }} />
+      {/* Clapper */}
+      <View style={{
+        width: clapper, height: clapper, borderRadius: clapper / 2,
+        backgroundColor: color, marginTop: 1,
+      }} />
     </View>
   );
 }
 
-// ─── SubscriptionCard ─────────────────────────────────────────────────────────
+// ─── SettingsCard — single Apple-Settings-style card ────────────────────────
 
-function SubscriptionCard({ hasZainlyPlus }: { hasZainlyPlus: boolean }) {
-  if (hasZainlyPlus) {
-    return (
-      <View style={sub.card}>
-        <View style={sub.accentBar} />
-        <View style={sub.body}>
-          <View style={sub.headerRow}>
-            <Text style={sub.title}>Zainly+</Text>
-            <View style={sub.badgeActive}>
-              <Text style={sub.badgeActiveText}>Actif</Text>
-            </View>
-          </View>
-          <Text style={sub.desc}>Sessions guidées sans limite quotidienne.</Text>
-          <Text style={sub.secondary}>Ton accès Zainly+ est actif sur ce compte.</Text>
-          <Pressable
-            style={({ pressed }) => [sub.btnSecondary, pressed && sub.btnPressed]}
-            onPress={() => {
-              // TODO Zainly+: replace with RevenueCat subscription management.
-              Alert.alert(
-                'Bientôt disponible',
-                'La gestion de l’abonnement sera disponible avec les achats intégrés.'
-              );
-            }}
-          >
-            <Text style={sub.btnSecondaryText}>Gérer l’abonnement</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [sub.linkBtn, pressed && sub.btnPressed]}
-            onPress={() => router.push('/premium?context=profile')}
-          >
-            <Text style={sub.linkBtnText}>Restaurer mes achats</Text>
-          </Pressable>
-        </View>
-      </View>
-    );
+function SettingsCard({ anim }: { anim: Animated.Value }) {
+  const { uiState, errorMsg } = useNotificationSettings();
+
+  const isEnabled = uiState === 'enabled';
+
+  function handlePress() {
+    hapticLight();
+    if (Platform.OS === 'ios') {
+      Linking.openURL('app-settings:').catch(() => {});
+    } else {
+      Linking.openSettings().catch(() => {});
+    }
   }
 
   return (
-    <View style={sub.card}>
-      <View style={sub.accentBar} />
-      <View style={sub.body}>
-        <View style={sub.headerRow}>
-          <Text style={sub.title}>Zainly Free</Text>
-          <View style={sub.badgeFree}>
-            <Text style={sub.badgeFreeText}>Gratuit</Text>
-          </View>
-        </View>
-        <Text style={sub.desc}>1 ayat guidé par jour.</Text>
-        <Text style={sub.secondary}>
-          Passe à Zainly+ pour débloquer les sessions guidées sans limite quotidienne.
-        </Text>
+    <Animated.View
+      style={[
+        {
+          opacity: anim,
+          transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
+        },
+      ]}
+    >
+      <View style={g.card}>
         <Pressable
-          style={({ pressed }) => [sub.btnPrimary, pressed && sub.btnPressed]}
-          onPress={() => router.push('/premium?context=profile')}
+          style={({ pressed }) => [g.row, pressed && g.rowPressed]}
+          onPress={handlePress}
+          accessibilityRole="button"
+          accessibilityLabel={`Rappel quotidien, ${isEnabled ? 'activé' : 'désactivé'}`}
+          accessibilityHint="Ouvre les réglages de notifications d'iOS"
         >
-          <Text style={sub.btnPrimaryText}>Découvrir Zainly+</Text>
+          <View style={g.iconCircle}>
+            <BellIcon color={colors.goldSoft} size={22} />
+          </View>
+          <View style={g.textWrap}>
+            <Text style={g.rowTitle}>Rappel quotidien</Text>
+            <Text style={g.rowSubtitle}>
+              {isEnabled
+                ? 'Reçois un rappel chaque jour pour continuer ton Hifz.'
+                : 'Active les notifications dans les réglages.'}
+            </Text>
+            {errorMsg ? <Text style={g.rowError}>{errorMsg}</Text> : null}
+          </View>
+          <View style={g.controlWrap}>
+            {uiState === 'loading' ? (
+              <ActivityIndicator size="small" color={colors.muted} />
+            ) : (
+              // Chevron, matching the reference mockup — same tap target/
+              // behavior as before, only the visual indicator changed.
+              <Text style={g.chevron}>{'\u203A'}</Text>
+            )}
+          </View>
         </Pressable>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
-// ─── ProfileScreen ────────────────────────────────────────────────────────────
+// ─── ProfileScreen ──────────────────────────────────────────────────────────
 
 export default function ProfileScreen() {
   const { confirmLogout, isLoggingOut, performLogout } = useLogout();
-  const userId = useAuthStore((s) => s.session?.user.id);
-  // Source of truth: RevenueCat 'zainly_plus' entitlement, with profile.is_premium as fallback.
+  const user = useAuthStore((s) => s.session?.user);
+  const userId = user?.id;
+  const { data: profile } = useProfile(userId);
   const { hasZainlyPlus } = useZainlyPlusAccess(userId);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
-  // Ref guard: synchronous, avoids a double tap slipping through before the
-  // isDeletingAccount state re-render disables the button (same pattern as
-  // isPushing/isCreatingRef used elsewhere in the app for destructive/CTA taps).
   const isDeletingRef = useRef(false);
+  const logoutScale = useRef(new Animated.Value(1)).current;
+
+  const headerAnim   = useRef(new Animated.Value(0)).current;
+  const premiumAnim  = useRef(new Animated.Value(0)).current;
+  const settingsAnim = useRef(new Animated.Value(0)).current;
+  const accountAnim  = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const seq = Animated.stagger(140, [
+      Animated.timing(headerAnim,   { toValue: 1, duration: 550, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(premiumAnim,  { toValue: 1, duration: 650, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(settingsAnim, { toValue: 1, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(accountAnim,  { toValue: 1, duration: 450, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+    ]);
+    seq.start();
+    return () => seq.stop();
+  }, []);
+
+  function handleRestorePurchases() {
+    hapticLight();
+    router.push('/premium?context=profile');
+  }
 
   async function performAccountDeletion() {
     if (isDeletingRef.current) return;
@@ -237,16 +305,7 @@ export default function ProfileScreen() {
     const result = await deleteAccountSelfService();
 
     if (result.ok) {
-      // Set a flag for the login screen to show a success banner and clear fields.
-      // This flag is consumed immediately when the login screen reads it.
-      await AsyncStorage.setItem('account_deleted_success', 'true').catch(() => {
-        // Non-fatal: if storage fails, the user just won't see the banner.
-      });
-      // Auth user + all Zainly data are gone server-side. Reuse the existing
-      // logout cleanup (RQ cache, Zustand, AsyncStorage, RevenueCat) — its
-      // supabase.auth.signOut() call is best-effort, so it still completes
-      // even though the Auth user no longer exists. The (app)/_layout.tsx
-      // guard redirects to /(auth)/login once the session is cleared.
+      await AsyncStorage.setItem('account_deleted_success', 'true').catch(() => {});
       await performLogout();
       return;
     }
@@ -266,7 +325,7 @@ export default function ProfileScreen() {
 
   function confirmDeletion() {
     const subscriptionNote = hasZainlyPlus
-      ? '\n\nTon abonnement Zainly+ ne sera pas annulé automatiquement : annule-le depuis les Réglages de l’App Store pour éviter un renouvellement.'
+      ? '\n\nTon abonnement Zainly+ ne sera pas annulé automatiquement : annule-le depuis les Réglages de l\u2019App Store pour éviter un renouvellement.'
       : '';
     Alert.alert(
       'Supprimer ton compte ?',
@@ -278,386 +337,410 @@ export default function ProfileScreen() {
     );
   }
 
+  function handleLogoutPressIn() {
+    Animated.timing(logoutScale, { toValue: 0.97, duration: 120, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+  }
+  function handleLogoutPressOut() {
+    Animated.timing(logoutScale, { toValue: 1, duration: 200, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+  }
+
+  const firstName = profile?.first_name ?? null;
+  const email = user?.email ?? null;
+
   return (
     <Screen>
-      <SectionLabel text="Mon compte" style={styles.badge} />
-      <Text style={styles.title}>Profil</Text>
-      <Text style={styles.subtitle}>Personnalise ton expérience Zainly.</Text>
+      {/* Header */}
+      <Animated.View
+        style={[
+          s.header,
+          {
+            opacity: headerAnim,
+            transform: [{ translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
+          },
+        ]}
+      >
+        <Text style={s.eyebrow}>MON COMPTE</Text>
+        <Text style={s.title}>Profil</Text>
+        {firstName ? <Text style={s.firstName}>{firstName}</Text> : null}
+        {email ? <Text style={s.email}>{email}</Text> : null}
+      </Animated.View>
 
-      {/* ── Notifications ── */}
-      <SectionLabel text="Notifications" style={styles.sectionLabel} />
-      <NotificationsCard />
+      {/* Premium card — focal point */}
+      <PremiumCard hasZainlyPlus={hasZainlyPlus} anim={premiumAnim} />
 
-      {/* ── Abonnement ── */}
-      <SectionLabel text="Abonnement" style={styles.sectionLabel} />
-      <SubscriptionCard hasZainlyPlus={hasZainlyPlus} />
+      {/* Restore purchases — discreet link, never competes with the card */}
+      <Pressable
+        style={({ pressed }) => [s.restoreLink, pressed && s.restoreLinkPressed]}
+        onPress={handleRestorePurchases}
+        accessibilityRole="button"
+        accessibilityLabel="Restaurer mes achats"
+      >
+        <Text style={s.restoreText}>Restaurer mes achats</Text>
+      </Pressable>
 
-      {/* ── Compte section ── */}
-      <SectionLabel text="Compte" style={styles.sectionLabel} />
-      <View style={styles.card}>
+      {/* Réglages */}
+      <Animated.View style={[s.sectionWrap, { opacity: settingsAnim }]}>
+        <Text style={s.sectionLabel}>RÉGLAGES</Text>
+        <SettingsCard anim={settingsAnim} />
+      </Animated.View>
+
+      {/* Compte */}
+      <Animated.View
+        style={[
+          s.accountWrap,
+          {
+            opacity: accountAnim,
+            transform: [{ translateY: accountAnim.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
+          },
+        ]}
+      >
+        <Animated.View style={{ width: '100%', transform: [{ scale: logoutScale }] }}>
+          <Pressable
+            style={s.logoutBtn}
+            onPress={confirmLogout}
+            onPressIn={handleLogoutPressIn}
+            onPressOut={handleLogoutPressOut}
+            disabled={isLoggingOut}
+            accessibilityRole="button"
+            accessibilityLabel="Se déconnecter"
+            accessibilityState={{ disabled: isLoggingOut }}
+          >
+            {isLoggingOut ? (
+              <ActivityIndicator size="small" color={colors.danger} />
+            ) : (
+              <>
+                {/* Monochrome glyph approximating SF Symbol
+                    "rectangle.portrait.and.arrow.right" — expo-symbols would
+                    require a native rebuild of the dev client (see chat). */}
+                <Text style={s.logoutIcon}>{'\u21E5'}</Text>
+                <Text style={s.logoutText}>Se déconnecter</Text>
+              </>
+            )}
+          </Pressable>
+        </Animated.View>
+
         <Pressable
-          style={({ pressed }) => [
-            styles.logoutRow,
-            isLoggingOut && styles.logoutRowDisabled,
-            pressed && !isLoggingOut && styles.logoutRowPressed,
-          ]}
-          onPress={confirmLogout}
-          disabled={isLoggingOut}
-        >
-          <Text style={[styles.logoutText, isLoggingOut && styles.logoutTextDim]}>
-            {isLoggingOut ? 'Déconnexion…' : 'Se déconnecter'}
-          </Text>
-        </Pressable>
-        <View style={styles.divider} />
-        <Pressable
-          style={({ pressed }) => [
-            styles.logoutRow,
-            isDeletingAccount && styles.logoutRowDisabled,
-            pressed && !isDeletingAccount && styles.logoutRowPressed,
-          ]}
+          style={({ pressed }) => [s.deleteLink, pressed && s.deleteLinkPressed]}
           onPress={confirmDeletion}
           disabled={isDeletingAccount}
+          accessibilityRole="button"
+          accessibilityLabel="Supprimer mon compte"
         >
-          <Text style={[styles.logoutText, isDeletingAccount && styles.logoutTextDim]}>
-            {isDeletingAccount ? 'Suppression…' : 'Supprimer mon compte'}
-          </Text>
-          <Text style={styles.deleteDesc}>
-            Supprimer définitivement ton compte et toutes tes données Zainly.
+          <Text style={s.deleteLinkText}>
+            {isDeletingAccount ? 'Suppression\u2026' : 'Supprimer mon compte'}
           </Text>
         </Pressable>
-      </View>
+      </Animated.View>
     </Screen>
   );
 }
 
-// ─── Styles: profile ──────────────────────────────────────────────────────────
+// ─── Styles: screen ──────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-  badge: { marginTop: spacing.sm },
+const s = StyleSheet.create({
+  header: {
+    marginTop: spacing.sm,
+    marginBottom: spacing.xl,
+  },
+  eyebrow: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 2,
+    color: colors.gold,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
   title: {
     fontSize: 30,
     fontWeight: '700',
     color: colors.primary,
-    marginBottom: 6,
+    marginBottom: 20,
   },
-  subtitle: {
+  firstName: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: colors.primary,
+    marginBottom: 8, // grid: nom → email
+  },
+  email: {
     fontSize: 13,
     color: colors.muted,
-    lineHeight: 20,
-    marginBottom: spacing.lg,
+    marginBottom: 28, // grid: email → carte premium
   },
-  sectionLabel: { marginTop: spacing.lg },
-  card: {
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.border,
-    marginHorizontal: spacing.md,
-  },
-  logoutRow: {
+  restoreLink: {
+    alignSelf: 'center',
+    marginTop: 18, // grid: carte → restaurer mes achats
+    paddingVertical: 10,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
   },
-  logoutRowDisabled: { opacity: 0.5 },
-  logoutRowPressed:   { opacity: 0.65 },
-  logoutText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: colors.danger,
-  },
-  logoutTextDim: { color: colors.muted },
-  deleteDesc: {
-    fontSize: 12,
+  restoreLinkPressed: { opacity: 0.55 },
+  restoreText: {
+    fontSize: 12.5,
+    fontWeight: '500',
     color: colors.muted,
-    lineHeight: 17,
-    marginTop: 4,
   },
-});
-
-// ─── Styles: notifications card ───────────────────────────────────────────────
-
-const n = StyleSheet.create({
-  card: {
-    flexDirection: 'row',
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+  sectionWrap: {
+    marginTop: 36, // grid: restaurer mes achats → réglages
   },
-  accentBar: {
-    width: 4,
-    backgroundColor: colors.gold,
-  },
-  body: {
-    flex: 1,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 8,
-  },
-  title: {
-    fontSize: 15,
+  sectionLabel: {
+    fontSize: 10,
     fontWeight: '700',
-    color: colors.primary,
-    marginBottom: 3,
-  },
-  subtitle: {
-    fontSize: 12,
-    color: colors.muted,
-    lineHeight: 17,
-  },
-  errorMsg: {
-    fontSize: 11,
-    color: colors.danger,
-    marginBottom: 8,
-    lineHeight: 16,
-  },
-  // Toggle pill (enabled state header)
-  togglePill: {
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    marginLeft: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minWidth: 70,
-  },
-  toggleOn: {
-    backgroundColor: colors.primary,
-  },
-  toggleOnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.surface,
-    letterSpacing: 0.2,
-  },
-  // Preset selector
-  presetRow: {
-    flexDirection: 'row',
-    gap: 8,
+    letterSpacing: 2,
+    color: colors.gold,
+    textTransform: 'uppercase',
     marginBottom: 12,
   },
-  presetBtn: {
-    flex: 1,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
-    paddingVertical: 8,
-    paddingHorizontal: 6,
+  accountWrap: {
+    marginTop: 32, // grid: réglages → déconnexion
     alignItems: 'center',
-    gap: 2,
   },
-  presetBtnActive: {
-    borderColor: colors.gold,
-    backgroundColor: colors.goldSoft,
-  },
-  presetLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.muted,
-    letterSpacing: 0.1,
-  },
-  presetLabelActive: {
-    color: colors.primary,
-  },
-  presetTime: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: colors.muted,
-    letterSpacing: -0.2,
-  },
-  presetTimeActive: {
-    color: colors.gold,
-  },
-  recoBadge: {
-    marginTop: 2,
-    backgroundColor: colors.gold,
-    borderRadius: 20,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  recoBadgeText: {
-    fontSize: 8,
-    fontWeight: '800',
-    color: colors.surface,
-    letterSpacing: 0.3,
-  },
-  // CTA
-  ctaRow: {
+  logoutBtn: {
+    width: '100%',
+    height: 56, // same height as the main "Aujourd'hui" CTA (app/(app)/(tabs)/index.tsx)
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 2,
-  },
-  ctaBtn: {
-    borderRadius: 10,
-    paddingVertical: 9,
-    paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 36,
+    backgroundColor: 'rgba(180,35,24,0.07)',
+    borderRadius: 16,
+    gap: 8,
   },
-  ctaBtnPrimary: {
-    backgroundColor: colors.primary,
-  },
-  ctaBtnPrimaryText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.surface,
-    letterSpacing: 0.2,
-  },
-  ctaBtnSecondary: {
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    backgroundColor: 'transparent',
-  },
-  ctaBtnSecondaryText: {
-    fontSize: 13,
+  logoutIcon: {
+    fontSize: 17,
+    color: colors.danger,
     fontWeight: '600',
-    color: colors.primary,
   },
-  ctaBtnDisabled: {
-    opacity: 0.5,
+  logoutText: {
+    fontSize: 15.5,
+    fontWeight: '700',
+    color: colors.danger,
   },
-  // Test status line
-  testStatus: {
-    fontSize: 11,
-    color: colors.success,
-    lineHeight: 16,
-    marginTop: 6,
-    fontStyle: 'italic',
+  deleteLink: {
+    marginTop: 20, // grid: déconnexion → supprimer mon compte
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
   },
-  // Fine print
-  finePrint: {
-    fontSize: 10.5,
+  deleteLinkPressed: { opacity: 0.55 },
+  deleteLinkText: {
+    fontSize: 13,
     color: colors.muted,
-    lineHeight: 15,
-    marginTop: 8,
-    fontStyle: 'italic',
+    textDecorationLine: 'underline',
   },
 });
 
-// ─── Styles: subscription card ────────────────────────────────────────────────
+// ─── Styles: premium card ────────────────────────────────────────────────────
 
-const sub = StyleSheet.create({
+const p = StyleSheet.create({
+  wrap: {
+    position: 'relative',
+  },
+  pressable: {
+    borderRadius: 28,
+    // Soft, diffuse shadow — never black. Same technique already used for
+    // the main CTA on the "Aujourd'hui" screen (shadowColor: colors.primary).
+    shadowColor: colors.primary,
+    shadowOpacity: 0.22,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
+  },
   card: {
-    flexDirection: 'row',
-    backgroundColor: colors.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderRadius: 24,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
+    minHeight: 168,
+    backgroundColor: colors.primary,
   },
-  accentBar: {
-    width: 4,
-    backgroundColor: colors.gold,
+  cardBg: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: colors.primary,
   },
-  body: {
-    flex: 1,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
+  // Faint lighter wash, top-left — reads as a soft highlight catching light.
+  toneLight: {
+    position: 'absolute',
+    top: -50, left: -70,
+    width: 280, height: 280,
+    borderRadius: 140,
+    backgroundColor: colors.primarySoft,
+    opacity: 0.5,
+  },
+  // Second, smaller organic circle — mid-tone, bottom-left. Purely additive
+  // depth layer, same palette-only technique.
+  toneMid: {
+    position: 'absolute',
+    bottom: -30, left: 40,
+    width: 160, height: 160,
+    borderRadius: 80,
+    backgroundColor: colors.primarySoft,
+    opacity: 0.22,
+  },
+  // Faint darker wash, bottom-right — reads as depth/shadow falling away.
+  // Black overlay (same technique as shadowColor '#000' used app-wide) —
+  // never a new palette color, just a translucent shading layer.
+  toneDark: {
+    position: 'absolute',
+    bottom: -70, right: -50,
+    width: 260, height: 260,
+    borderRadius: 130,
+    backgroundColor: 'rgba(0,0,0,0.26)',
+  },
+  goldAccent: {
+    position: 'absolute',
+    top: -80, right: -60,
+    width: 240, height: 240,
+    borderRadius: 120,
+    backgroundColor: 'rgba(184,150,46,0.10)',
+  },
+  shimmer: {
+    position: 'absolute',
+    top: 0, width: '28%', height: '100%',
+    backgroundColor: 'rgba(255,255,255,0.045)',
+    transform: [{ skewX: '-18deg' }],
+  },
+  // Fine corner ornaments — thin gold L-brackets, matching the reference
+  // mockup exactly (top-left + bottom-right).
+  cornerTL: {
+    position: 'absolute',
+    top: 14, left: 14,
+    width: 14, height: 14,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderColor: 'rgba(184,150,46,0.40)',
+  },
+  cornerBR: {
+    position: 'absolute',
+    bottom: 14, right: 14,
+    width: 14, height: 14,
+    borderBottomWidth: 1,
+    borderRightWidth: 1,
+    borderColor: 'rgba(184,150,46,0.40)',
+  },
+  content: {
+    padding: spacing.md,
   },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 6,
+    marginBottom: spacing.sm,
   },
-  title: {
-    fontSize: 15,
+  brandName: {
+    fontSize: 19,
     fontWeight: '700',
-    color: colors.primary,
-  },
-  badgeFree: {
-    backgroundColor: colors.surfaceMuted,
-    borderRadius: 20,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  badgeFreeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.muted,
+    color: colors.gold,
+    letterSpacing: 0.4,
   },
   badgeActive: {
-    backgroundColor: colors.goldSoft,
+    backgroundColor: 'rgba(184,150,46,0.16)',
     borderRadius: 20,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(184,150,46,0.30)',
   },
   badgeActiveText: {
     fontSize: 11,
     fontWeight: '700',
     color: colors.gold,
   },
-  desc: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.primary,
-    marginBottom: 4,
-  },
-  secondary: {
-    fontSize: 12,
-    color: colors.muted,
-    lineHeight: 17,
-    marginBottom: spacing.md,
-  },
-  btnPrimary: {
-    backgroundColor: colors.primary,
-    borderRadius: 12,
-    paddingVertical: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  btnPrimaryText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.surface,
-  },
-  btnSecondary: {
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    borderRadius: 12,
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  btnSecondaryText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.primary,
-  },
-  linkBtn: {
-    alignItems: 'center',
-    justifyContent: 'center',
+  // Light beige/cream pill — matches the reference mockup exactly (not a
+  // translucent white outline as before).
+  badgeFree: {
+    backgroundColor: colors.goldSoft,
+    borderRadius: 20,
+    paddingHorizontal: 14,
     paddingVertical: 6,
   },
-  linkBtnText: {
+  badgeFreeText: {
     fontSize: 12,
     fontWeight: '600',
-    color: colors.muted,
+    color: colors.primary,
   },
-  btnPressed: { opacity: 0.75 },
+  headline: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 6,
+    lineHeight: 23,
+  },
+  subline: {
+    fontSize: 12.5,
+    color: 'rgba(255,255,255,0.5)',
+    lineHeight: 18,
+  },
+  // Text + arrow link — matches the reference mockup exactly.
+  ctaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.sm,
+  },
+  ctaText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.gold,
+  },
+  ctaArrow: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.gold,
+    marginLeft: 7,
+  },
+});
+
+// ─── Styles: settings card ────────────────────────────────────────────────────
+
+const g = StyleSheet.create({
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.lg,
+  },
+  rowPressed: { opacity: 0.85 },
+  iconCircle: {
+    width: 42, height: 42,
+    borderRadius: 21,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: spacing.md,
+  },
+  textWrap: {
+    flex: 1,
+    marginRight: spacing.sm,
+  },
+  rowTitle: {
+    fontSize: 15.5,
+    fontWeight: '600',
+    color: colors.primary,
+    marginBottom: 3,
+  },
+  rowSubtitle: {
+    fontSize: 12.5,
+    color: colors.muted,
+    lineHeight: 17,
+  },
+  rowError: {
+    fontSize: 11,
+    color: colors.danger,
+    marginTop: 4,
+    lineHeight: 16,
+  },
+  controlWrap: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 28,
+  },
+  chevron: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: colors.muted,
+    lineHeight: 24,
+  },
 });
