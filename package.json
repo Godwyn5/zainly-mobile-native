@@ -8,7 +8,11 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "legal:build": "node scripts/generate-legal-pages.js",
-    "legal:check": "node scripts/generate-legal-pages.js --check"
+    "legal:check": "node scripts/generate-legal-pages.js --check",
+    "lint": "expo lint",
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "doctor": "expo-doctor"
   },
   "dependencies": {
     "@expo-google-fonts/amiri": "^0.4.1",
@@ -42,8 +46,25 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
+    "@types/jest": "29.5.14",
     "@types/react": "~19.1.0",
+    "eslint": "^9.0.0",
+    "eslint-config-expo": "~10.0.0",
+    "expo-doctor": "^1.20.1",
+    "jest": "~29.7.0",
+    "jest-expo": "~54.0.17",
     "typescript": "~5.9.2"
+  },
+  "jest": {
+    "preset": "jest-expo",
+    "transformIgnorePatterns": [
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|react-native-url-polyfill|@supabase/supabase-js|@tanstack/react-query|zustand)"
+    ],
+    "testPathIgnorePatterns": [
+      "<rootDir>/node_modules/",
+      "<rootDir>/app/",
+      "<rootDir>/web-legal/"
+    ]
   },
   "private": true
 }
