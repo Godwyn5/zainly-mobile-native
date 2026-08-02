@@ -30,102 +30,6 @@ function devWarn(message: string) {
 }
 
 /**
- * Temporary debug function to log RevenueCat state in development.
- * Logs Supabase user ID, RevenueCat appUserID, CustomerInfo, entitlement status,
- * offerings, packages, product identifiers, and any errors.
- */
-export async function debugRevenueCatState(supabaseUserId: string | undefined): Promise<void> {
-  if (!__DEV__) return;
-
-  console.log('╔═════════════════════════════════════════════════════════════════════╗');
-  console.log('║ [RC DEBUG] RevenueCat State                                        ║');
-  console.log('╚═════════════════════════════════════════════════════════════════════╝');
-  console.log(`[RC DEBUG] Supabase user id: ${supabaseUserId ?? 'null'}`);
-
-  if (Platform.OS !== 'ios') {
-    console.log('[RC DEBUG] Platform: not iOS - RevenueCat not supported in Phase 1');
-    return;
-  }
-
-  if (!isConfigured) {
-    console.log('[RC DEBUG] RevenueCat is not configured');
-    return;
-  }
-
-  try {
-    // Purchases.getAppUserID() returns the CURRENT identified appUserID.
-    // customerInfo.originalAppUserId is NOT the same thing: it's the
-    // historical/original ID recorded for this customer record and stays
-    // as the pre-alias anonymous ID even after a successful logIn().
-    const currentAppUserId = await Purchases.getAppUserID();
-    const customerInfo = await Purchases.getCustomerInfo();
-    console.log(`[RC DEBUG] RevenueCat appUserID (current, Purchases.getAppUserID): ${currentAppUserId ?? 'null'}`);
-    console.log(`[RC DEBUG] RevenueCat originalAppUserId (historical, informational only): ${customerInfo.originalAppUserId ?? 'null'}`);
-    console.log(
-      `[RC DEBUG] Supabase user id === RevenueCat current appUserID: ${
-        !!supabaseUserId && currentAppUserId === supabaseUserId
-      }`
-    );
-    console.log(
-      `[RC DEBUG] Entitlement zainly_plus active: ${hasRevenueCatEntitlement(customerInfo, 'zainly_plus')}`
-    );
-
-    if (customerInfo.entitlements.active.zainly_plus) {
-      const entitlement = customerInfo.entitlements.active.zainly_plus;
-      console.log(`[RC DEBUG] zainly_plus entitlement details:`, {
-        isActive: entitlement.isActive,
-        willRenew: entitlement.willRenew,
-        periodType: entitlement.periodType,
-        latestPurchaseDate: entitlement.latestPurchaseDate,
-        expirationDate: entitlement.expirationDate,
-        productIdentifier: entitlement.productIdentifier,
-      });
-    }
-
-    // Log active subscriptions
-    const activeSubscriptions = customerInfo.activeSubscriptions;
-    console.log(
-      `[RC DEBUG] Active subscriptions: ${Object.keys(activeSubscriptions).length > 0 ? Object.keys(activeSubscriptions).join(', ') : 'none'}`
-    );
-
-    // Try to fetch offerings for debug
-    try {
-      const offerings = await Purchases.getOfferings();
-      console.log(`[RC DEBUG] Current offering: ${offerings.current?.identifier ?? 'null'}`);
-      console.log(
-        `[RC DEBUG] Available offerings: ${Object.keys(offerings.all).join(', ') || 'none'}`
-      );
-
-      const defaultOffering = offerings.all['default'];
-      if (defaultOffering) {
-        const { annual, monthly } = getZainlyPlusPackages(defaultOffering);
-        console.log(`[RC DEBUG] Annual package: ${annual ? annual.identifier : 'null'}`);
-        console.log(`[RC DEBUG] Monthly package: ${monthly ? monthly.identifier : 'null'}`);
-
-        if (annual) {
-          console.log(`[RC DEBUG] Annual product identifier: ${annual.product.identifier}`);
-          console.log(`[RC DEBUG] Annual price: ${annual.product.priceString}`);
-          console.log(`[RC DEBUG] Annual intro price: ${annual.product.introPrice?.priceString ?? 'none'}`);
-        }
-        if (monthly) {
-          console.log(`[RC DEBUG] Monthly product identifier: ${monthly.product.identifier}`);
-          console.log(`[RC DEBUG] Monthly price: ${monthly.product.priceString}`);
-          console.log(`[RC DEBUG] Monthly intro price: ${monthly.product.introPrice?.priceString ?? 'none'}`);
-        }
-      } else {
-        console.log('[RC DEBUG] No "default" offering found');
-      }
-    } catch (offeringsErr) {
-      console.log(`[RC DEBUG] Failed to fetch offerings: ${offeringsErr instanceof Error ? offeringsErr.message : String(offeringsErr)}`);
-    }
-  } catch (err) {
-    console.log(`[RC DEBUG] Failed to get CustomerInfo: ${err instanceof Error ? err.message : String(err)}`);
-  }
-
-  console.log('╚═════════════════════════════════════════════════════════════════════╝');
-}
-
-/**
  * Configures the RevenueCat SDK exactly once for the lifetime of the app.
  * Safe to call multiple times — subsequent calls are no-ops.
  * Never throws: if the platform is unsupported or the API key is missing,
@@ -335,17 +239,6 @@ export async function purchaseRevenueCatPackage(
 
   try {
     const { customerInfo } = await Purchases.purchasePackage(packageToPurchase);
-
-    if (__DEV__) {
-      const currentAppUserId = await Purchases.getAppUserID().catch(() => 'unknown');
-      console.log('[RC DEBUG] Purchase succeeded:', {
-        productIdentifier: packageToPurchase.product.identifier,
-        currentAppUserId,
-        zainlyPlusActive: hasRevenueCatEntitlement(customerInfo, DEFAULT_ENTITLEMENT_ID),
-        activeSubscriptions: customerInfo.activeSubscriptions,
-        activeEntitlementIds: Object.keys(customerInfo.entitlements.active),
-      });
-    }
 
     return { ok: true, customerInfo };
   } catch (err: any) {

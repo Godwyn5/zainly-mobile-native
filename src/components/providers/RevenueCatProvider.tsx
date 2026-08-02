@@ -11,7 +11,6 @@ import {
   configureRevenueCatOnce,
   revenueCatLogIn,
   revenueCatLogOut,
-  debugRevenueCatState,
 } from '@/lib/revenueCat';
 
 export function RevenueCatProvider() {
@@ -59,9 +58,6 @@ export function RevenueCatProvider() {
       // native identity switch resolves, so a fast logout->login on the same
       // device never briefly reuses the previous account's entitlement.
       queryClient.invalidateQueries({ queryKey: ['revenueCatCustomerInfo'] });
-
-      // Debug log RevenueCat state after sync (dev only)
-      await debugRevenueCatState(userId ?? undefined);
     })();
   }, [ready, userId, queryClient]);
 

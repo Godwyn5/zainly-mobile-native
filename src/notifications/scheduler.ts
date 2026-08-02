@@ -143,16 +143,6 @@ export async function sendTestNotification(): Promise<TestNotificationResult> {
     const all = await Notifications.getAllScheduledNotificationsAsync();
     const scheduledCountAfter = all.length;
 
-    if (__DEV__) {
-      console.log('[notifications] test scheduled', {
-        scheduledId,
-        scheduledCountAfter,
-        permissionStatus,
-        platform,
-        scheduled: all.map(n => ({ id: n.identifier, trigger: n.trigger })),
-      });
-    }
-
     return { ok: true, permissionStatus, scheduledId, scheduledCountAfter, platform };
   } catch (err) {
     const error = err instanceof Error ? err.message : 'Erreur inconnue.';
