@@ -55,7 +55,7 @@ function PremiumCard({ hasZainlyPlus, anim }: { hasZainlyPlus: boolean; anim: An
       shimmerLoop.current?.stop();
       breatheLoop.current?.stop();
     };
-  }, []);
+  }, [shimmerAnim, breatheAnim]);
 
   const shimmerLeft = shimmerAnim.interpolate({ inputRange: [-1, 1], outputRange: ['-30%', '130%'] });
   const breatheY = breatheAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -1.5] });
@@ -290,7 +290,7 @@ export default function ProfileScreen() {
     ]);
     seq.start();
     return () => seq.stop();
-  }, []);
+  }, [headerAnim, premiumAnim, settingsAnim, accountAnim]);
 
   function handleRestorePurchases() {
     hapticLight();
