@@ -85,11 +85,6 @@ export default function LoginEmailScreen() {
     setError('Connexion impossible pour le moment. Réessaie dans un instant.');
   }
 
-  function handleBack() {
-    hapticLight();
-    router.back();
-  }
-
   function handleForgotPassword() {
     hapticLight();
     router.push('/(auth)/reset-password');

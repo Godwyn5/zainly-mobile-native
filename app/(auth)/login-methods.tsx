@@ -9,7 +9,7 @@ import { useFonts } from 'expo-font';
 import { Lora_500Medium } from '@expo-google-fonts/lora';
 import { Amiri_700Bold } from '@expo-google-fonts/amiri';
 import { Cinzel_500Medium } from '@expo-google-fonts/cinzel';
-import { hapticLight, hapticMedium } from '@/utils/haptics';
+import { hapticMedium } from '@/utils/haptics';
 import ZainlyLogo from '@/components/auth/ZainlyLogo';
 import AppleIcon from '@/components/auth/icons/AppleIcon';
 import GoogleIcon from '@/components/auth/icons/GoogleIcon';
@@ -18,8 +18,6 @@ import EmailIcon from '@/components/auth/icons/EmailIcon';
 // ─── palette — matches Splash/Welcome identity ───────────────────────────────
 const BG = '#F7F2E7';              // cream (from Welcome)
 const GREEN = '#163026';          // deep green (from Welcome)
-const GOLD = '#C6A15B';           // gold (from Welcome)
-const GOLD_DARK = '#9F7628';      // dark gold (from Welcome)
 const MUTED = '#7A6E61';          // warm grey for subtitles
 const BUTTON_BG = '#FFFFFF';      // white for secondary buttons
 const BUTTON_BORDER = 'rgba(22,48,38,0.12)'; // subtle green-tinted border
