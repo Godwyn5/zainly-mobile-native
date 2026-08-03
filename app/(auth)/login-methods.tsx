@@ -57,7 +57,7 @@ export default function LoginMethodsScreen() {
       Animated.timing(btnsO, { toValue: 1, duration: 260, delay: 180, easing: E, useNativeDriver: true }),
       Animated.timing(btnsY, { toValue: 0, duration: 260, delay: 180, easing: E, useNativeDriver: true }),
     ]).start();
-  }, [fontsLoaded]);
+  }, [fontsLoaded, logoO, logoY, titleO, titleY, subtitleO, subtitleY, btnsO, btnsY]);
 
   function handleApple() {
     hapticMedium();
