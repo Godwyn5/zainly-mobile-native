@@ -1,4 +1,4 @@
-﻿// ─── Session · Steps 1–2 — Ta mission du jour / Découverte ─────────────────
+// ─── Session · Steps 1–2 — Ta mission du jour / Découverte ─────────────────
 // Step 1: mission overview. Step 2: ayat discovery.
 // No DB writes. No review item creation.
 // Reads only from usePlan / useProgress / useDueReviews via getTodayProgramme.
@@ -490,7 +490,6 @@ function DiscoveryScreen({ surahNumber, surahName, memStart, onBack, onNext }: D
       return { ayat: result.ayahs[0], contentError: null };
     }
     return { ayat: null, contentError: result.ok ? 'Contenu introuvable.' : result.error };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surahNumber, memStart]);
 
   // ── listen gate ──
@@ -1094,7 +1093,6 @@ function DecoupageScreen({ surahNumber, ayatNumber, ayat, onBack, onNext }: Deco
     hapticSelection();
     const dir: 1 | -1 = i > focusIdx ? 1 : -1;
     navigateTo(i, dir);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusIdx, visitedCount, navigateTo]);
 
   // ── CTA press ──
@@ -1638,7 +1636,6 @@ function RepetitionScreen({ surahNumber, ayatNumber, ayat, onBack, onNext }: Rep
     if (i === focusIdx) return;
     hapticSelection();
     navigateTo(i, i > focusIdx ? 1 : -1);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusIdx, unlockedCount, navigateTo]);
 
   // ── repeat tap ──
@@ -2204,7 +2201,6 @@ function AyatRecitationScreen({
     return () => {
       if (guardTimer.current) clearTimeout(guardTimer.current);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
   // ── recite → compare transition ──
@@ -2240,10 +2236,6 @@ function AyatRecitationScreen({
   }, [canContinue, isLastAyat, onFinalTest, onNextAyat]);
 
   const ctaShineX = ctaShine.interpolate({ inputRange: [-1, 1], outputRange: ['-60%', '160%'] });
-
-  const ayatLabel = totalAyatsToday === 1
-    ? `Ayat ${ayatNumber}`
-    : `Ayat ${ayatNumber - (ayatNumber - 1) + (ayatNumber - ayatNumber) + 1} sur ${totalAyatsToday}`;
 
   // compute 1-based index within today's range
   const ayatIndexLabel = `Ayat ${ayatNumber}`;

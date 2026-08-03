@@ -216,31 +216,6 @@ function getStartAyahForSurah(surahNum: number, partialMap: Record<number, Parti
   return p ? p.to + 1 : 1;
 }
 
-function computeStartFromKnown(
-  knownSet: Set<number>,
-  partialMap: Record<number, PartialKnown>
-): { startPosition: number; startAyah: number; knownAyats: number } {
-  let startPosition = 0;
-  let knownAyats    = 0;
-
-  for (let i = 0; i < ZAINLY_ORDER.length; i++) {
-    const s = ZAINLY_ORDER[i];
-    if (knownSet.has(s.surah)) {
-      knownAyats   += s.ayahs;
-      startPosition = i + 1;
-    } else if (partialMap[s.surah]) {
-      const { to } = partialMap[s.surah];
-      knownAyats   += to;
-      startPosition = i;
-      return { startPosition, startAyah: to + 1, knownAyats };
-    } else {
-      startPosition = i;
-      break;
-    }
-  }
-  return { startPosition, startAyah: 1, knownAyats };
-}
-
 function buildKnownSet(
   knownSurahsRaw: number[],
   partialMapOut: Record<number, PartialKnown>,

@@ -1,9 +1,8 @@
 import { UseQueryOptions } from '@tanstack/react-query';
 import { fetchPlan } from '@/db/plans';
 import { fetchProgress } from '@/db/progress';
-import { fetchDueCount } from '@/db/reviewItems';
+import { fetchDueCount, fetchLearnedItems } from '@/db/reviewItems';
 import { fetchProfile } from '@/db/profiles';
-import { fetchLearnedItems } from '@/db/reviewItems';
 
 // ─── Date helpers (must match useDueReviews exactly) ────────────────────────
 

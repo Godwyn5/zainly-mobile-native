@@ -335,7 +335,6 @@ export default function DoneScreen() {
       { delay: 1600, cx: SW * 0.38, cy: sealCY - 30, size:  80, color: 'rgba(212,175,55,0.35)', loopGap: 3600 },
       { delay: 2000, cx: SW * 0.64, cy: sealCY - 20, size:  90, color: 'rgba(200,162,40,0.40)', loopGap: 3400 },
     ];
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isCompact]);
 
   const slide = (anim: Animated.Value, dist = 16) => ({

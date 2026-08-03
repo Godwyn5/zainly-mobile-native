@@ -504,7 +504,6 @@ function AyatDetailSheet({ target, onClose }: { target: DetailTarget; onClose: (
   // Stop all list AudioPlayBtn players when the sheet opens.
   useEffect(() => {
     stopAllHifzAudio();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Sheet entrance animation — starts immediately on mount
@@ -698,7 +697,6 @@ function LastAyatCard({
   useEffect(() => {
     getQuranAyahRange({ surahNumber: row.surah_number, fromAyah: row.ayah, toAyah: row.ayah })
       .then(r => { if (r.ok && r.ayahs[0]) setContent(r.ayahs[0]); });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [row.surah_number, row.ayah]);
 
   const dc = diffColor(row);
@@ -768,7 +766,6 @@ export default function HifzScreen() {
 
   const isLoading = pLoading || iLoading;
   const isError   = pError   || iError;
-  const hasFetchedOnce = pFetched && iFetched;
   const isInitialLoading = (pLoading && !pFetched) || (iLoading && !iFetched);
   const refetch   = () => { pRefetch(); iRefetch(); };
 
@@ -866,7 +863,6 @@ export default function HifzScreen() {
       if (!cancelled) setSurahGroups(resolved);
     });
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseGroups]);
 
   const surahCount = surahGroups.length;

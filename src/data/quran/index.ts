@@ -16,9 +16,7 @@ import type {
 
 // ─── Raw data imports (bundled at build time via Metro) ────────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const rawHafs: RawQuranSurah[]   = require('../../../assets/data/quran.json');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const rawHafsFr: RawQuranFrSurah[] = require('../../../assets/data/quran_fr.json');
 
 // ─── Riwaya availability registry ─────────────────────────────────────────────

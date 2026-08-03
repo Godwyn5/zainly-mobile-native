@@ -18,7 +18,7 @@ import { spacing } from '@/theme/spacing';
 import { hapticLight, hapticMedium, hapticSuccess, hapticWarning } from '@/utils/haptics';
 import { useAuthStore }       from '@/store/authStore';
 import { useDueReviewItems }  from '@/hooks/useDueReviewItems';
-import { advanceReviewItem, REVIEW_BATCH_CAP } from '@/db/reviewItems';
+import { advanceReviewItem } from '@/db/reviewItems';
 import type { DueReviewItem } from '@/db/reviewItems';
 import type { SessionDifficulty } from '@/db/progress';
 import { getQuranAyahSync, getSurahName } from '@/core/quranContent';
@@ -156,8 +156,7 @@ const ci = StyleSheet.create({
   mark: { fontWeight: '900' },
 });
 
-// ─── MethodCard ───────────────────────────────────────────────────────────────
-// Embedded in Intro — shows the four revision steps.
+// ─── MethodCard (removed — inline steps used instead) ────────────────────────
 
 const METHOD_STEPS = [
   { n: '1', text: 'Récite d\'abord sans regarder.' },
@@ -165,35 +164,6 @@ const METHOD_STEPS = [
   { n: '3', text: 'Affiche l\'aide seulement si nécessaire.' },
   { n: '4', text: 'Évalue honnêtement.' },
 ];
-
-function MethodCard() {
-  return (
-    <View style={mc.card}>
-      <View style={mc.header}>
-        <View style={mc.goldBar} />
-        <Text style={mc.title}>Méthode de révision</Text>
-      </View>
-      {METHOD_STEPS.map((step, i) => (
-        <View key={i} style={mc.row}>
-          <View style={mc.numBadge}>
-            <Text style={mc.num}>{step.n}</Text>
-          </View>
-          <Text style={mc.text}>{step.text}</Text>
-        </View>
-      ))}
-    </View>
-  );
-}
-const mc = StyleSheet.create({
-  card:     { backgroundColor: colors.surface, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(184,150,46,0.28)', padding: spacing.md, marginBottom: spacing.md, shadowColor: colors.gold, shadowOpacity: 0.07, shadowRadius: 10, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
-  header:   { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
-  goldBar:  { width: 3, height: 16, borderRadius: 2, backgroundColor: colors.gold },
-  title:    { fontSize: 13, fontWeight: '800', color: colors.primary, letterSpacing: 0.6 },
-  row:      { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginBottom: 10 },
-  numBadge: { width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(184,150,46,0.18)', alignItems: 'center', justifyContent: 'center', marginTop: 1 },
-  num:      { fontSize: 11, fontWeight: '900', color: colors.gold },
-  text:     { flex: 1, fontSize: 13, color: colors.muted, lineHeight: 20 },
-});
 
 // ─── PulseRing ────────────────────────────────────────────────────────────────
 // Animated concentric ring — used behind the Transition seal.

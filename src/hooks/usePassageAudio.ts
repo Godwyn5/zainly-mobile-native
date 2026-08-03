@@ -142,7 +142,6 @@ export function usePassageAudio(
         playingRef.current = false;
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [surahNumber, ayatNumbers, setLoadingWithDelay]);
 
   // ── react to player status changes ──
@@ -204,7 +203,6 @@ export function usePassageAudio(
     setCurrentAyatIndex(0);
 
     playAtIndex(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ayatNumbers, playAtIndex]);  // intendingTimerRef is a ref — stable
 
   // ── stop ──

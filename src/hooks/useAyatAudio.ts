@@ -227,7 +227,6 @@ export function useAyatAudio(
         setErrorMessage("Audio indisponible pour l'instant. Réessaie.");
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, status.playing, setLoadingWithDelay]);
 
   // ── pause (in-place — resumes from same position) ──
@@ -296,7 +295,6 @@ export function useAyatAudio(
       playerRef.current.pause();
       preparedUrlRef.current = url;
     } catch { /* ignore — player may not be ready yet */ }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
 
   // ── reset (used after error — clears error state, allows retry via play()) ──
@@ -372,7 +370,6 @@ export function useAyatAudio(
         setErrorMessage("Audio indisponible pour l'instant. Réessaie.");
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, setLoadingWithDelay]);
 
   const isIdle     = !isPlaying && !isPaused && !hasCompleted && !isLoading && !hasError;

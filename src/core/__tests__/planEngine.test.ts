@@ -67,7 +67,7 @@ describe('ZAINLY_ORDER', () => {
   // at audit time.  If the order ever changes intentionally, this fixture
   // must be updated deliberately.
 
-  const EXPECTED_ZAINLY_ORDER: ReadonlyArray<{ name: string; surah: number; ayahs: number }> = [
+  const EXPECTED_ZAINLY_ORDER: readonly { name: string; surah: number; ayahs: number }[] = [
     { name: 'Al-Fatiha',      surah: 1,   ayahs: 7   },
     { name: 'An-Nas',         surah: 114, ayahs: 6   },
     { name: 'Al-Falaq',       surah: 113, ayahs: 5   },

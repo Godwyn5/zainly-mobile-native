@@ -25,7 +25,7 @@ export interface PendingOnboardingPlanStatus {
 }
 
 export function usePendingOnboardingPlanStatus(
-  refreshDeps: ReadonlyArray<unknown> = []
+  refreshDeps: readonly unknown[] = []
 ): PendingOnboardingPlanStatus {
   const [isLoading, setIsLoading] = useState(true);
   const [hasPending, setHasPending] = useState(false);

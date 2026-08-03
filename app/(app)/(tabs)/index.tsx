@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo, useState, useCallback } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, Animated, Easing, Pressable, Dimensions, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -296,7 +296,7 @@ export default function TodayScreen() {
   const dotAnims = useRef(
     Array.from({ length: 8 }, () => new Animated.Value(0.4))
   ).current;
-  const dotLoops = useRef<Array<Animated.CompositeAnimation | null>>(
+  const dotLoops = useRef<(Animated.CompositeAnimation | null)[]>(
     Array.from({ length: 8 }, () => null)
   );
   // Entry shimmer for premium CTA
@@ -425,7 +425,6 @@ export default function TodayScreen() {
     today,
     // Free users are capped at 1 new ayat per day; Zainly+ follows their plan pace.
     effectiveAyahPerDay: hasZainlyPlus ? undefined : 1,
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [plan.data, progress.data, reviews.data, today, hasZainlyPlus]);
 
   const progressPct = prog.surahTotalAyats > 0
