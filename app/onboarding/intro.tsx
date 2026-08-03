@@ -20,7 +20,6 @@ const TITLE_GREEN = '#0F4A36';  // visible title green — primary headings
 const GOLD    = '#C6A15B';   // champagne gold
 const MUTED   = '#7A6E61';   // warm grey
 const SURF    = '#FFFFFF';
-const BORDER  = 'rgba(3,26,18,0.10)';
 const GOLD_BORDER = 'rgba(198,161,91,0.28)';
 
 const F_BRAND  = 'Cinzel_500Medium';
@@ -334,7 +333,7 @@ export default function OnboardingIntroScreen() {
   async function markIntroSeen() {
     if (!user?.id) return;
     const key = `zainly:onboardingIntroSeen:${user.id}`;
-    try { await AsyncStorage.setItem(key, 'true'); } catch (_) { /* non-fatal */ }
+    try { await AsyncStorage.setItem(key, 'true'); } catch { /* non-fatal */ }
   }
 
   function handleCtaPress() {

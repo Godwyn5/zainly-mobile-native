@@ -407,7 +407,6 @@ function SummaryScreen({ onContinue }: { onContinue: () => void }) {
 
 // ─── CreatingPlanScreen ───────────────────────────────────────────────────────
 
-const MIN_CREATING_VISIBLE_MS = 6000;   // minimum time before 100% can appear
 const SUCCESS_PROGRESS_MS     = 1000;   // duration of 92 → 100 animation
 const POST_SUCCESS_PAUSE_MS   = 1000;   // pause at 100% before navigation
 
@@ -908,7 +907,6 @@ function SeriousQuestionnaire({ step, userId, onStepChange }: SQProps) {
       continueWithRest: planMode === 'custom_order' ? continueWithRest : undefined,
       ayahPerDay,
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, userId, planMode, knownSurahs, startingSurah, customOrder, continueWithRest, ayahPerDay]);
 
   // ── Step: startMode ──
