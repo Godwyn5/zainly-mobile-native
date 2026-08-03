@@ -112,7 +112,6 @@ function TypewriterBlock({
 }: TypewriterBlockProps) {
   const { lines, delays, totalChars } = useMemo(
     () => buildTimeline(segments, CHAR_INTERVAL),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [segments]
   );
 

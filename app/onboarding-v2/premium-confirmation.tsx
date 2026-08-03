@@ -15,8 +15,6 @@ import OnboardingBottomAction from '@/components/onboarding/OnboardingBottomActi
 // ─── palette — identical tokens to the rest of Onboarding V2 ──────────────
 const SPLASH_BEIGE       = '#F7F2E7';
 const SPLASH_GREEN       = '#163026';
-const SPLASH_GREEN_FAINT = 'rgba(22,48,38,0.05)';
-const SPLASH_GOLD_DIM    = '#8A744A';
 const GOLD_DARK          = '#9F7628';
 const CARD_CREAM         = '#FFFDF7';
 const CARD_BORDER        = 'rgba(22,48,38,0.10)';

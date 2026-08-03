@@ -118,7 +118,6 @@ export default function OnboardingCustomOrderScreen() {
         onPress={toggleCustom}
       />
     );
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customOrder]);
 
   const listHeader = (

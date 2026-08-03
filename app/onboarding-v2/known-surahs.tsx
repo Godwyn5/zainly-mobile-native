@@ -157,7 +157,6 @@ export default function OnboardingKnownSurahsScreen() {
         </Text>
       )}
     </View>
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   ), [knownSurahs, allKnownSelected, juzAmmaFullySelected]);
 
   if (!draftChecked) {

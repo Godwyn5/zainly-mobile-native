@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
+  View, TextInput, TouchableOpacity, StyleSheet,
   Animated, Easing, StatusBar, Platform, KeyboardAvoidingView,
   AccessibilityInfo,
 } from 'react-native';
@@ -16,7 +16,6 @@ import {
 // ─── palette — same identity as Splash/Welcome (kept local, not exported
 // from app/index.tsx, to avoid touching that file beyond its CTA target) ──
 const SPLASH_BEIGE       = '#F7F2E7';
-const SPLASH_BEIGE_EDGE  = '#EDE3CC';
 const SPLASH_GREEN       = '#163026';
 const SPLASH_GREEN_FAINT = 'rgba(22,48,38,0.05)';
 const GOLD_DARK          = '#9F7628';

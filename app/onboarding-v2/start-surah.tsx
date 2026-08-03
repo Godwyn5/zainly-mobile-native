@@ -74,7 +74,6 @@ export default function OnboardingStartSurahScreen() {
 
   const renderItem = useCallback(({ item }: { item: typeof ZAINLY_ORDER[number] }) => (
     <SurahListRow entry={item} selected={startingSurah === item.surah} onPress={pickStartingSurah} />
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   ), [startingSurah]);
 
   const listHeader = (
