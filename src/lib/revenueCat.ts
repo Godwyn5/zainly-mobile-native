@@ -18,6 +18,53 @@ const DEFAULT_ENTITLEMENT_ID = 'zainly_plus';
 let isConfigured = false;
 let configurePromise: Promise<void> | null = null;
 let isLoggedIn = false;
+let currentAppUserId: string | null = null;
+
+// ─── Serialized identity coordinator ───────────────────────────────────────
+// Ensures only one configure/logIn/logOut operation runs at a time. A
+// module-level promise chain serializes all identity operations so that
+// a request for user B arriving while user A's logIn is in flight waits
+// for A to complete before starting B. This prevents the RevenueCat SDK
+// from receiving overlapping logIn/logOut calls and ensures
+// currentAppUserId is only updated after the operation truly succeeds.
+//
+// A generation counter tracks the current identity epoch. Each
+// ensureRevenueCatReadyForUser call captures the generation before and
+// after the operation — if the generation changed (because another
+// identity switch happened in between), the result is considered stale.
+
+let identityChain: Promise<unknown> = Promise.resolve();
+let identityGeneration = 0;
+
+/**
+ * Serializes an identity operation (configure/logIn/logOut) through a
+ * single promise chain. Only one operation runs at a time. The returned
+ * promise resolves with the operation's result. Never rejects — errors
+ * are caught and returned as typed results so the chain never breaks.
+ */
+function serializeIdentity<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
+  const run = identityChain.then(operation, operation);
+  // Keep the chain alive even if the operation throws — catch and
+  // return a rejected promise so the caller can handle it, but the
+  // chain itself continues to the next operation.
+  identityChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/**
+ * Returns the current identity generation. Each successful identity
+ * operation (logIn/logOut) increments this counter. Callers capture the
+ * generation before an operation and compare it after to detect if
+ * another identity switch happened in between.
+ */
+export function getRevenueCatGeneration(): number {
+  return identityGeneration;
+}
 
 function getIosApiKey(): string | undefined {
   return process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY;
@@ -39,7 +86,8 @@ export async function configureRevenueCatOnce(userId?: string | null): Promise<v
   if (isConfigured) return;
   if (configurePromise) return configurePromise;
 
-  configurePromise = (async () => {
+  configurePromise = serializeIdentity(async () => {
+    if (isConfigured) return;
     if (Platform.OS !== 'ios') {
       devWarn('Skipped configure — only iOS is supported in Phase 1.');
       return;
@@ -54,13 +102,6 @@ export async function configureRevenueCatOnce(userId?: string | null): Promise<v
     }
 
     try {
-      // Phase 1: offerings are not used yet. Avoid React Native redbox from
-      // RevenueCat offering configuration logs — the native SDK auto-prefetches
-      // offerings right after configure() and logs an ERROR if no products are
-      // set up yet in the RevenueCat dashboard / App Store Connect. By default
-      // react-native-purchases routes ERROR-level logs to console.error, which
-      // triggers a dev redbox. We keep full visibility via console.warn instead,
-      // without ever calling console.error for non-fatal RevenueCat logs.
       Purchases.setLogHandler((level, message) => {
         if (!__DEV__) return;
         console.warn(`[revenueCat:${level}] ${message}`);
@@ -73,10 +114,12 @@ export async function configureRevenueCatOnce(userId?: string | null): Promise<v
       });
       isConfigured = true;
       isLoggedIn = !!userId;
+      currentAppUserId = userId ?? null;
+      identityGeneration++;
     } catch (err) {
       devWarn(`configure() failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-  })();
+  });
 
   return configurePromise;
 }
@@ -96,14 +139,24 @@ export async function revenueCatLogIn(userId: string): Promise<boolean> {
     return false;
   }
 
-  try {
-    await Purchases.logIn(userId);
-    isLoggedIn = true;
-    return true;
-  } catch (err) {
-    devWarn(`logIn failed: ${err instanceof Error ? err.message : String(err)}`);
-    return false;
-  }
+  return serializeIdentity(async () => {
+    // Re-check inside the serialized context — another operation may have
+    // already logged in this user while we were waiting in the chain.
+    if (currentAppUserId === userId) return true;
+
+    try {
+      await Purchases.logIn(userId);
+      isLoggedIn = true;
+      currentAppUserId = userId;
+      identityGeneration++;
+      return true;
+    } catch (err) {
+      devWarn(`logIn failed: ${err instanceof Error ? err.message : String(err)}`);
+      // currentAppUserId is NOT updated on failure — the identity
+      // remains in its previous state, which is safe.
+      return false;
+    }
+  });
 }
 
 /**
@@ -116,12 +169,21 @@ export async function revenueCatLogOut(): Promise<void> {
   if (!isConfigured) return;
   if (!isLoggedIn) return;
 
-  try {
-    await Purchases.logOut();
+  return serializeIdentity(async () => {
+    if (!isLoggedIn) return;
+
+    try {
+      await Purchases.logOut();
+    } catch (err) {
+      devWarn(`logOut failed (best-effort, ignored): ${err instanceof Error ? err.message : String(err)}`);
+    }
+    // Always update state — logOut is best-effort, and even if the SDK
+    // call failed, we want to clear our local identity tracking so a
+    // subsequent logIn for a different user is not skipped.
     isLoggedIn = false;
-  } catch (err) {
-    devWarn(`logOut failed (best-effort, ignored): ${err instanceof Error ? err.message : String(err)}`);
-  }
+    currentAppUserId = null;
+    identityGeneration++;
+  });
 }
 
 /**
@@ -341,6 +403,38 @@ export async function syncRevenueCatUserAfterAuth(
     entitlementActive: hasRevenueCatEntitlement(customerInfo),
     customerInfo,
   };
+}
+
+/**
+ * Returns the userId RevenueCat is currently identified with, or null if
+ * anonymous/unconfigured. Used by the boot pipeline to verify that
+ * CustomerInfo queries are for the correct user before accepting the result.
+ */
+export function getRevenueCatCurrentUserId(): string | null {
+  return currentAppUserId;
+}
+
+/**
+ * Ensures RevenueCat is configured and identified for the exact userId
+ * before any CustomerInfo read. Idempotent — if the identity already matches,
+ * it returns true without calling Purchases.logIn again. Never throws.
+ *
+ * On unsupported platforms (Android), returns true (nothing to verify).
+ * Returns false only when a real logIn attempt was made and failed.
+ *
+ * Returns an object with `ready` and `generation` so callers can verify
+ * the identity hasn't changed between this call and a subsequent
+ * getRevenueCatCustomerInfo call.
+ */
+export async function ensureRevenueCatReadyForUser(
+  userId: string,
+): Promise<{ ready: boolean; generation: number }> {
+  if (Platform.OS !== 'ios') return { ready: true, generation: identityGeneration };
+  await configureRevenueCatOnce(userId);
+  if (!isConfigured) return { ready: true, generation: identityGeneration };
+  if (currentAppUserId === userId) return { ready: true, generation: identityGeneration };
+  const ok = await revenueCatLogIn(userId);
+  return { ready: ok, generation: identityGeneration };
 }
 
 export type { CustomerInfo, PurchasesOffering, PurchasesPackage };

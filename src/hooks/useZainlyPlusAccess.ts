@@ -8,11 +8,11 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  getRevenueCatCustomerInfo,
   hasRevenueCatEntitlement,
   CustomerInfo,
 } from '@/lib/revenueCat';
 import { useProfile } from '@/hooks/useProfile';
+import { revenueCatCustomerInfoQueryOptions } from '@/queries';
 
 const ZAINLY_PLUS_ENTITLEMENT_ID = 'zainly_plus';
 
@@ -33,12 +33,7 @@ export function useZainlyPlusAccess(userId: string | undefined): ZainlyPlusAcces
     data: customerInfo,
     isLoading: isCustomerInfoLoading,
     error: customerInfoError,
-  } = useQuery({
-    queryKey: ['revenueCatCustomerInfo', userId],
-    queryFn: () => getRevenueCatCustomerInfo(),
-    enabled: !!userId,
-    staleTime: 60_000,
-  });
+  } = useQuery(revenueCatCustomerInfoQueryOptions(userId));
 
   const hasRevenueCatAccess = hasRevenueCatEntitlement(
     customerInfo,
