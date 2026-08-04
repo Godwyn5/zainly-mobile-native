@@ -12,7 +12,7 @@ import {
   buildPlanInputFromDraft, isPlanValidationError, routeForOnboardingStep,
   PENDING_SIGNUP_USER_ID,
 } from '@/lib/onboardingPlanValidation';
-import { savePendingOnboardingPlan } from '@/lib/pendingOnboardingPlan';
+import { savePendingOnboardingPlan, saveActiveOnboardingAuthFlow, setSessionAuthFlowId } from '@/lib/pendingOnboardingPlan';
 import {
   TOTAL_ONBOARDING_PHASES, phaseStepNumber, PROGRAM_SUMMARY_BACK_TARGET,
 } from '@/lib/onboardingQuestionnaire';
@@ -153,7 +153,15 @@ export default function OnboardingProgramSummaryScreen() {
       // plan right after a real session exists (from the draft if it is
       // still alive, otherwise from the payload just saved above), then
       // routes to the real, auth-protected dashboard.
-      router.push('/(auth)/signup-methods?context=onboarding');
+      // Persist the active auth flow marker to AsyncStorage so the claim
+      // can succeed after a cold start (app killed between here and auth).
+      // Also set the in-memory session var as same-session fast path.
+      await saveActiveOnboardingAuthFlow(saved.flowId);
+      setSessionAuthFlowId(saved.flowId);
+      // flowId is passed explicitly so each auth route can supply it as
+      // proof of the originating parcours — prevents a Welcome login from
+      // claiming a pending payload.
+      router.push(`/(auth)/signup-methods?context=onboarding&flowId=${encodeURIComponent(saved.flowId)}`);
     } finally {
       isSubmittingRef.current = false;
     }

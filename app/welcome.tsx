@@ -9,6 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { hapticLight, hapticMedium } from '@/utils/haptics';
+import { clearActiveOnboardingAuthFlow, clearSessionAuthFlowId } from '@/lib/pendingOnboardingPlan';
 
 const GOLD         = '#C6A15B';
 const GOLD_DARK    = '#9F7628';
@@ -84,7 +85,14 @@ export default function WelcomeScreen() {
             <TouchableOpacity
               style={styles.secondaryBtn}
               activeOpacity={0.6}
-              onPress={() => { hapticLight(); router.push('/(auth)/login-methods'); }}
+              onPress={() => {
+                hapticLight();
+                // Normal Welcome login — clear any stale onboarding-v2 auth flow
+                // proof so it cannot be used to claim an old pending payload.
+                clearActiveOnboardingAuthFlow();
+                clearSessionAuthFlowId();
+                router.push('/(auth)/login-methods');
+              }}
             >
               <Text style={styles.secondaryBtnText}>J'ai déjà un compte</Text>
             </TouchableOpacity>

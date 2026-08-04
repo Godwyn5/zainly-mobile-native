@@ -14,6 +14,7 @@ import { useSessionResultStore } from '@/store/sessionResultStore';
 import { cancelUserHifzNotifications } from '@/notifications/scheduler';
 import { clearNotificationData }       from '@/notifications/storage';
 import { revenueCatLogOut }            from '@/lib/revenueCat';
+import { clearAllPendingOnboardingData } from '@/lib/pendingOnboardingPlan';
 
 export function useLogout() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -36,6 +37,11 @@ export function useLogout() {
 
       // 2. Best-effort RevenueCat identity reset — must never affect logout flow
       await revenueCatLogOut().catch(() => {/* non-fatal */});
+
+      // 2b. Clear any pending onboarding-v2 payload — a logout must never
+      // leave a pending plan that a different account could claim after
+      // re-login. This is the primary defense against A→B leakage.
+      await clearAllPendingOnboardingData().catch(() => {/* non-fatal */});
 
       // 3. Clear React Query cache so next user starts fresh
       queryClient.clear();

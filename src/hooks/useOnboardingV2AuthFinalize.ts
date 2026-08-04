@@ -14,6 +14,7 @@ import { restoreRevenueCatPurchases, hasRevenueCatEntitlement } from '@/lib/reve
 import {
   finalizeOnboardingV2PlanWithPremiumGate, FinalizeOnboardingV2Result,
 } from '@/lib/onboardingFinalize';
+import { getSessionAuthFlowId, clearSessionAuthFlowId } from '@/lib/pendingOnboardingPlan';
 
 // ─── Dashboard queries that decide "has a plan" / "no plan" state ─────────
 // AuthLayout (app/(auth)/_layout.tsx) redirects into the dashboard the
@@ -36,6 +37,7 @@ function invalidateDashboardQueries(queryClient: ReturnType<typeof useQueryClien
     queryClient.invalidateQueries({ queryKey: ['progress', userId] }),
     queryClient.invalidateQueries({ queryKey: ['dueReviews', userId] }),
     queryClient.invalidateQueries({ queryKey: ['profile', userId] }),
+    queryClient.invalidateQueries({ queryKey: ['pendingOnboarding', userId] }),
   ]);
 }
 
@@ -104,7 +106,11 @@ export function useOnboardingV2AuthFinalize(): UseOnboardingV2AuthFinalizeResult
     userIdRef.current = userId;
 
     try {
-      const outcome = await finalizeOnboardingV2PlanWithPremiumGate(userId);
+      // Read the in-memory session flow ID set by signup-email/login-email when
+      // context=onboarding was in their route params. Empty string means the
+      // current session did not originate from an onboarding parcours.
+      const authFlowId = getSessionAuthFlowId();
+      const outcome = await finalizeOnboardingV2PlanWithPremiumGate(userId, authFlowId);
 
       if (outcome.status === 'premium_sync_failed') {
         setPremiumGateIssue('sync_error');
@@ -119,6 +125,7 @@ export function useOnboardingV2AuthFinalize(): UseOnboardingV2AuthFinalizeResult
 
       setPremiumGateIssue(null);
       if (outcome.finalize.ok) {
+        clearSessionAuthFlowId();
         await invalidateDashboardQueries(queryClient, userId);
         setStatus('success');
       } else {

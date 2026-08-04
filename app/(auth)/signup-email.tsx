@@ -7,8 +7,9 @@ import {
 } from 'react-native';
 import { useFonts } from 'expo-font';
 import { Lora_500Medium } from '@expo-google-fonts/lora';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { supabase } from '@/db/client';
+import { setSessionAuthFlowId } from '@/lib/pendingOnboardingPlan';
 import { hapticLight, hapticMedium, hapticSelection } from '@/utils/haptics';
 import ZainlyLogo from '@/components/auth/ZainlyLogo';
 
@@ -31,6 +32,8 @@ function friendlySignupError(msg: string): string {
 }
 
 export default function SignupEmailScreen() {
+  const { context, flowId: flowIdParam } = useLocalSearchParams<{ context?: string; flowId?: string }>();
+  const fromOnboarding = context === 'onboarding';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -87,9 +90,15 @@ export default function SignupEmailScreen() {
     const { data, error: signupError } = await supabase.auth.signUp({ email: trimEmail, password });
     setLoading(false);
     if (signupError) { setError(friendlySignupError(signupError.message)); return; }
+    // If this is an onboarding auth flow, store the flowId in-memory so
+    // claimPendingOnboardingPlanForUser can use it as a fast-path proof.
+    // Cold-start resume (no flowId in params) is handled inside claim via
+    // readActiveOnboardingAuthFlow() — no need to read handoff here.
+    if (fromOnboarding && flowIdParam) {
+      setSessionAuthFlowId(flowIdParam);
+    }
     if (data.session) {
       // Session created — Stack.Protected will redirect to (app) automatically.
-      // The dashboard's recovery mechanism finalizes the onboarding-v2 plan.
       return;
     }
     setEmailSent(true);

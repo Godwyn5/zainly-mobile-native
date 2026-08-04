@@ -25,7 +25,14 @@ import { readOnboardingDraft, clearOnboardingDraft } from './onboardingDraft';
 import {
   buildPlanInputFromDraft, isPlanValidationError, PlanInputSource,
 } from './onboardingPlanValidation';
-import { readPendingOnboardingPlan, clearPendingOnboardingPlan } from './pendingOnboardingPlan';
+import {
+  readPendingOnboardingPlan,
+  clearPendingOnboardingPlan,
+  claimPendingOnboardingPlanForUser,
+  readOwnedPendingOnboardingPlanForUser,
+  clearAuthHandoff,
+  clearActiveOnboardingAuthFlow,
+} from './pendingOnboardingPlan';
 import { scheduleDailyHifzReminder } from '@/notifications/scheduler';
 import { saveNotificationSettings } from '@/notifications/storage';
 import { DEFAULT_SETTINGS } from '@/notifications/types';
@@ -46,9 +53,14 @@ export type FinalizeOnboardingV2Result =
 // run twice in parallel for the same finalization attempt.
 let inFlight: Promise<FinalizeOnboardingV2Result> | null = null;
 
-export async function finalizeOnboardingV2Plan(userId: string): Promise<FinalizeOnboardingV2Result> {
+/**
+ * authFlowId is the flowId received from program-summary via route params.
+ * Required when the pending payload path is used (draft not present).
+ * Pass empty string when the call comes from a non-onboarding auth flow.
+ */
+export async function finalizeOnboardingV2Plan(userId: string, authFlowId: string): Promise<FinalizeOnboardingV2Result> {
   if (inFlight) return inFlight;
-  inFlight = runFinalize(userId).finally(() => { inFlight = null; });
+  inFlight = runFinalize(userId, authFlowId).finally(() => { inFlight = null; });
   return inFlight;
 }
 
@@ -93,7 +105,8 @@ export type PremiumGatedFinalizeResult =
  * limitation that predates this patch.
  */
 export async function finalizeOnboardingV2PlanWithPremiumGate(
-  userId: string
+  userId: string,
+  authFlowId: string
 ): Promise<PremiumGatedFinalizeResult> {
   const experienceChoice = await peekOnboardingV2ExperienceChoice();
 
@@ -110,11 +123,11 @@ export async function finalizeOnboardingV2PlanWithPremiumGate(
     // verify) — fall through to finalize normally.
   }
 
-  const finalize = await finalizeOnboardingV2Plan(userId);
+  const finalize = await finalizeOnboardingV2Plan(userId, authFlowId);
   return { status: 'finalized', finalize };
 }
 
-async function runFinalize(userId: string): Promise<FinalizeOnboardingV2Result> {
+async function runFinalize(userId: string, authFlowId: string): Promise<FinalizeOnboardingV2Result> {
   const draft = await readOnboardingDraft();
 
   let source: PlanInputSource | null = null;
@@ -126,11 +139,22 @@ async function runFinalize(userId: string): Promise<FinalizeOnboardingV2Result> 
     notificationPreference = draft.notificationPreference;
     firstName = draft.firstName;
   } else {
-    const pending = await readPendingOnboardingPlan();
-    if (!pending) return { ok: false, reason: 'no_source' };
-    source = pending;
-    notificationPreference = pending.notificationPreference;
-    firstName = pending.firstName;
+    // Phase 1: try a fresh claim. Requires proof of onboarding parcours
+    // (authFlowId param, stored activeAuthFlow, or in-memory sessionAuthFlowId).
+    let payload = await claimPendingOnboardingPlanForUser(userId, authFlowId);
+
+    // Phase 2: cold-start resume path. Claim may fail because activeAuthFlow
+    // is already consumed (claim succeeded in a prior session but the app was
+    // killed before plan persistence). Read the already-owned payload directly
+    // — no authFlowId required, ownerUserId is the durable proof.
+    if (!payload) {
+      payload = await readOwnedPendingOnboardingPlanForUser(userId);
+    }
+
+    if (!payload) return { ok: false, reason: 'no_source' };
+    source = payload;
+    notificationPreference = payload.notificationPreference;
+    firstName = payload.firstName;
   }
 
   const validation = buildPlanInputFromDraft(source, userId);
@@ -201,5 +225,7 @@ async function runFinalize(userId: string): Promise<FinalizeOnboardingV2Result> 
   // unrelated login.
   await clearOnboardingDraft();
   await clearPendingOnboardingPlan();
+  await clearAuthHandoff();
+  await clearActiveOnboardingAuthFlow();
   return { ok: true };
 }

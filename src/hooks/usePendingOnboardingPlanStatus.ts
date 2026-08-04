@@ -7,16 +7,16 @@
 // showing the legacy "Créer mon programme" CTA while that is true — never
 // mutates the payload itself (read-only).
 //
-// Deliberately no polling/timer: callers pass `refreshDeps` (e.g. the
-// dashboard's own plan/progress query freshness markers) so the check is
-// re-run exactly when a finalization's invalidateQueries() causes those
-// queries to refetch, plus once on mount.
+// Uses the shared pendingOnboardingQueryOptions so the boot pipeline
+// (prepareAuthenticatedLaunch) and the dashboard read from the exact same
+// TanStack Query cache entry — no duplicate AsyncStorage reads, no race
+// between two independent states.
 
-import { useEffect, useRef, useState } from 'react';
-import { hasValidPendingOnboardingPlan } from '@/lib/pendingOnboardingPlan';
+import { useQuery } from '@tanstack/react-query';
+import { pendingOnboardingQueryOptions } from '@/queries';
 
 export interface PendingOnboardingPlanStatus {
-  /** True until the first AsyncStorage check (for the current deps) resolves. */
+  /** True until the first AsyncStorage check resolves. */
   isLoading: boolean;
   /** True if a still-valid (non-expired, well-formed) pending payload exists. */
   hasPending: boolean;
@@ -24,39 +24,16 @@ export interface PendingOnboardingPlanStatus {
   error: string | null;
 }
 
-export function usePendingOnboardingPlanStatus(
-  refreshDeps: readonly unknown[] = []
-): PendingOnboardingPlanStatus {
-  const [isLoading, setIsLoading] = useState(true);
-  const [hasPending, setHasPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const mountedRef = useRef(true);
+export function usePendingOnboardingPlanStatus(userId: string | undefined): PendingOnboardingPlanStatus {
+  const query = useQuery(pendingOnboardingQueryOptions(userId));
 
-  useEffect(() => {
-    mountedRef.current = true;
-    setIsLoading(true);
+  const error = query.error instanceof Error
+    ? query.error.message
+    : query.error ? String(query.error) : null;
 
-    hasValidPendingOnboardingPlan()
-      .then((pending) => {
-        if (!mountedRef.current) return;
-        setHasPending(pending);
-        setError(null);
-      })
-      .catch((err: unknown) => {
-        if (!mountedRef.current) return;
-        // Never let a storage failure block the dashboard indefinitely —
-        // fall back to "no pending" so the legacy no-plan CTA can still
-        // render for genuine no-plan users.
-        setHasPending(false);
-        setError(err instanceof Error ? err.message : 'Erreur inconnue.');
-      })
-      .finally(() => {
-        if (mountedRef.current) setIsLoading(false);
-      });
-
-    return () => { mountedRef.current = false; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, refreshDeps);
-
-  return { isLoading, hasPending, error };
+  return {
+    isLoading: query.isLoading,
+    hasPending: query.data === true,
+    error,
+  };
 }

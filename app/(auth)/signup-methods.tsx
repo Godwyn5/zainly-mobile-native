@@ -21,7 +21,7 @@ const BUTTON_BG = '#FFFFFF';      // white for secondary buttons
 const BUTTON_BORDER = 'rgba(22,48,38,0.12)'; // subtle green-tinted border
 
 export default function SignupMethodsScreen() {
-  const { context } = useLocalSearchParams<{ context?: string }>();
+  const { context, flowId } = useLocalSearchParams<{ context?: string; flowId?: string }>();
   const fromOnboarding = context === 'onboarding';
 
   const [loading, setLoading] = useState({ apple: false, google: false });
@@ -69,7 +69,13 @@ export default function SignupMethodsScreen() {
 
   function handleEmail() {
     hapticMedium();
-    router.push(fromOnboarding ? '/(auth)/signup-email?context=onboarding' : '/(auth)/signup-email');
+    if (fromOnboarding && flowId) {
+      router.push(`/(auth)/signup-email?context=onboarding&flowId=${encodeURIComponent(flowId)}`);
+    } else if (fromOnboarding) {
+      router.push('/(auth)/signup-email?context=onboarding');
+    } else {
+      router.push('/(auth)/signup-email');
+    }
   }
 
   if (!fontsLoaded) {

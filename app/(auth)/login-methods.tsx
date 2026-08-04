@@ -23,7 +23,7 @@ const BUTTON_BG = '#FFFFFF';      // white for secondary buttons
 const BUTTON_BORDER = 'rgba(22,48,38,0.12)'; // subtle green-tinted border
 
 export default function LoginMethodsScreen() {
-  const { context } = useLocalSearchParams<{ context?: string }>();
+  const { context, flowId } = useLocalSearchParams<{ context?: string; flowId?: string }>();
   const fromOnboarding = context === 'onboarding';
 
   const [loading, setLoading] = useState({ apple: false, google: false });
@@ -73,7 +73,13 @@ export default function LoginMethodsScreen() {
 
   function handleEmail() {
     hapticMedium();
-    router.push(fromOnboarding ? '/(auth)/login-email?context=onboarding' : '/(auth)/login-email');
+    if (fromOnboarding && flowId) {
+      router.push(`/(auth)/login-email?context=onboarding&flowId=${encodeURIComponent(flowId)}`);
+    } else if (fromOnboarding) {
+      router.push('/(auth)/login-email?context=onboarding');
+    } else {
+      router.push('/(auth)/login-email');
+    }
   }
 
   if (!fontsLoaded) {
