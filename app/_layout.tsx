@@ -48,7 +48,7 @@ async function clearInvalidAuthSession(
   setSession: (s: null) => void,
   setReady: () => void,
 ) {
-  try { await supabase.auth.signOut(); } catch (_) { /* ignore */ }
+  try { await supabase.auth.signOut(); } catch { /* ignore */ }
   // Only clear pending onboarding data if the pending payload is owned
   // by the expired session's user. A new pre-auth onboarding flow (created
   // after the session expired but before the app restarted) must survive —

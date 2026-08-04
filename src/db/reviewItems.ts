@@ -35,18 +35,6 @@ export async function fetchDueCount(userId: string, today: string, startTodayISO
   return (data ?? []).length;
 }
 
-export async function fetchDueItems(userId: string, today: string, startTodayISO: string) {
-  const { data, error } = await supabase
-    .from('review_items')
-    .select('id, user_id, surah_number, ayah, review_cycle, next_review, mastered, final_test_status, created_at, updated_at')
-    .eq('user_id', userId)
-    .eq('mastered', false)
-    .lte('next_review', today)
-    .lt('created_at', startTodayISO);
-  if (error) throw error;
-  return data ?? [];
-}
-
 // ─── fetchDueReviewItems ──────────────────────────────────────────────────────
 // Fetches up to `limit` due review rows, ordered by oldest due first.
 // Excludes mastered rows and items created today (same filter as fetchDueCount).
@@ -232,21 +220,5 @@ export async function advanceReviewItem(params: {
     .eq('id', itemId);
 
   if (updateError) return { error: new Error(updateError.message) };
-  return { error: null };
-}
-
-// ─── completeReviewItems ──────────────────────────────────────────────────────
-// Bulk-advances multiple review items. Stops on first error.
-
-export async function completeReviewItems(params: {
-  itemIds: string[];
-  difficulty: SessionDifficulty;
-}): Promise<{ error: Error | null }> {
-  const { itemIds, difficulty } = params;
-
-  for (const itemId of itemIds) {
-    const { error } = await advanceReviewItem({ itemId, difficulty });
-    if (error) return { error };
-  }
   return { error: null };
 }

@@ -77,10 +77,6 @@ export default function OnboardingSessionScreen() {
     timersRef.current.push(id);
     return id;
   }
-  function skipAllTimers() {
-    timersRef.current.forEach(clearTimeout);
-    timersRef.current = [];
-  }
 
   // ── living background — the exact same five independent breathing loops
   // as Greeting, so the space itself never feels like it changed

@@ -228,29 +228,6 @@ export type RevenueCatActionResult =
   | { ok: false; reason: 'cancelled' | 'not_configured' | 'unsupported_platform' | 'unknown'; message?: string };
 
 /**
- * Fetches all RevenueCat offerings. Intended to be called on demand from the
- * paywall screen only — never at app launch. Never throws.
- * Returns null if unavailable (unsupported platform, not configured, or the
- * native SDK failed to fetch offerings — e.g. products not ready yet on
- * App Store Connect).
- */
-export async function getRevenueCatOfferings(): Promise<PurchasesOffering[] | null> {
-  if (Platform.OS !== 'ios') return null;
-  if (!isConfigured) {
-    devWarn('getOfferings skipped — RevenueCat is not configured.');
-    return null;
-  }
-
-  try {
-    const offerings = await Purchases.getOfferings();
-    return Object.values(offerings.all);
-  } catch (err) {
-    devWarn(`getOfferings failed: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
-  }
-}
-
-/**
  * Convenience wrapper: returns the "default" offering configured in the
  * RevenueCat dashboard, falling back to `current` if "default" isn't found.
  * Never throws.

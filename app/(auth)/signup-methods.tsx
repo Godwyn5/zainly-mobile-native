@@ -24,7 +24,7 @@ export default function SignupMethodsScreen() {
   const { context, flowId } = useLocalSearchParams<{ context?: string; flowId?: string }>();
   const fromOnboarding = context === 'onboarding';
 
-  const [loading, setLoading] = useState({ apple: false, google: false });
+  const [loading] = useState({ apple: false, google: false });
 
   const [fontsLoaded] = useFonts({
     Lora_500Medium,
