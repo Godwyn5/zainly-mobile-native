@@ -1,5 +1,5 @@
 import { useEffect, useRef, useMemo } from 'react';
-import { View, Text, StyleSheet, Animated, Easing, Pressable, Dimensions, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Animated, Easing, Pressable, Dimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useIsFocused } from '@react-navigation/native';
@@ -168,49 +168,6 @@ const pb = StyleSheet.create({
   },
 });
 
-// ─── DashboardSkeleton ────────────────────────────────────────────────────────
-
-function DashboardSkeleton() {
-  const pulse = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(Animated.sequence([
-      Animated.timing(pulse, { toValue: 1, duration: 850, useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 0, duration: 850, useNativeDriver: true }),
-    ]));
-    loop.start();
-    return () => loop.stop();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const op = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.7] });
-
-  function Line({ w, h = 11 }: { w: `${number}%` | number; h?: number }) {
-    return <View style={[s.skeletonLine, { width: w, height: h }]} />;
-  }
-
-  return (
-    <View style={s.skeletonWrap}>
-      {/* hero card */}
-      <Animated.View style={[s.skeletonHero, { opacity: op }]}>
-        <Line w="55%" h={13} />
-        <Line w="80%" h={10} />
-        <Line w="40%" h={10} />
-      </Animated.View>
-      {/* info card 1 */}
-      <Animated.View style={[s.skeletonCard, { opacity: op }]}>
-        <Line w="45%" h={10} />
-        <Line w="70%" h={10} />
-      </Animated.View>
-      {/* info card 2 */}
-      <Animated.View style={[s.skeletonCard, { opacity: op }]}>
-        <Line w="35%" h={10} />
-        <Line w="60%" h={10} />
-      </Animated.View>
-      {/* CTA button shape */}
-      <Animated.View style={[s.skeletonCta, { opacity: op }]} />
-    </View>
-  );
-}
-
 // ─── TodayScreen ──────────────────────────────────────────────────────────────
 
 export default function TodayScreen() {
@@ -237,9 +194,7 @@ export default function TodayScreen() {
   // plan/progress queries actually refetch (e.g. the invalidateQueries()
   // triggered by a successful finalize in useOnboardingV2AuthFinalize.ts) —
   // never a timer/poll.
-  const pendingOnboardingV2 = usePendingOnboardingPlanStatus([
-    isFocused, plan.dataUpdatedAt, progress.dataUpdatedAt,
-  ]);
+  const pendingOnboardingV2 = usePendingOnboardingPlanStatus(userId);
   // Shared finalization hook — exposes declarative status and retry/restore
   // actions. The dashboard auto-triggers it once when a valid pending
   // payload exists and no plan is present yet. Signup/login already call
@@ -437,11 +392,24 @@ export default function TodayScreen() {
     reviews.refetch();
   }
 
-  // ── loading state ──
+  // ── loading state — invariant safety card ──
+  // The gate in _layout.tsx ensures this branch is never reached in normal
+  // operation. If it is, a critical launch snapshot is missing — never
+  // render a skeleton or spinner, only a static recovery card.
   if (isLoading) {
+    if (__DEV__) {
+      console.warn('[Dashboard] Critical launch snapshot missing — gate did not block');
+    }
     return (
       <SafeAreaView style={s.centered}>
-        <DashboardSkeleton />
+        <View style={s.stateCard}>
+          <EmptyState
+            title="Impossible d'afficher ton espace"
+            description="Relance l'application ou réessaie."
+            buttonLabel="Réessayer"
+            onPress={refetchAll}
+          />
+        </View>
       </SafeAreaView>
     );
   }
@@ -464,15 +432,17 @@ export default function TodayScreen() {
 
   // ── onboarding-v2 finalization states — never the legacy CTA here ──
   if (isFinalizingOnboardingV2) {
-    // Running state
+    // Running state — static card, no spinner
     if (finalize.status === 'running') {
       return (
         <SafeAreaView style={s.centered}>
           <View style={s.stateCard}>
-            <ActivityIndicator color={colors.primary} style={s.finalizingSpinner} />
+            <View style={s.finalizingIconWrap}>
+              <Text style={s.finalizingIcon}>📖</Text>
+            </View>
             <EmptyState
               title="Finalisation de ton programme"
-              description="Nous préparons ton espace avant de commencer ton Hifz."
+              description="Zainly prépare ton espace."
             />
           </View>
         </SafeAreaView>
@@ -543,10 +513,12 @@ export default function TodayScreen() {
     return (
       <SafeAreaView style={s.centered}>
         <View style={s.stateCard}>
-          <ActivityIndicator color={colors.primary} style={s.finalizingSpinner} />
+          <View style={s.finalizingIconWrap}>
+            <Text style={s.finalizingIcon}>📖</Text>
+          </View>
           <EmptyState
             title="Finalisation de ton programme"
-            description="Nous préparons ton espace avant de commencer ton Hifz."
+            description="Zainly prépare ton espace."
           />
         </View>
       </SafeAreaView>
@@ -993,11 +965,6 @@ const s = StyleSheet.create({
     flex: 1, backgroundColor: colors.background,
     alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.lg,
   },
-  skeletonWrap: { width: '100%', gap: 14, paddingHorizontal: 4 },
-  skeletonHero: { height: 130, borderRadius: 18, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, gap: 10 },
-  skeletonCard: { height: 72, borderRadius: 14, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: spacing.md, gap: 8 },
-  skeletonCta:  { height: 58, borderRadius: 14, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border },
-  skeletonLine: { borderRadius: 6, backgroundColor: 'rgba(184,150,46,0.18)' },
   stateCard: {
     width: '100%', backgroundColor: colors.surface,
     borderRadius: 22, borderWidth: 1, borderColor: colors.border,
@@ -1005,7 +972,8 @@ const s = StyleSheet.create({
     shadowColor: colors.primary, shadowOpacity: 0.06, shadowRadius: 12,
     shadowOffset: { width: 0, height: 3 }, elevation: 2,
   },
-  finalizingSpinner: { marginBottom: spacing.sm },
+  finalizingIconWrap: { alignItems: 'center', marginBottom: spacing.sm },
+  finalizingIcon: { fontSize: 32 },
   finalizingActions: { width: '100%', gap: 12, marginTop: spacing.md },
   finalizingActionBtn: { width: '100%' },
 
