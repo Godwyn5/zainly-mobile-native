@@ -445,6 +445,16 @@ describe('Preparation generation scenarios', () => {
     // The error result from gen 1 should be rejected
     expect(acceptResultForUser(startGen, currentGen, 'user-A', 'user-A')).toBe(false);
   });
+
+  it('A→B→A: gen 1 for A rejected, gen 2 for B rejected, gen 3 for A accepted', () => {
+    // A starts (gen 1), B starts (gen 2, A cleanup), A starts again (gen 3, B cleanup)
+    // gen 1 late result: generation 1 ≠ 3 → rejected
+    expect(acceptResultForUser(1, 3, 'user-A', 'user-A')).toBe(false);
+    // gen 2 late result: generation 2 ≠ 3 → rejected
+    expect(acceptResultForUser(2, 3, 'user-B', 'user-B')).toBe(false);
+    // gen 3 result: generation 3 === 3, userId A === A → accepted
+    expect(acceptResultForUser(3, 3, 'user-A', 'user-A')).toBe(true);
+  });
 });
 
 // ─── Auth flow claims: explicit authFlowId requirement ───────────────────────

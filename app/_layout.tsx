@@ -13,6 +13,16 @@ import { ColdStartSplash } from '@/components/launch/ColdStartSplash';
 import { LaunchErrorScreen } from '@/components/launch/LaunchErrorScreen';
 import { prepareAuthenticatedLaunch } from '@/lib/prepareAuthenticatedLaunch';
 import { clearOnboardingStateForSessionExpiry } from '@/lib/pendingOnboardingPlan';
+import {
+  acceptResultForUser,
+  canRenderStackForUser,
+  shouldShowPreparationError,
+  createInitialPreparationState,
+  createPreparingState,
+  createReadyState,
+  createErrorState,
+  type PreparationState,
+} from '@/lib/preparationStateMachine';
 
 // ── Foreground notification handler ──────────────────────────────────────────
 // Must be called once at module level (outside any component).
@@ -106,12 +116,6 @@ function AuthBootstrap() {
 const MIN_LOGO_VISIBLE_MS = 1200;
 const PREPARATION_TIMEOUT_MS = 10_000;
 
-type AccountPreparationState = {
-  userId: string | null;
-  status: 'idle' | 'preparing' | 'ready' | 'error';
-  error?: unknown;
-};
-
 export default function RootLayout() {
   const { session, ready } = useAuthStore();
   const userId = session?.user?.id ?? null;
@@ -140,10 +144,7 @@ export default function RootLayout() {
   // Tracks whether the dashboard-critical queries for the CURRENT userId
   // have been resolved. Reset to idle whenever userId changes.
   const [accountPreparation, setAccountPreparation] =
-    useState<AccountPreparationState>({
-      userId: null,
-      status: 'idle',
-    });
+    useState<PreparationState>(createInitialPreparationState());
 
   // Stable retry counter — incrementing re-triggers the preparation effect.
   const [retryCount, setRetryCount] = useState(0);
@@ -162,10 +163,7 @@ export default function RootLayout() {
     let cancelled = false;
     const preparationUserId = userId;
 
-    setAccountPreparation({
-      userId: preparationUserId,
-      status: 'preparing',
-    });
+    setAccountPreparation(createPreparingState(preparationUserId));
 
     const preparationPromise = prepareAuthenticatedLaunch(
       queryClient,
@@ -187,16 +185,16 @@ export default function RootLayout() {
         if (timeoutId) clearTimeout(timeoutId);
         if (cancelled) return;
         // Guard against stale completion from a previous generation
-        // (account switch, retry, or Strict Mode double-invoke).
-        if (generationRef.current !== generation) return;
-        // Guard against stale completion from a previous userId.
-        if (useAuthStore.getState().session?.user?.id !== preparationUserId) return;
+        // or userId (account switch, retry, or Strict Mode double-invoke).
+        if (!acceptResultForUser(
+          generation,
+          generationRef.current,
+          preparationUserId,
+          useAuthStore.getState().session?.user?.id ?? null,
+        )) return;
 
         if (result.status === 'ready') {
-          setAccountPreparation({
-            userId: preparationUserId,
-            status: 'ready',
-          });
+          setAccountPreparation(createReadyState(preparationUserId));
         } else {
           // On timeout: cancel only the preparation queries scoped to
           // preparationUserId so their late results don't populate the
@@ -215,11 +213,7 @@ export default function RootLayout() {
               queryClient.cancelQueries({ queryKey }).catch(() => {/* non-fatal */});
             });
           }
-          setAccountPreparation({
-            userId: preparationUserId,
-            status: 'error',
-            error: result.error,
-          });
+          setAccountPreparation(createErrorState(preparationUserId, result.error));
         }
       });
 
@@ -236,15 +230,19 @@ export default function RootLayout() {
   const guest = ready && !session;
 
   // For authenticated users, also require account preparation.
-  const canRenderStack =
-    initialVisualReleased &&
-    ready &&
-    (!authed || (accountPreparation.userId === userId && accountPreparation.status === 'ready'));
+  const canRenderStack = canRenderStackForUser(
+    initialVisualReleased,
+    ready,
+    authed,
+    accountPreparation,
+    userId,
+  );
 
-  const showPreparationError =
-    authed &&
-    accountPreparation.userId === userId &&
-    accountPreparation.status === 'error';
+  const showPreparationError = shouldShowPreparationError(
+    authed,
+    accountPreparation,
+    userId,
+  );
 
   return (
     <QueryClientProvider client={queryClient}>
