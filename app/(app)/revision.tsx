@@ -18,6 +18,7 @@ import { spacing } from '@/theme/spacing';
 import { hapticLight, hapticMedium, hapticSuccess, hapticWarning } from '@/utils/haptics';
 import { useAuthStore }       from '@/store/authStore';
 import { useDueReviewItems }  from '@/hooks/useDueReviewItems';
+import { useLocalDate } from '@/hooks/useLocalDate';
 import { advanceReviewItem } from '@/db/reviewItems';
 import type { DueReviewItem } from '@/db/reviewItems';
 import type { SessionDifficulty } from '@/db/progress';
@@ -36,10 +37,7 @@ type EvalResult = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function localDateStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+// localDateStr is now provided by useLocalDate() — see src/hooks/useLocalDate.ts
 
 function nextReviewLabel(difficulty: SessionDifficulty, currentCycle: number): string {
   if (difficulty === 'hard' || difficulty === 'hesitant') return 'Demain';
@@ -320,7 +318,7 @@ export default function RevisionScreen() {
   const user   = useAuthStore(s => s.user);
   const userId = user?.id;
   const qc     = useQueryClient();
-  const today  = localDateStr();
+  const today  = useLocalDate();
 
   // Fetch the due items batch — used only for the one-shot capture below.
   const { data: dueItems, isLoading, isError, refetch } = useDueReviewItems(userId);

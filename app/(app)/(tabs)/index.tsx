@@ -8,6 +8,7 @@ import { useZainlyPlusAccess } from '@/hooks/useZainlyPlusAccess';
 import { usePlan } from '@/hooks/usePlan';
 import { useProgress } from '@/hooks/useProgress';
 import { useDueReviews } from '@/hooks/useDueReviews';
+import { useLocalDate } from '@/hooks/useLocalDate';
 import { usePendingOnboardingPlanStatus } from '@/hooks/usePendingOnboardingPlanStatus';
 import { useOnboardingV2AuthFinalize } from '@/hooks/useOnboardingV2AuthFinalize';
 import { getTodayProgramme } from '@/core/dailyPlan';
@@ -22,10 +23,7 @@ const SW = Dimensions.get('window').width;
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-function localDateStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+// localDateStr is now provided by useLocalDate() — see src/hooks/useLocalDate.ts
 
 function frenchDate(): string {
   return new Date().toLocaleDateString('fr-FR', {
@@ -174,7 +172,7 @@ export default function TodayScreen() {
   const isFocused = useIsFocused();
   const user   = useAuthStore((s) => s.user);
   const userId = user?.id;
-  const today  = localDateStr();
+  const today  = useLocalDate();
 
   const plan     = usePlan(userId);
   const progress = useProgress(userId);

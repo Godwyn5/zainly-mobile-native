@@ -33,6 +33,7 @@ import { useZainlyPlusAccess } from '@/hooks/useZainlyPlusAccess';
 import { usePlan }           from '@/hooks/usePlan';
 import { useProgress }       from '@/hooks/useProgress';
 import { useDueReviews }     from '@/hooks/useDueReviews';
+import { useLocalDate, localDateStr as localDateStrPure } from '@/hooks/useLocalDate';
 import { getTodayProgramme } from '@/core/dailyPlan';
 import { completeSession }               from '@/db/progress';
 import { createReviewItemsForAyatRange } from '@/db/reviewItems';
@@ -50,10 +51,7 @@ const FINAL_TEST_PROGRESS_PCT  = 0.96; // Step 6 anchors at ~96%
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-function localDateStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+// localDateStr is now provided by useLocalDate() — see src/hooks/useLocalDate.ts
 
 function estimateDuration(ayatCount: number, hasReviews: boolean): string {
   if (ayatCount <= 2) return hasReviews ? '~8 min' : '~5 min';
@@ -2814,7 +2812,7 @@ function FinalTestScreen({ surahNumber, allAyats, currentAyatIndex, memStart, me
     }
 
     // ── Step 3: invalidate stale queries so Dashboard + Mon Hifz update immediately ──
-    const today = localDateStr();
+    const today = localDateStrPure();
     void queryClient.invalidateQueries({ queryKey: ['progress',     userId] });
     void queryClient.invalidateQueries({ queryKey: ['dueReviews',   userId, today] });
     void queryClient.invalidateQueries({ queryKey: ['learnedItems', userId] });
@@ -3412,7 +3410,7 @@ export default function SessionScreen() {
   const insets = useSafeAreaInsets();
   const user   = useAuthStore(s => s.user);
   const userId = user?.id;
-  const today  = useMemo(() => localDateStr(), []);
+  const today  = useLocalDate();
 
   const plan     = usePlan(userId);
   const progress = useProgress(userId);
