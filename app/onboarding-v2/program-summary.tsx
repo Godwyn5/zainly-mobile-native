@@ -5,7 +5,9 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { hapticLight } from '@/utils/haptics';
+import { useAuthStore } from '@/store/authStore';
 import { readOnboardingDraft, LearningMode } from '@/lib/onboardingDraft';
 import { computePlan, isPlanError, PlanResult } from '@/core/planEngine';
 import {
@@ -13,6 +15,7 @@ import {
   PENDING_SIGNUP_USER_ID,
 } from '@/lib/onboardingPlanValidation';
 import { savePendingOnboardingPlan, saveActiveOnboardingAuthFlow, setSessionAuthFlowId } from '@/lib/pendingOnboardingPlan';
+import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
 import {
   TOTAL_ONBOARDING_PHASES, phaseStepNumber, PROGRAM_SUMMARY_BACK_TARGET,
 } from '@/lib/onboardingQuestionnaire';
@@ -43,6 +46,8 @@ interface SummaryCard {
 // "révisions préparées" card exists because computePlan() does not produce
 // a revision schedule; adding one here would be a fabricated number). ─────
 export default function OnboardingProgramSummaryScreen() {
+  const { session } = useAuthStore();
+  const queryClient = useQueryClient();
   const [reduceMotion, setReduceMotion] = useState(false);
   const [ready, setReady] = useState(false);
   const [planResult, setPlanResult] = useState<PlanResult | null>(null);
@@ -128,6 +133,39 @@ export default function OnboardingProgramSummaryScreen() {
         return;
       }
 
+      // ── Authenticated user path — finalize directly, no signup needed ──
+      // An authenticated user without a plan reached V2 from the dashboard
+      // CTA. The draft is in memory, so finalizeOnboardingV2Plan reads it
+      // directly (no pending payload, no authHandoff, no flowId required).
+      // The premium gate is still applied for 'unlimited' experience.
+      const authedUserId = session?.user?.id;
+      if (authedUserId) {
+        const outcome = await finalizeOnboardingV2PlanWithPremiumGate(authedUserId, '');
+        if (outcome.status === 'premium_sync_failed') {
+          setSaveError('Impossible de vérifier ton abonnement. Réessaie.');
+          return;
+        }
+        if (outcome.status === 'premium_entitlement_missing') {
+          setSaveError('Ton abonnement Zainly+ n’a pas pu être confirmé. Réessaie ou restaure ton achat.');
+          return;
+        }
+        if (!outcome.finalize.ok) {
+          setSaveError(outcome.finalize.message ?? 'Impossible de créer ton programme. Réessaie.');
+          return;
+        }
+        // Success — invalidate dashboard queries and navigate.
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['plan', authedUserId] }),
+          queryClient.invalidateQueries({ queryKey: ['progress', authedUserId] }),
+          queryClient.invalidateQueries({ queryKey: ['dueReviews', authedUserId] }),
+          queryClient.invalidateQueries({ queryKey: ['profile', authedUserId] }),
+          queryClient.invalidateQueries({ queryKey: ['pendingOnboarding', authedUserId] }),
+        ]);
+        router.replace('/(app)/(tabs)');
+        return;
+      }
+
+      // ── Pre-auth path — save pending plan, navigate to signup ──
       // From this exact moment, the program must survive an app kill or a
       // Supabase email-confirmation detour — durably save it BEFORE leaving
       // for signup, never before this validated point.

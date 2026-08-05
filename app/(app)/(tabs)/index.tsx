@@ -534,7 +534,7 @@ export default function TodayScreen() {
             title="Créons ton programme."
             description="Réponds à quelques questions pour que Zainly prépare ton parcours personnalisé."
             buttonLabel="Créer mon programme"
-            onPress={() => router.replace('/onboarding')}
+            onPress={() => router.replace('/onboarding-v2/name')}
           />
         </View>
       </SafeAreaView>

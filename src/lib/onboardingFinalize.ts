@@ -18,7 +18,7 @@
 //      through onboarding-v2 (a direct signup/login).
 
 import { computePlan, isPlanError } from '@/core/planEngine';
-import { upsertPlan } from '@/db/plans';
+import { upsertPlan, fetchPlan } from '@/db/plans';
 import { upsertProgress } from '@/db/progress';
 import { upsertProfileFirstName } from '@/db/profiles';
 import { readOnboardingDraft, clearOnboardingDraft } from './onboardingDraft';
@@ -40,7 +40,7 @@ import type { NotificationPreference, ExperienceChoice } from './onboardingDraft
 import { syncRevenueCatUserAfterAuth } from '@/lib/revenueCat';
 
 export type FinalizeOnboardingV2Result =
-  | { ok: true }
+  | { ok: true; reason?: 'created' | 'plan_already_exists' }
   | {
       ok: false;
       reason: 'no_source' | 'invalid_draft' | 'plan_error' | 'persist_error';
@@ -128,6 +128,44 @@ export async function finalizeOnboardingV2PlanWithPremiumGate(
 }
 
 async function runFinalize(userId: string, authFlowId: string): Promise<FinalizeOnboardingV2Result> {
+  // ── Plan-already-exists guard ──────────────────────────────────────────
+  // The authoritative source of truth for "has a plan" is the Supabase
+  // plans table (fetched via fetchPlan, same as usePlan on the dashboard).
+  // A deep link or direct navigation to program-summary must never be able
+  // to replace or recreate an already-configured account's plan. This guard
+  // runs BEFORE any draft or pending payload resolution — no source data is
+  // even read if the user already has a plan.
+  try {
+    const existingPlan = await fetchPlan(userId);
+    if (existingPlan) {
+      // Always clear the in-memory draft — it has no ownerUserId and cannot
+      // belong to another account.
+      await clearOnboardingDraft();
+
+      // Only clear durable pending data if it belongs to this user or is
+      // unclaimed (pre-auth). A pending payload owned by a different user
+      // must survive — it is not ours to clear.
+      const pending = await readPendingOnboardingPlan();
+      if (pending && (!pending.ownerUserId || pending.ownerUserId === userId)) {
+        await clearPendingOnboardingPlan();
+        await clearAuthHandoff();
+        await clearActiveOnboardingAuthFlow();
+      }
+
+      return { ok: true, reason: 'plan_already_exists' };
+    }
+  } catch {
+    // If the plan check itself fails (network error, Supabase down), we
+    // must NOT proceed with finalization — we can't safely determine
+    // whether the user already has a plan. Return a persist_error so the
+    // caller can retry. Never finalize blindly.
+    return {
+      ok: false,
+      reason: 'persist_error',
+      message: 'Impossible de vérifier l\'existence d\'un programme. Réessaie.',
+    };
+  }
+
   const draft = await readOnboardingDraft();
 
   let source: PlanInputSource | null = null;
@@ -227,5 +265,5 @@ async function runFinalize(userId: string, authFlowId: string): Promise<Finalize
   await clearPendingOnboardingPlan();
   await clearAuthHandoff();
   await clearActiveOnboardingAuthFlow();
-  return { ok: true };
+  return { ok: true, reason: 'created' };
 }

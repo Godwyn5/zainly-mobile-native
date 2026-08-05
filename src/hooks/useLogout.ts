@@ -15,6 +15,7 @@ import { cancelUserHifzNotifications } from '@/notifications/scheduler';
 import { clearNotificationData }       from '@/notifications/storage';
 import { revenueCatLogOut }            from '@/lib/revenueCat';
 import { clearAllPendingOnboardingData } from '@/lib/pendingOnboardingPlan';
+import { clearOnboardingDraft }           from '@/lib/onboardingDraft';
 
 export function useLogout() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -42,6 +43,10 @@ export function useLogout() {
       // leave a pending plan that a different account could claim after
       // re-login. This is the primary defense against A→B leakage.
       await clearAllPendingOnboardingData().catch(() => {/* non-fatal */});
+      // 2c. Clear the in-memory onboarding draft — it has no ownerUserId or
+      // flowId, so it must be wiped at every auth boundary to prevent
+      // account A's answers from being finalized by account B.
+      await clearOnboardingDraft().catch(() => {/* non-fatal */});
 
       // 3. Clear React Query cache so next user starts fresh
       queryClient.clear();
@@ -56,6 +61,10 @@ export function useLogout() {
         await cancelUserHifzNotifications(userId).catch(() => {});
         await clearNotificationData(userId).catch(() => {});
 
+        // V1 onboarding keys — no longer written by any code, but may still
+        // exist on devices that used a previous app version. Clean them at
+        // logout as a cheap migration safety net to prevent cross-account
+        // data leakage.
         const keys = [
           `zainly:onboardingIntroSeen:${userId}`,
           `zainly:onboardingPersonalAnswers:${userId}`,

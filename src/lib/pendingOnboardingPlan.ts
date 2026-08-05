@@ -19,6 +19,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { LearningMode, NotificationPreference, DiscoverySource, ExperienceChoice } from './onboardingDraft';
+import { clearOnboardingDraft } from './onboardingDraft';
 
 const STORAGE_KEY = 'zainly:onboardingV2:pendingPlan';
 const HANDOFF_KEY = 'zainly:onboardingV2:authHandoff';
@@ -554,4 +555,29 @@ export async function clearAllPendingOnboardingData(): Promise<void> {
     clearAuthHandoff(),
     clearActiveOnboardingAuthFlow(),
   ]);
+}
+
+/**
+ * Auth-boundary cleanup for session expiry (_layout.tsx clearInvalidAuthSession).
+ *
+ * The in-memory draft has no ownerUserId — it must be cleared unconditionally
+ * so that account A's answers cannot leak to account B after a session expiry.
+ *
+ * The durable pending payload is cleared only if it is owned by a specific
+ * user (ownerUserId is set). An unclaimed pre-auth payload (ownerUserId null)
+ * may belong to a new onboarding flow started after the session expired, so
+ * it is left intact.
+ *
+ * Never throws.
+ */
+export async function clearOnboardingStateForSessionExpiry(): Promise<void> {
+  await clearOnboardingDraft();
+  try {
+    const pending = await readPendingOnboardingPlan();
+    if (pending?.ownerUserId) {
+      await clearAllPendingOnboardingData();
+    }
+  } catch {
+    // Non-fatal — draft was already cleared, which is the critical part.
+  }
 }

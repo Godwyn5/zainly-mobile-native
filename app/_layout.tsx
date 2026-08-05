@@ -12,7 +12,7 @@ import { RevenueCatProvider } from '@/components/providers/RevenueCatProvider';
 import { ColdStartSplash } from '@/components/launch/ColdStartSplash';
 import { LaunchErrorScreen } from '@/components/launch/LaunchErrorScreen';
 import { prepareAuthenticatedLaunch } from '@/lib/prepareAuthenticatedLaunch';
-import { clearAllPendingOnboardingData, readPendingOnboardingPlan } from '@/lib/pendingOnboardingPlan';
+import { clearOnboardingStateForSessionExpiry } from '@/lib/pendingOnboardingPlan';
 
 // ── Foreground notification handler ──────────────────────────────────────────
 // Must be called once at module level (outside any component).
@@ -49,20 +49,11 @@ async function clearInvalidAuthSession(
   setReady: () => void,
 ) {
   try { await supabase.auth.signOut(); } catch { /* ignore */ }
-  // Only clear pending onboarding data if the pending payload is owned
-  // by the expired session's user. A new pre-auth onboarding flow (created
-  // after the session expired but before the app restarted) must survive —
-  // it has no relation to the expired account.
-  try {
-    const pending = await readPendingOnboardingPlan();
-    if (pending?.ownerUserId) {
-      // Payload is owned by a specific user — this is the expired account's
-      // claimed payload. Clear it.
-      await clearAllPendingOnboardingData();
-    }
-    // If ownerUserId is null, the payload is pre-auth and unclaimed —
-    // it may belong to a new onboarding flow, so we leave it alone.
-  } catch { /* non-fatal */ }
+  // Clear all onboarding state for the expired session:
+  // - Draft is cleared unconditionally (no ownerUserId, must not leak).
+  // - Pending payload is cleared only if owned by a specific user.
+  // - Unclaimed pre-auth pending payload survives (may belong to a new flow).
+  try { await clearOnboardingStateForSessionExpiry(); } catch { /* non-fatal */ }
   setSession(null);
   setReady();
 }
@@ -271,7 +262,6 @@ export default function RootLayout() {
               and their history is cleared by Stack.Protected. */}
           <Stack.Protected guard={authed}>
             <Stack.Screen name="(app)" />
-            <Stack.Screen name="onboarding" />
           </Stack.Protected>
 
           {/* Public routes — accessible when NOT authenticated.
@@ -280,10 +270,12 @@ export default function RootLayout() {
             <Stack.Screen name="welcome" />
             <Stack.Screen name="index" />
             <Stack.Screen name="(auth)" />
-            <Stack.Screen name="onboarding-v2" />
           </Stack.Protected>
 
-          {/* Premium paywall — accessible in any auth state */}
+          {/* Onboarding V1 adapters, V2 flow, and premium paywall —
+              accessible in any auth state. V1 adapters redirect to V2. */}
+          <Stack.Screen name="onboarding" />
+          <Stack.Screen name="onboarding-v2" />
           <Stack.Screen name="premium" />
         </Stack>
       ) : (

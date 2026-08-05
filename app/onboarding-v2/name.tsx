@@ -7,9 +7,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuthStore } from '@/store/authStore';
+import { usePlan } from '@/hooks/usePlan';
 import { hapticLight } from '@/utils/haptics';
 import {
-  readOnboardingDraft, updateOnboardingDraft,
+  readOnboardingDraft, updateOnboardingDraft, clearOnboardingDraft,
   normalizeFirstName, isValidFirstName,
 } from '@/lib/onboardingDraft';
 
@@ -27,6 +28,8 @@ const INPUT_BORDER      = 'rgba(22,48,38,0.16)';
 
 export default function OnboardingNameScreen() {
   const { session, ready } = useAuthStore();
+  const userId = session?.user?.id;
+  const { data: existingPlan, isLoading: planLoading } = usePlan(userId);
 
   const [firstName, setFirstName]       = useState('');
   const [draftChecked, setDraftChecked] = useState(false);
@@ -54,11 +57,26 @@ export default function OnboardingNameScreen() {
     return () => { mountedRef.current = false; };
   }, []);
 
-  // ── already-connected users keep the current app behaviour ──
+  // ── plan-exists guard: redirect authenticated users who already have a ──
+  // ── plan back to the dashboard. The plan query (usePlan) is the same ─────
+  // ── authoritative source the dashboard uses. While planLoading is true ──
+  // ── (state still indeterminate), no irreversible decision is taken — ─────
+  // ── the screen renders its loading state and waits. ──────────────────────
+  useEffect(() => {
+    if (!ready || !userId) return;
+    if (planLoading) return;
+    if (existingPlan) {
+      clearOnboardingDraft();
+      router.replace('/(app)/(tabs)');
+    }
+  }, [ready, userId, existingPlan, planLoading]);
+
   // ── resume: prefill firstName, or skip ahead if a later step is pending ──
   useEffect(() => {
     if (!ready) return;
-    if (session) { router.replace('/(app)/(tabs)'); return; }
+    // Don't proceed with draft resume until the plan-exists guard has had
+    // a chance to run for authenticated users.
+    if (userId && planLoading) return;
 
     let cancelled = false;
     readOnboardingDraft().then(draft => {
@@ -71,7 +89,7 @@ export default function OnboardingNameScreen() {
       setDraftChecked(true);
     });
     return () => { cancelled = true; };
-  }, [ready, session]);
+  }, [ready, userId, planLoading]);
 
   // ── entrance choreography — runs once the draft check has resolved ──
   useEffect(() => {
@@ -124,7 +142,8 @@ export default function OnboardingNameScreen() {
   }
 
   // ── avoid flashing an empty field before the draft check resolves ──
-  if (!ready || !draftChecked) {
+  // ── also wait for plan query if authenticated (plan-exists guard) ──────
+  if (!ready || !draftChecked || (userId && planLoading)) {
     return <View style={styles.root} />;
   }
 

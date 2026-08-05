@@ -398,7 +398,7 @@ const s = StyleSheet.create({
   header: { alignItems: 'center', marginBottom: 8 },
   // ZAINLY+ — typographic brand signature (serif, minimal, not a badge).
   // Cinzel is the same serif family used for the real Zainly wordmark
-  // (see app/index.tsx and app/onboarding/intro.tsx brand lockups).
+  // (see app/index.tsx brand lockup).
   brandRow: {
     flexDirection: 'row', alignItems: 'flex-start',
     alignSelf: 'center', marginBottom: 6,
