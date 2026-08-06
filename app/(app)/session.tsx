@@ -36,6 +36,7 @@ import { useDueReviews }     from '@/hooks/useDueReviews';
 import { useLocalDate, localDateStr as localDateStrPure } from '@/hooks/useLocalDate';
 import { getTodayProgramme } from '@/core/dailyPlan';
 import { chunkAyat, chunkTranslit } from '@/core/sessionChunking';
+import { estimateDuration, chargeInfo } from '@/core/sessionWorkload';
 import { completeSession }               from '@/db/progress';
 import { createReviewItemsForAyatRange } from '@/db/reviewItems';
 import { useSessionResultStore }         from '@/store/sessionResultStore';
@@ -53,19 +54,6 @@ const FINAL_TEST_PROGRESS_PCT  = 0.96; // Step 6 anchors at ~96%
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 // localDateStr is now provided by useLocalDate() — see src/hooks/useLocalDate.ts
-
-function estimateDuration(ayatCount: number, hasReviews: boolean): string {
-  if (ayatCount <= 2) return hasReviews ? '~8 min' : '~5 min';
-  if (ayatCount <= 5) return hasReviews ? '~12 min' : '~8 min';
-  return hasReviews ? '~20 min' : '~15 min';
-}
-
-type ChargeLevel = 'light' | 'normal' | 'intense';
-function chargeInfo(ayatCount: number, reviewCount: number): { label: string; level: ChargeLevel } {
-  if (reviewCount >= 5 || ayatCount >= 6) return { label: 'Intense', level: 'intense' };
-  if (reviewCount > 0  || ayatCount >= 3) return { label: 'Normale', level: 'normal'  };
-  return                                         { label: 'Légère',  level: 'light'   };
-}
 
 // ─── sub-components ───────────────────────────────────────────────────────────
 
