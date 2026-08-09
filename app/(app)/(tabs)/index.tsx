@@ -180,8 +180,12 @@ export default function TodayScreen() {
   // Source of truth: RevenueCat 'zainly_plus' entitlement, with profile.is_premium as fallback.
   const { hasZainlyPlus, isLoading: isZainlyPlusLoading } = useZainlyPlusAccess(userId);
 
-  const isLoading = plan.isLoading || progress.isLoading || reviews.isLoading || isZainlyPlusLoading;
-  const hasError  = plan.isError   || progress.isError   || reviews.isError;
+  // Only plan and progress are critical for the dashboard's first frame.
+  // Reviews and premium loading must NOT block the render — they have
+  // fallbacks (0 reviews, free-tier display) and are non-critical sources
+  // in prepareAuthenticatedLaunch.
+  const isLoading = plan.isLoading || progress.isLoading;
+  const hasError  = plan.isError   || progress.isError;
   const hasNoPlan = !plan.data || !progress.data;
 
   // ── onboarding-v2 finalization guard ──────────────────────────────────
@@ -380,8 +384,11 @@ export default function TodayScreen() {
     dueReviewCount:     reviews.data ?? 0,
     today,
     // Free users are capped at 1 new ayat per day; Zainly+ follows their plan pace.
-    effectiveAyahPerDay: hasZainlyPlus ? undefined : 1,
-  }), [plan.data, progress.data, reviews.data, today, hasZainlyPlus]);
+    // While premium status is loading, use undefined (uncapped) to avoid
+    // briefly capping a premium user's ayat count — a free user seeing
+    // uncapped for a moment is less harmful than the reverse.
+    effectiveAyahPerDay: (hasZainlyPlus || isZainlyPlusLoading) ? undefined : 1,
+  }), [plan.data, progress.data, reviews.data, today, hasZainlyPlus, isZainlyPlusLoading]);
 
   const progressPct = prog.surahTotalAyats > 0
     ? Math.min(prog.currentAyah / prog.surahTotalAyats, 1)
@@ -637,7 +644,7 @@ export default function TodayScreen() {
       </Animated.View>
 
       {/* ══ 2. SESSION CARD ══════════════════════════════════════ */}
-      {!hasZainlyPlus && prog.sessionDoneToday ? (
+      {!hasZainlyPlus && !isZainlyPlusLoading && prog.sessionDoneToday ? (
         // State B — Free post-session: compact premium card only
         <Animated.View style={[fadeStyle(card1Anim), s.sessionCardWrap]}>
           <View style={s.premiumDoneCard}>

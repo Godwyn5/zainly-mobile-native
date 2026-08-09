@@ -5,7 +5,14 @@ import { fetchPlan } from '@/db/plans';
 import { fetchProgress } from '@/db/progress';
 import { fetchDueCount } from '@/db/reviewItems';
 import { fetchProfile } from '@/db/profiles';
-import { hasValidPendingOnboardingPlanForUser } from '@/lib/pendingOnboardingPlan';
+import {
+  hasValidPendingOnboardingPlanForUser,
+  clearPendingOnboardingIfMatches,
+  clearSessionAuthFlowId,
+  readPendingOnboardingPlan,
+} from '@/lib/pendingOnboardingPlan';
+import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 import { getRevenueCatCustomerInfo, ensureRevenueCatReadyForUser } from '@/lib/revenueCat';
 
 // Mock all data sources — the preparation function should call fetchQuery
@@ -27,6 +34,23 @@ jest.mock('@/db/profiles', () => ({
 }));
 jest.mock('@/lib/pendingOnboardingPlan', () => ({
   hasValidPendingOnboardingPlanForUser: jest.fn(() => Promise.resolve(false)),
+  getSessionAuthFlowId: jest.fn(() => ''),
+  clearSessionAuthFlowId: jest.fn(),
+  readPendingOnboardingPlan: jest.fn(() => Promise.resolve(null)),
+  clearPendingOnboardingIfMatches: jest.fn(async () => 'already_absent'),
+}));
+jest.mock('@/lib/onboardingFinalize', () => ({
+  finalizeOnboardingV2PlanWithPremiumGate: jest.fn(async () => ({
+    status: 'finalized',
+    finalize: { ok: true, reason: 'created' },
+  })),
+}));
+jest.mock('@/lib/onboardingDashboardHandoff', () => ({
+  handOffFinalizedProgram: jest.fn(async () => ({
+    status: 'ready',
+    plan: { id: 'plan-1' },
+    progress: { id: 'progress-1' },
+  })),
 }));
 jest.mock('@/lib/revenueCat', () => ({
   getRevenueCatCustomerInfo: jest.fn(() => Promise.resolve(null)),
@@ -78,11 +102,11 @@ describe('prepareAuthenticatedLaunch', () => {
     expect(result.status).toBe('error');
   });
 
-  it('returns status error when a critical query throws (pendingOnboarding)', async () => {
+  it('returns status ready when pendingOnboarding query fails (non-critical)', async () => {
     (hasValidPendingOnboardingPlanForUser as jest.Mock).mockRejectedValueOnce(new Error('Storage error'));
 
     const result = await prepareAuthenticatedLaunch(queryClient, 'user-A');
-    expect(result.status).toBe('error');
+    expect(result.status).toBe('ready');
   });
 
   it('returns status ready when non-critical query fails (dueReviews)', async () => {
@@ -146,15 +170,74 @@ describe('prepareAuthenticatedLaunch', () => {
     expect(fetchPlan).toHaveBeenCalledWith('user-A');
   });
 
-  it('handles pendingOnboarding returning true without error', async () => {
+  it('when pendingOnboarding is true, runs finalize → handoff → clear before returning ready', async () => {
     (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValueOnce(true);
+    (readPendingOnboardingPlan as jest.Mock).mockResolvedValueOnce({ flowId: 'flow-123', ownerUserId: 'user-A' });
+    (clearPendingOnboardingIfMatches as jest.Mock).mockResolvedValueOnce('cleared');
 
     const result = await prepareAuthenticatedLaunch(queryClient, 'user-A');
     expect(result.status).toBe('ready');
 
-    // Verify the pending status is cached under the userId-scoped key
+    // Finalize was called
+    expect(finalizeOnboardingV2PlanWithPremiumGate).toHaveBeenCalledWith('user-A', '');
+    // Handoff was called
+    expect(handOffFinalizedProgram).toHaveBeenCalledWith(queryClient, 'user-A');
+    // Clear was called
+    expect(clearPendingOnboardingIfMatches).toHaveBeenCalled();
+    // Session auth flow ID was cleared
+    expect(clearSessionAuthFlowId).toHaveBeenCalled();
+
+    // pendingOnboarding cache is set to false
     const cachedPending = queryClient.getQueryData(['pendingOnboarding', 'user-A']);
-    expect(cachedPending).toBe(true);
+    expect(cachedPending).toBe(false);
+  });
+
+  it('when pending is true but finalize fails, falls through to normal fetch (dashboard recovery handles it)', async () => {
+    (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValueOnce(true);
+    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValueOnce({
+      status: 'finalized', finalize: { ok: false, reason: 'persist_error' },
+    });
+
+    const result = await prepareAuthenticatedLaunch(queryClient, 'user-A');
+    expect(result.status).toBe('ready');
+    // Handoff was NOT called because finalize failed
+    expect(handOffFinalizedProgram).not.toHaveBeenCalled();
+    // Plan/progress still fetched normally
+    expect(fetchPlan).toHaveBeenCalledWith('user-A');
+  });
+
+  it('when pending is true but premium gate blocks, falls through to normal fetch', async () => {
+    (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValueOnce(true);
+    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValueOnce({
+      status: 'premium_entitlement_missing',
+    });
+
+    const result = await prepareAuthenticatedLaunch(queryClient, 'user-A');
+    expect(result.status).toBe('ready');
+    expect(handOffFinalizedProgram).not.toHaveBeenCalled();
+  });
+
+  it('when pending is true, finalize ok, but handoff fails, falls through to normal fetch', async () => {
+    (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValueOnce(true);
+    (handOffFinalizedProgram as jest.Mock).mockResolvedValueOnce({
+      status: 'error', error: new Error('handoff_failed'),
+    });
+
+    const result = await prepareAuthenticatedLaunch(queryClient, 'user-A');
+    expect(result.status).toBe('ready');
+    // Clear was NOT called because handoff failed
+    expect(clearPendingOnboardingIfMatches).not.toHaveBeenCalled();
+    // Plan/progress still fetched normally
+    expect(fetchPlan).toHaveBeenCalledWith('user-A');
+  });
+
+  it('when no pending exists, finalize/handoff/clear are never called', async () => {
+    // Default mock: hasValidPendingOnboardingPlanForUser returns false
+    await prepareAuthenticatedLaunch(queryClient, 'user-A');
+
+    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
+    expect(handOffFinalizedProgram).not.toHaveBeenCalled();
+    expect(clearPendingOnboardingIfMatches).not.toHaveBeenCalled();
   });
 });
 
@@ -178,6 +261,15 @@ describe('Targeted cancellation and retry', () => {
     (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValue(false);
     (getRevenueCatCustomerInfo as jest.Mock).mockResolvedValue(null);
     (ensureRevenueCatReadyForUser as jest.Mock).mockResolvedValue({ ready: true, generation: 1 });
+    // Re-setup finalize/handoff/clear mocks
+    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({
+      status: 'finalized', finalize: { ok: true, reason: 'created' },
+    });
+    (handOffFinalizedProgram as jest.Mock).mockResolvedValue({
+      status: 'ready', plan: { id: 'plan-1' }, progress: { id: 'progress-1' },
+    });
+    (readPendingOnboardingPlan as jest.Mock).mockResolvedValue(null);
+    (clearPendingOnboardingIfMatches as jest.Mock).mockResolvedValue('already_absent' as never);
   });
 
   it('P18. cancelQueries with preparation keys cancels only those queries', async () => {

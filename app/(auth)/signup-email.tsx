@@ -88,8 +88,7 @@ export default function SignupEmailScreen() {
     if (password !== confirm) { setError('Les mots de passe ne correspondent pas.'); return; }
     setLoading(true);
     const { data, error: signupError } = await supabase.auth.signUp({ email: trimEmail, password });
-    setLoading(false);
-    if (signupError) { setError(friendlySignupError(signupError.message)); return; }
+    if (signupError) { setLoading(false); setError(friendlySignupError(signupError.message)); return; }
     // If this is an onboarding auth flow, store the flowId in-memory so
     // claimPendingOnboardingPlanForUser can use it as a fast-path proof.
     // Cold-start resume (no flowId in params) is handled inside claim via
@@ -99,8 +98,11 @@ export default function SignupEmailScreen() {
     }
     if (data.session) {
       // Session created — Stack.Protected will redirect to (app) automatically.
+      // Keep loading true so the button stays in its loading state until
+      // the screen is unmounted by the route group swap.
       return;
     }
+    setLoading(false);
     setEmailSent(true);
   }
 

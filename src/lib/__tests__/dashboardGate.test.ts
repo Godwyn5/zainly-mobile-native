@@ -12,7 +12,9 @@ import { fetchPlan } from '@/db/plans';
 import { fetchProgress } from '@/db/progress';
 import { fetchDueCount } from '@/db/reviewItems';
 import { fetchProfile } from '@/db/profiles';
-import { hasValidPendingOnboardingPlanForUser } from '@/lib/pendingOnboardingPlan';
+import { hasValidPendingOnboardingPlanForUser, readPendingOnboardingPlan, clearPendingOnboardingIfMatches } from '@/lib/pendingOnboardingPlan';
+import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 import {
   getRevenueCatCustomerInfo,
   ensureRevenueCatReadyForUser,
@@ -35,6 +37,23 @@ jest.mock('@/db/profiles', () => ({
 }));
 jest.mock('@/lib/pendingOnboardingPlan', () => ({
   hasValidPendingOnboardingPlanForUser: jest.fn(() => Promise.resolve(false)),
+  getSessionAuthFlowId: jest.fn(() => ''),
+  clearSessionAuthFlowId: jest.fn(),
+  readPendingOnboardingPlan: jest.fn(() => Promise.resolve(null)),
+  clearPendingOnboardingIfMatches: jest.fn(async () => 'already_absent' as never),
+}));
+jest.mock('@/lib/onboardingFinalize', () => ({
+  finalizeOnboardingV2PlanWithPremiumGate: jest.fn(async () => ({
+    status: 'finalized',
+    finalize: { ok: true, reason: 'created' },
+  })),
+}));
+jest.mock('@/lib/onboardingDashboardHandoff', () => ({
+  handOffFinalizedProgram: jest.fn(async () => ({
+    status: 'ready',
+    plan: { id: 'plan-1' },
+    progress: { id: 'progress-1' },
+  })),
 }));
 jest.mock('@/lib/revenueCat', () => ({
   getRevenueCatCustomerInfo: jest.fn(() => Promise.resolve(null)),
@@ -79,6 +98,15 @@ describe('Snapshot gate — critical query failures', () => {
     (ensureRevenueCatReadyForUser as jest.Mock).mockResolvedValue({ ready: true, generation: 1 });
     (getRevenueCatCurrentUserId as jest.Mock).mockReturnValue('user-A');
     (getRevenueCatGeneration as jest.Mock).mockReturnValue(1);
+    // Re-setup finalize/handoff/clear mocks after resetAllMocks
+    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({
+      status: 'finalized', finalize: { ok: true, reason: 'created' },
+    });
+    (handOffFinalizedProgram as jest.Mock).mockResolvedValue({
+      status: 'ready', plan: { id: 'plan-1' }, progress: { id: 'progress-1' },
+    });
+    (readPendingOnboardingPlan as jest.Mock).mockResolvedValue(null);
+    (clearPendingOnboardingIfMatches as jest.Mock).mockResolvedValue('already_absent' as never);
   });
 
   it('21. plan failure → error (Stack private non rendu)', async () => {
@@ -109,10 +137,10 @@ describe('Snapshot gate — critical query failures', () => {
     expect(r.status).toBe('ready');
   });
 
-  it('25. pendingOnboarding failure → error (critical)', async () => {
+  it('25. pendingOnboarding failure → ready (non-critical, dashboard recovery handles it)', async () => {
     (hasValidPendingOnboardingPlanForUser as jest.Mock).mockRejectedValueOnce(new Error('storage fail'));
     const r = await prepareAuthenticatedLaunch(trackClient(), 'user-A');
-    expect(r.status).toBe('error');
+    expect(r.status).toBe('ready');
   });
 
   it('26. RevenueCat failure → ready (non-critical, fallback available)', async () => {
@@ -137,6 +165,11 @@ describe('Snapshot gate — terminal states', () => {
     (ensureRevenueCatReadyForUser as jest.Mock).mockResolvedValue({ ready: true, generation: 1 });
     (getRevenueCatCurrentUserId as jest.Mock).mockReturnValue('user-A');
     (getRevenueCatGeneration as jest.Mock).mockReturnValue(1);
+    // Re-setup finalize/handoff/clear mocks after resetAllMocks
+    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+    (handOffFinalizedProgram as jest.Mock).mockResolvedValue({ status: 'ready', plan: { id: 'plan-1' }, progress: { id: 'progress-1' } });
+    (readPendingOnboardingPlan as jest.Mock).mockResolvedValue(null);
+    (clearPendingOnboardingIfMatches as jest.Mock).mockResolvedValue('already_absent' as never);
   });
 
   it('27. dueReviews success → real count in cache (not 0)', async () => {
@@ -183,12 +216,13 @@ describe('Snapshot gate — terminal states', () => {
     expect(cached).toEqual(customerInfo);
   });
 
-  it('32. pending=true → pendingOnboarding true in cache (no legacy CTA)', async () => {
+  it('32. pending=true → finalize+handoff+clear runs, pendingOnboarding false in cache (no finalization card)', async () => {
     (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValue(true);
+    (readPendingOnboardingPlan as jest.Mock).mockResolvedValue({ flowId: 'flow-1', ownerUserId: 'user-A' });
     const qc = trackClient();
     await prepareAuthenticatedLaunch(qc, 'user-A');
     const pending = qc.getQueryData(['pendingOnboarding', 'user-A']);
-    expect(pending).toBe(true);
+    expect(pending).toBe(false);
   });
 
   it('33. pending=false → pendingOnboarding false in cache (legacy CTA allowed)', async () => {
@@ -215,6 +249,11 @@ describe('Timeout and retry', () => {
     (ensureRevenueCatReadyForUser as jest.Mock).mockResolvedValue({ ready: true, generation: 1 });
     (getRevenueCatCurrentUserId as jest.Mock).mockReturnValue('user-A');
     (getRevenueCatGeneration as jest.Mock).mockReturnValue(1);
+    // Re-setup finalize/handoff/clear mocks after resetAllMocks
+    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+    (handOffFinalizedProgram as jest.Mock).mockResolvedValue({ status: 'ready', plan: { id: 'plan-1' }, progress: { id: 'progress-1' } });
+    (readPendingOnboardingPlan as jest.Mock).mockResolvedValue(null);
+    (clearPendingOnboardingIfMatches as jest.Mock).mockResolvedValue('already_absent' as never);
   });
 
   it('34. critical failure produces status:error (timeout-like)', async () => {
@@ -320,6 +359,11 @@ describe('Loader removal invariants', () => {
     (ensureRevenueCatReadyForUser as jest.Mock).mockResolvedValue({ ready: true, generation: 1 });
     (getRevenueCatCurrentUserId as jest.Mock).mockReturnValue('user-A');
     (getRevenueCatGeneration as jest.Mock).mockReturnValue(1);
+    // Re-setup finalize/handoff/clear mocks after resetAllMocks
+    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+    (handOffFinalizedProgram as jest.Mock).mockResolvedValue({ status: 'ready', plan: { id: 'plan-1' }, progress: { id: 'progress-1' } });
+    (readPendingOnboardingPlan as jest.Mock).mockResolvedValue(null);
+    (clearPendingOnboardingIfMatches as jest.Mock).mockResolvedValue('already_absent' as never);
   });
 
   it('41. gate reaches status:ready — dashboard mounts with full snapshot, no skeleton needed', async () => {
@@ -357,16 +401,18 @@ describe('Loader removal invariants', () => {
     expect(r.status).toBe('ready');
   });
 
-  it('44. finalization running state contract: pending=true in cache after preparation', async () => {
-    // When a pending payload exists, pendingOnboarding=true is in cache.
-    // The dashboard renders the finalization card (static, no ActivityIndicator).
-    // This test verifies the cache snapshot that triggers the static card path.
+  it('44. finalization completed during preparation: pending=false in cache after finalize+handoff+clear', async () => {
+    // When a pending payload exists, preparation now runs finalize → handoff → clear
+    // before releasing the stack. The dashboard sees canonical plan/progress rows
+    // on its first frame — no finalization card, no skeleton.
+    // This test verifies the cache snapshot: pending=false after preparation.
     (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValue(true);
+    (readPendingOnboardingPlan as jest.Mock).mockResolvedValue({ flowId: 'flow-1', ownerUserId: 'user-A' });
     const qc = trackClient();
     const r = await prepareAuthenticatedLaunch(qc, 'user-A');
     expect(r.status).toBe('ready');
     const pending = qc.getQueryData(['pendingOnboarding', 'user-A']);
-    expect(pending).toBe(true);
+    expect(pending).toBe(false);
   });
 
   it('45. finalization error state contract: retry produces fresh ready result', async () => {

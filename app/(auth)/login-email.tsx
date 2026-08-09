@@ -78,8 +78,7 @@ export default function LoginEmailScreen() {
     if (!trimEmail || !password) { setError('Saisis ton e-mail et ton mot de passe.'); return; }
     setLoading(true);
     const { data, error: authError } = await supabase.auth.signInWithPassword({ email: trimEmail, password });
-    setLoading(false);
-    if (authError) { setError(friendlyAuthError(authError.message)); return; }
+    if (authError) { setLoading(false); setError(friendlyAuthError(authError.message)); return; }
     // If this is an onboarding auth flow, store the flowId in-memory so
     // claimPendingOnboardingPlanForUser can use it as a fast-path proof.
     // Cold-start resume (no flowId in params) is handled inside claim via
@@ -89,8 +88,11 @@ export default function LoginEmailScreen() {
     }
     if (data.session) {
       // Session created — Stack.Protected will redirect to (app) automatically.
+      // Keep loading true so the button stays in its loading state until
+      // the screen is unmounted by the route group swap.
       return;
     }
+    setLoading(false);
     setError('Connexion impossible pour le moment. Réessaie dans un instant.');
   }
 

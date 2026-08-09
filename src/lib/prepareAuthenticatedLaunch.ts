@@ -7,6 +7,11 @@
 // ensuring the cache populated here is consumed directly by useQuery calls
 // in the dashboard — no duplicate fetch, no skeleton.
 //
+// When a pending onboarding-v2 payload exists (signup/login from onboarding),
+// the full finalize → handoff → clear sequence runs HERE, before plan/progress
+// are fetched. This ensures the dashboard sees canonical rows on its first
+// frame instead of null+pending → "Finalisation" card → re-render.
+//
 // Returns a discriminated result so the gate can branch on success/error
 // without catching thrown exceptions in the component.
 
@@ -19,6 +24,14 @@ import {
   pendingOnboardingQueryOptions,
   revenueCatCustomerInfoQueryOptions,
 } from '@/queries';
+import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
+import {
+  getSessionAuthFlowId,
+  clearSessionAuthFlowId,
+  readPendingOnboardingPlan,
+  clearPendingOnboardingIfMatches,
+} from '@/lib/pendingOnboardingPlan';
 
 export type PrepareAuthenticatedLaunchResult =
   | { status: 'ready' }
@@ -60,26 +73,67 @@ export async function prepareAuthenticatedLaunch(
       }).catch(() => {});
     }
 
-    // Critical sources: plan, progress, pending — must all succeed for a
+    // ── Pending onboarding detection ───────────────────────────────────
+    // Check for a pending onboarding-v2 payload BEFORE fetching plan/progress.
+    // If one exists, run the full finalize → handoff → clear sequence here
+    // so the dashboard sees canonical rows on its first frame.
+    const pendingResult = await queryClient.fetchQuery(
+      pendingOnboardingQueryOptions(userId),
+    ).catch(() => false);
+
+    if (pendingResult === true) {
+      // A valid pending payload exists — run finalize + handoff + clear.
+      const authFlowId = getSessionAuthFlowId();
+      const outcome = await finalizeOnboardingV2PlanWithPremiumGate(userId, authFlowId);
+
+      if (outcome.status === 'finalized' && outcome.finalize.ok) {
+        // Finalize succeeded — run handoff to populate cache with canonical rows.
+        const handoff = await handOffFinalizedProgram(queryClient, userId);
+        if (handoff.status === 'ready') {
+          // Clear the pending payload with the exact transaction identity.
+          const pendingBeforeClear = await readPendingOnboardingPlan();
+          const transactionId = pendingBeforeClear?.flowId ?? '';
+          if (transactionId) {
+            await clearPendingOnboardingIfMatches(userId, transactionId);
+          }
+          clearSessionAuthFlowId();
+          // Invalidate pendingOnboarding query so the dashboard sees no pending.
+          await queryClient.invalidateQueries({
+            queryKey: ['pendingOnboarding', userId],
+            exact: true,
+            refetchType: 'none',
+          }).catch(() => {});
+          // Set pendingOnboarding cache to false — no refetch needed.
+          queryClient.setQueryData(['pendingOnboarding', userId], false);
+        }
+        // If handoff failed, fall through to normal fetch — the dashboard's
+        // recovery hook will handle it.
+      }
+      // If finalize failed or premium gate blocked, fall through to normal
+      // fetch — the dashboard's recovery hook will handle retry/premium states.
+    }
+
+    // Critical sources: plan, progress — must all succeed for a
     // determined dashboard render. A failure here means the dashboard
     // cannot render without inventing data, so the gate shows the error
     // screen with retry.
     const criticalResults = await Promise.allSettled([
       queryClient.fetchQuery(planQueryOptions(userId)),
       queryClient.fetchQuery(progressQueryOptions(userId)),
-      queryClient.fetchQuery(pendingOnboardingQueryOptions(userId)),
     ]);
 
-    // Non-critical sources: dueReviews, profile, RevenueCat — failures
-    // are tolerated. The dashboard can render with fallbacks:
+    // Non-critical sources: dueReviews, profile, RevenueCat, pendingOnboarding —
+    // failures are tolerated. The dashboard can render with fallbacks:
     //   - dueReviews: shows 0 or a retry indicator
     //   - profile: RevenueCat fallback or default values
     //   - RevenueCat: profile.is_premium fallback
+    //   - pendingOnboarding: dashboard recovery hook handles it
     // These are fetched in parallel and never block the gate.
     await Promise.allSettled([
       queryClient.fetchQuery(dueReviewsQueryOptions(userId)),
       queryClient.fetchQuery(profileQueryOptions(userId)),
       queryClient.fetchQuery(revenueCatCustomerInfoQueryOptions(userId)),
+      queryClient.fetchQuery(pendingOnboardingQueryOptions(userId)),
     ]);
 
     // Check critical results — any rejection means global error.
