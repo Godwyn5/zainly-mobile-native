@@ -10,6 +10,7 @@ import {
   hasActiveTransitionLease,
   getActiveTransitionLeaseFlowId,
   getLeaseSnapshot,
+  type SignupVisualSnapshot,
 } from '../transitionLease';
 import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
@@ -52,6 +53,15 @@ jest.mock('@/queries', () => ({
 describe('runOnboardingTransition', () => {
   let queryClient: QueryClient;
 
+  const VISUAL: SignupVisualSnapshot = {
+    surfaceType: 'signup',
+    email: 'test@test.com',
+    password: 'pass123',
+    confirm: 'pass123',
+    showPw: false,
+    showConfirm: false,
+  };
+
   beforeEach(() => {
     queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -76,17 +86,19 @@ describe('runOnboardingTransition', () => {
     queryClient.setQueryData(['plan', 'user-A'], { id: 'plan-1' });
     queryClient.setQueryData(['progress', 'user-A'], { id: 'progress-1' });
 
-    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId);
+    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId, 'gen-1', VISUAL);
     expect(result.status).toBe('success');
     expect(hasActiveTransitionLease()).toBe(false);
     expect(clearSessionAuthFlowId).toHaveBeenCalled();
     expect(clearPendingOnboardingIfMatches).toHaveBeenCalledWith('user-A', 'flow-123');
-    // Lease transitioned atomically to ready_unacknowledged
+    // Lease transitioned atomically to data_ready_covered
     const snapshot = getLeaseSnapshot();
-    expect(snapshot.phase).toBe('ready_unacknowledged');
+    expect(snapshot.phase).toBe('data_ready_covered');
     expect(snapshot.userId).toBe('user-A');
     expect(snapshot.flowId).toBe('flow-123');
     expect(snapshot.cacheVerified).toBe(true);
+    expect(snapshot.sessionGen).toBe('gen-1');
+    expect(snapshot.visual).toEqual(VISUAL);
   });
 
   it('returns error when finalize fails (ok: false)', async () => {
@@ -96,12 +108,12 @@ describe('runOnboardingTransition', () => {
       finalize: { ok: false, reason: 'persist_error', message: 'DB error' },
     });
 
-    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId);
+    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId, 'gen-1', VISUAL);
     expect(result.status).toBe('error');
     expect((result as { error: { kind: string } }).error.kind).toBe('finalize_error');
     expect(hasActiveTransitionLease()).toBe(false);
     expect(handOffFinalizedProgram).not.toHaveBeenCalled();
-    // No verified handoff on error — phase is idle, not ready_unacknowledged
+    // No verified handoff on error — phase is idle, not data_ready_covered
     expect(getLeaseSnapshot().phase).toBe('idle');
   });
 
@@ -111,7 +123,7 @@ describe('runOnboardingTransition', () => {
       status: 'premium_entitlement_missing',
     });
 
-    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId);
+    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId, 'gen-1', VISUAL);
     expect(result.status).toBe('error');
     expect((result as { error: { kind: string } }).error.kind).toBe('premium_entitlement_missing');
     expect(hasActiveTransitionLease()).toBe(false);
@@ -124,7 +136,7 @@ describe('runOnboardingTransition', () => {
       reason: 'configure_failed',
     });
 
-    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId);
+    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId, 'gen-1', VISUAL);
     expect(result.status).toBe('error');
     expect((result as { error: { kind: string } }).error.kind).toBe('premium_sync_failed');
     expect(hasActiveTransitionLease()).toBe(false);
@@ -137,7 +149,7 @@ describe('runOnboardingTransition', () => {
       error: new Error('network'),
     });
 
-    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId);
+    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId, 'gen-1', VISUAL);
     expect(result.status).toBe('error');
     expect((result as { error: { kind: string } }).error.kind).toBe('handoff_error');
     expect(hasActiveTransitionLease()).toBe(false);
@@ -148,7 +160,7 @@ describe('runOnboardingTransition', () => {
     const leaseId = await setupLease('flow-123');
     (clearPendingOnboardingIfMatches as jest.Mock).mockResolvedValueOnce('superseded');
 
-    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId);
+    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId, 'gen-1', VISUAL);
     expect(result.status).toBe('error');
     expect((result as { error: { kind: string } }).error.kind).toBe('clear_superseded');
     expect(hasActiveTransitionLease()).toBe(false);
@@ -159,7 +171,7 @@ describe('runOnboardingTransition', () => {
     // Don't populate plan cache — only progress
     queryClient.setQueryData(['progress', 'user-A'], { id: 'progress-1' });
 
-    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId);
+    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId, 'gen-1', VISUAL);
     expect(result.status).toBe('error');
     expect((result as { error: { kind: string } }).error.kind).toBe('cache_verification_failed');
     expect(hasActiveTransitionLease()).toBe(false);
@@ -171,7 +183,7 @@ describe('runOnboardingTransition', () => {
       new Error('unexpected'),
     );
 
-    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId);
+    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId, 'gen-1', VISUAL);
     expect(result.status).toBe('error');
     expect(hasActiveTransitionLease()).toBe(false);
   });

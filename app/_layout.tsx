@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { View } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
@@ -10,14 +10,15 @@ import { Cinzel_600SemiBold } from '@expo-google-fonts/cinzel';
 import { supabase } from '@/db/client';
 import { useAuthStore } from '@/store/authStore';
 import { RevenueCatProvider } from '@/components/providers/RevenueCatProvider';
+import { DashboardReadyProvider } from '@/components/providers/DashboardReadyProvider';
 import { ColdStartSplash } from '@/components/launch/ColdStartSplash';
 import { LaunchErrorScreen } from '@/components/launch/LaunchErrorScreen';
+import { SignupSurface } from '@/components/auth/SignupSurface';
 import { prepareAuthenticatedLaunch } from '@/lib/prepareAuthenticatedLaunch';
 import { clearOnboardingStateForSessionExpiry } from '@/lib/pendingOnboardingPlan';
 import {
   subscribeToTransitionLease,
   getLeaseSnapshot,
-  commitTransitionLease,
   clearTransitionLease,
   forceReleaseTransitionLease,
 } from '@/lib/transitionLease';
@@ -169,13 +170,16 @@ export default function RootLayout() {
 
   // ── Transition lease — atomic state machine ──
   // The snapshot contains the full handoff identity (userId, flowId,
-  // leaseId, cacheVerified). We read it synchronously during render via
-  // useSyncExternalStore so that the FIRST render after
-  // completeTransitionLease() sees both:
-  //   - lease inactive (authed can become true)
-  //   - handoff verified (canRenderStack can become true)
-  // This eliminates the beige screen that occurred when the handoff was
-  // consumed in a useEffect (which runs AFTER the first render).
+  // leaseId, sessionGen, cacheVerified, visual). We read it synchronously
+  // during render via useSyncExternalStore.
+  //
+  // Phases: IDLE → ACTIVE → DATA_READY_COVERED → DASHBOARD_READY → IDLE
+  //
+  // DATA_READY_COVERED: lease inactive for routing AND handoff verified.
+  //   canRenderStack=true so the Stack mounts with (app) behind.
+  //   A signup cover overlay is shown on top until the dashboard signals.
+  // DASHBOARD_READY: dashboard confirmed plan+progress+onLayout.
+  //   accountPreparation committed to 'ready', cover removed, token cleared.
   const leaseSnapshot = useSyncExternalStore(
     subscribeToTransitionLease,
     getLeaseSnapshot,
@@ -217,27 +221,33 @@ export default function RootLayout() {
 
   // ── Synchronous handoff matching during render ──
   // Compute matchingReadyHandoff from the snapshot read during THIS render.
-  // This is the critical fix: the decision is made in the render body,
-  // not in a useEffect, so the FIRST render after completeTransitionLease
-  // already has canRenderStack=true and showMinimalScreen=false.
+  // When true, canRenderStack=true so the Stack mounts with (app) behind.
+  // The cover overlay is shown on top until the dashboard signals ready.
   const matchingReadyHandoff =
-    leaseSnapshot.phase === 'ready_unacknowledged' &&
+    (leaseSnapshot.phase === 'data_ready_covered' ||
+      leaseSnapshot.phase === 'dashboard_ready') &&
     leaseSnapshot.userId === userId &&
     leaseSnapshot.cacheVerified === true;
 
-  // ── Promote READY_UNACKNOWLEDGED → READY_COMMITTED → IDLE ──
-  // This effect runs AFTER the render in which matchingReadyHandoff was
-  // true. It commits the durable accountPreparation state to 'ready'
-  // and then promotes the lease to READY_COMMITTED and clears it.
-  // The durable state ensures subsequent renders stay ready even after
-  // the token is cleared.
+  // ── Cover overlay: shown when DATA_READY_COVERED ──
+  // Decided synchronously during render — never in an effect.
+  // The cover blocks interactions while the dashboard mounts behind.
+  const showCoverOverlay =
+    leaseSnapshot.phase === 'data_ready_covered' &&
+    leaseSnapshot.userId === userId &&
+    leaseSnapshot.cacheVerified === true;
+
+  // ── Promote DASHBOARD_READY → commit durable state → clear token ──
+  // This effect runs AFTER the render in which the dashboard signaled
+  // ready. It commits the durable accountPreparation state to 'ready'
+  // and then clears the lease token. The durable state ensures
+  // subsequent renders stay ready even after the token is cleared.
   useEffect(() => {
-    if (leaseSnapshot.phase === 'ready_unacknowledged' && leaseSnapshot.userId === userId && userId) {
+    if (leaseSnapshot.phase === 'dashboard_ready' && leaseSnapshot.userId === userId && userId) {
       handoffReadyRef.current = userId;
       setAccountPreparation(createReadyState(userId));
       const leaseId = leaseSnapshot.leaseId;
       if (leaseId) {
-        commitTransitionLease(leaseId);
         clearTransitionLease(leaseId);
       }
     }
@@ -382,29 +392,55 @@ export default function RootLayout() {
       ) : showPreparationError ? (
         <LaunchErrorScreen onRetry={triggerRetry} />
       ) : (
-        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#F5F0E6' } }}>
-          {/* Private routes — accessible ONLY when authenticated.
-              When session becomes null, these are automatically removed
-              and their history is cleared by Stack.Protected. */}
-          <Stack.Protected guard={authed}>
-            <Stack.Screen name="(app)" />
-          </Stack.Protected>
+        <DashboardReadyProvider>
+          <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#F5F0E6' } }}>
+            {/* Private routes — accessible ONLY when authenticated.
+                When session becomes null, these are automatically removed
+                and their history is cleared by Stack.Protected. */}
+            <Stack.Protected guard={authed}>
+              <Stack.Screen name="(app)" />
+            </Stack.Protected>
 
-          {/* Public routes — accessible when NOT authenticated.
-              When session becomes true, these are automatically removed. */}
-          <Stack.Protected guard={guest}>
-            <Stack.Screen name="welcome" />
-            <Stack.Screen name="index" />
-            <Stack.Screen name="(auth)" />
-          </Stack.Protected>
+            {/* Public routes — accessible when NOT authenticated.
+                When session becomes true, these are automatically removed. */}
+            <Stack.Protected guard={guest}>
+              <Stack.Screen name="welcome" />
+              <Stack.Screen name="index" />
+              <Stack.Screen name="(auth)" />
+            </Stack.Protected>
 
-          {/* Onboarding V1 adapters, V2 flow, and premium paywall —
-              accessible in any auth state. V1 adapters redirect to V2. */}
-          <Stack.Screen name="onboarding" />
-          <Stack.Screen name="onboarding-v2" />
-          <Stack.Screen name="premium" />
-        </Stack>
+            {/* Onboarding V1 adapters, V2 flow, and premium paywall —
+                accessible in any auth state. V1 adapters redirect to V2. */}
+            <Stack.Screen name="onboarding" />
+            <Stack.Screen name="onboarding-v2" />
+            <Stack.Screen name="premium" />
+          </Stack>
+          {showCoverOverlay && leaseSnapshot.visual && (
+            <View style={styles.coverOverlay} pointerEvents="auto">
+              <SignupSurface
+                email={leaseSnapshot.visual.email}
+                password={leaseSnapshot.visual.password}
+                confirm={leaseSnapshot.visual.confirm}
+                showPw={leaseSnapshot.visual.showPw}
+                showConfirm={leaseSnapshot.visual.showConfirm}
+                loading={true}
+                error={null}
+                emailFocused={false}
+                passwordFocused={false}
+                confirmFocused={false}
+              />
+            </View>
+          )}
+        </DashboardReadyProvider>
       )}
     </QueryClientProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  coverOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1000,
+    elevation: 1000,
+  },
+});

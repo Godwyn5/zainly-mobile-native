@@ -9,10 +9,20 @@ import {
   setTransitionLeaseUserId,
   subscribeToTransitionLease,
   completeTransitionLease,
-  commitTransitionLease,
+  signalDashboardReady,
   clearTransitionLease,
   getLeaseSnapshot,
+  type SignupVisualSnapshot,
 } from '../transitionLease';
+
+const VISUAL: SignupVisualSnapshot = {
+  surfaceType: 'signup',
+  email: 'test@test.com',
+  password: 'pass123',
+  confirm: 'pass123',
+  showPw: false,
+  showConfirm: false,
+};
 
 describe('transitionLease', () => {
   afterEach(() => {
@@ -79,24 +89,25 @@ describe('transitionLease', () => {
   });
 });
 
-describe('atomic transition (ACTIVE → READY_UNACKNOWLEDGED → READY_COMMITTED → IDLE)', () => {
+describe('atomic transition (ACTIVE → DATA_READY_COVERED → DASHBOARD_READY → IDLE)', () => {
   afterEach(() => {
     forceReleaseTransitionLease();
   });
 
-  it('completeTransitionLease atomically transitions to ready_unacknowledged', () => {
+  it('completeTransitionLease atomically transitions to data_ready_covered', () => {
     const leaseId = createTransitionLease('flow-123');
     setTransitionLeaseUserId('user-A');
 
-    completeTransitionLease(leaseId, 'user-A', 'flow-123');
+    completeTransitionLease(leaseId, 'user-A', 'flow-123', 'gen-1', VISUAL);
 
     const snapshot = getLeaseSnapshot();
-    expect(snapshot.phase).toBe('ready_unacknowledged');
+    expect(snapshot.phase).toBe('data_ready_covered');
     expect(snapshot.userId).toBe('user-A');
     expect(snapshot.flowId).toBe('flow-123');
     expect(snapshot.leaseId).toBe(leaseId);
+    expect(snapshot.sessionGen).toBe('gen-1');
     expect(snapshot.cacheVerified).toBe(true);
-    // Lease is no longer active for routing
+    expect(snapshot.visual).toEqual(VISUAL);
     expect(hasActiveTransitionLease()).toBe(false);
   });
 
@@ -106,39 +117,71 @@ describe('atomic transition (ACTIVE → READY_UNACKNOWLEDGED → READY_COMMITTED
     subscribeToTransitionLease(listener);
     listener.mockClear();
 
-    completeTransitionLease(leaseId, 'user-A', 'flow-123');
+    completeTransitionLease(leaseId, 'user-A', 'flow-123', 'gen-1', VISUAL);
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
   it('completeTransitionLease does nothing if leaseId does not match', () => {
     createTransitionLease('flow-123');
-    completeTransitionLease('wrong-id', 'user-A', 'flow-123');
+    completeTransitionLease('wrong-id', 'user-A', 'flow-123', 'gen-1', VISUAL);
     expect(getLeaseSnapshot().phase).toBe('active');
   });
 
   it('completeTransitionLease does nothing if phase is not active', () => {
     const leaseId = createTransitionLease('flow-123');
     releaseTransitionLease(leaseId);
-    completeTransitionLease(leaseId, 'user-A', 'flow-123');
+    completeTransitionLease(leaseId, 'user-A', 'flow-123', 'gen-1', VISUAL);
     expect(getLeaseSnapshot().phase).toBe('idle');
   });
 
-  it('commitTransitionLease promotes to ready_committed', () => {
+  it('signalDashboardReady promotes to dashboard_ready', () => {
     const leaseId = createTransitionLease('flow-123');
-    completeTransitionLease(leaseId, 'user-A', 'flow-123');
-    commitTransitionLease(leaseId);
-    expect(getLeaseSnapshot().phase).toBe('ready_committed');
+    completeTransitionLease(leaseId, 'user-A', 'flow-123', 'gen-1', VISUAL);
+    const ok = signalDashboardReady(leaseId, 'flow-123', 'user-A', 'gen-1');
+    expect(ok).toBe(true);
+    expect(getLeaseSnapshot().phase).toBe('dashboard_ready');
   });
 
-  it('clearTransitionLease transitions to idle', () => {
+  it('signalDashboardReady returns false if phase is not data_ready_covered', () => {
     const leaseId = createTransitionLease('flow-123');
-    completeTransitionLease(leaseId, 'user-A', 'flow-123');
-    commitTransitionLease(leaseId);
+    const ok = signalDashboardReady(leaseId, 'flow-123', 'user-A', 'gen-1');
+    expect(ok).toBe(false);
+    expect(getLeaseSnapshot().phase).toBe('active');
+  });
+
+  it('signalDashboardReady returns false if userId does not match', () => {
+    const leaseId = createTransitionLease('flow-123');
+    completeTransitionLease(leaseId, 'user-A', 'flow-123', 'gen-1', VISUAL);
+    const ok = signalDashboardReady(leaseId, 'flow-123', 'user-B', 'gen-1');
+    expect(ok).toBe(false);
+    expect(getLeaseSnapshot().phase).toBe('data_ready_covered');
+  });
+
+  it('signalDashboardReady returns false if sessionGen does not match', () => {
+    const leaseId = createTransitionLease('flow-123');
+    completeTransitionLease(leaseId, 'user-A', 'flow-123', 'gen-1', VISUAL);
+    const ok = signalDashboardReady(leaseId, 'flow-123', 'user-A', 'gen-2');
+    expect(ok).toBe(false);
+    expect(getLeaseSnapshot().phase).toBe('data_ready_covered');
+  });
+
+  it('signalDashboardReady returns false if flowId does not match', () => {
+    const leaseId = createTransitionLease('flow-123');
+    completeTransitionLease(leaseId, 'user-A', 'flow-123', 'gen-1', VISUAL);
+    const ok = signalDashboardReady(leaseId, 'flow-456', 'user-A', 'gen-1');
+    expect(ok).toBe(false);
+    expect(getLeaseSnapshot().phase).toBe('data_ready_covered');
+  });
+
+  it('clearTransitionLease transitions to idle from dashboard_ready', () => {
+    const leaseId = createTransitionLease('flow-123');
+    completeTransitionLease(leaseId, 'user-A', 'flow-123', 'gen-1', VISUAL);
+    signalDashboardReady(leaseId, 'flow-123', 'user-A', 'gen-1');
     clearTransitionLease(leaseId);
     expect(getLeaseSnapshot().phase).toBe('idle');
   });
 
-  it('releaseTransitionLease on error path goes directly to idle (no ready_unacknowledged)', () => {
+  it('releaseTransitionLease on error path goes directly to idle', () => {
     const leaseId = createTransitionLease('flow-123');
     releaseTransitionLease(leaseId);
     expect(getLeaseSnapshot().phase).toBe('idle');
@@ -147,17 +190,41 @@ describe('atomic transition (ACTIVE → READY_UNACKNOWLEDGED → READY_COMMITTED
 
   it('snapshot userId mismatch — matchingReadyHandoff would be false', () => {
     const leaseId = createTransitionLease('flow-123');
-    completeTransitionLease(leaseId, 'user-A', 'flow-123');
+    completeTransitionLease(leaseId, 'user-A', 'flow-123', 'gen-1', VISUAL);
     const snapshot = getLeaseSnapshot();
-    // If current userId is 'user-B', the snapshot userId 'user-A' does not match
     expect(snapshot.userId).toBe('user-A');
     expect(snapshot.userId === 'user-B').toBe(false);
   });
 
   it('forceReleaseTransitionLease clears everything regardless of phase', () => {
     const leaseId = createTransitionLease('flow-123');
-    completeTransitionLease(leaseId, 'user-A', 'flow-123');
+    completeTransitionLease(leaseId, 'user-A', 'flow-123', 'gen-1', VISUAL);
     forceReleaseTransitionLease();
     expect(getLeaseSnapshot().phase).toBe('idle');
+  });
+
+  it('visual snapshot is stored and accessible in data_ready_covered', () => {
+    const leaseId = createTransitionLease('flow-123');
+    const customVisual: SignupVisualSnapshot = {
+      surfaceType: 'login',
+      email: 'user@test.com',
+      password: 'secret',
+      confirm: '',
+      showPw: true,
+      showConfirm: false,
+    };
+    completeTransitionLease(leaseId, 'user-A', 'flow-123', 'gen-1', customVisual);
+    const snapshot = getLeaseSnapshot();
+    expect(snapshot.visual).toEqual(customVisual);
+    expect(snapshot.visual?.surfaceType).toBe('login');
+  });
+
+  it('visual snapshot is null in idle state', () => {
+    expect(getLeaseSnapshot().visual).toBeNull();
+  });
+
+  it('visual snapshot is null in active state', () => {
+    createTransitionLease('flow-123');
+    expect(getLeaseSnapshot().visual).toBeNull();
   });
 });

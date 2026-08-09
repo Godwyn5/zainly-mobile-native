@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, StyleSheet,
-  TouchableOpacity, KeyboardAvoidingView,
-  Platform, ActivityIndicator, ScrollView,
+  TouchableOpacity,
+  ActivityIndicator,
   Animated, Easing, StatusBar,
 } from 'react-native';
 import { useFonts } from 'expo-font';
@@ -16,9 +16,10 @@ import {
   runOnboardingTransition,
   type OnboardingTransitionResult,
 } from '@/lib/onboardingTransition';
-import { forceReleaseTransitionLease } from '@/lib/transitionLease';
+import { forceReleaseTransitionLease, type SignupVisualSnapshot } from '@/lib/transitionLease';
 import { hapticLight, hapticMedium, hapticSelection } from '@/utils/haptics';
 import ZainlyLogo from '@/components/auth/ZainlyLogo';
+import { SignupSurface, type SignupAnimValues } from '@/components/auth/SignupSurface';
 
 // ─── palette — matches Splash/Welcome identity ───────────────────────────────
 const BG = '#F7F2E7';              // cream (from Welcome)
@@ -138,16 +139,26 @@ export default function SignupEmailScreen() {
       // ── Onboarding transition: finalize+handoff+clear+verify ──
       if (leaseIdRef.current && fromOnboarding && flowIdParam) {
         const userId = data.session.user.id;
+        const sessionGen = data.session.access_token?.slice(-16) ?? `${Date.now()}-${userId.slice(-8)}`;
         setTransitionUserId(userId);
-        const result = await runOnboardingTransition(queryClient, userId, leaseIdRef.current);
+        const visual: SignupVisualSnapshot = {
+          surfaceType: 'signup',
+          email: trimEmail,
+          password,
+          confirm,
+          showPw,
+          showConfirm,
+        };
+        const result = await runOnboardingTransition(queryClient, userId, leaseIdRef.current, sessionGen, visual);
         leaseIdRef.current = null;
         if (result.status === 'error') {
           setTransitionError(result);
           setLoading(false);
           return;
         }
-        // Success — lease released, cache verified. Route group swap will
-        // happen naturally. Keep loading true until unmount.
+        // Success — lease transitioned to DATA_READY_COVERED. The root
+        // layout will show the cover overlay until the dashboard signals.
+        // Keep loading true until unmount.
         return;
       }
       // Non-onboarding signup with immediate session — Stack.Protected will
@@ -185,8 +196,17 @@ export default function SignupEmailScreen() {
       return;
     }
     const userId = session.user.id;
+    const sessionGen = session.access_token?.slice(-16) ?? `${Date.now()}-${userId.slice(-8)}`;
     setTransitionUserId(userId);
-    const result = await runOnboardingTransition(queryClient, userId, leaseIdRef.current);
+    const visual: SignupVisualSnapshot = {
+      surfaceType: 'signup',
+      email,
+      password,
+      confirm,
+      showPw,
+      showConfirm,
+    };
+    const result = await runOnboardingTransition(queryClient, userId, leaseIdRef.current, sessionGen, visual);
     leaseIdRef.current = null;
     if (result.status === 'error') {
       setTransitionError(result);
@@ -262,104 +282,38 @@ export default function SignupEmailScreen() {
     );
   }
 
+  const animValues: SignupAnimValues = {
+    logoO, logoY, titleO, titleY, formO, formY, btnsO, btnsY,
+  };
+
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <StatusBar barStyle="dark-content" backgroundColor={BG} />
-      <ScrollView style={styles.root} contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-
-        {/* ─── Decorative green shape (partial, off-screen) ───────────────────── */}
-        <View style={styles.decorativeShape} pointerEvents="none" />
-
-        {/* ─── Logo ───────────────────────────────────────────────────────── */}
-        <Animated.View style={[styles.logoBlock, { opacity: logoO, transform: [{ translateY: logoY }] }]}>
-          <ZainlyLogo />
-        </Animated.View>
-
-        {/* ─── Title ───────────────────────────────────────────────────────── */}
-        <Animated.View style={[styles.titleBlock, { opacity: titleO, transform: [{ translateY: titleY }] }]}>
-          <Text style={styles.title}>Crée ton compte</Text>
-        </Animated.View>
-
-        {/* ─── Form ───────────────────────────────────────────────────────── */}
-        <Animated.View style={[styles.formBlock, { opacity: formO, transform: [{ translateY: formY }] }]}>
-          <TextInput
-            style={[styles.input, emailFocused && styles.inputFocused]}
-            placeholder="Adresse e-mail"
-            placeholderTextColor={MUTED}
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={!loading}
-            onFocus={() => setEmailFocused(true)}
-            onBlur={() => setEmailFocused(false)}
-            returnKeyType="next"
-            onSubmitEditing={() => { passwordInputRef.current?.focus(); }}
-          />
-
-          <View style={styles.pwWrap}>
-            <TextInput
-              ref={passwordInputRef}
-              style={[styles.input, styles.pwInput, passwordFocused && styles.inputFocused]}
-              placeholder="Mot de passe (6 caractères min.)"
-              placeholderTextColor={MUTED}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry={!showPw}
-              editable={!loading}
-              onFocus={() => setPasswordFocused(true)}
-              onBlur={() => setPasswordFocused(false)}
-              returnKeyType="next"
-              onSubmitEditing={() => { confirmInputRef.current?.focus(); }}
-            />
-            <TouchableOpacity style={styles.pwEye} onPress={() => { hapticSelection(); setShowPw(v => !v); }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Text style={styles.pwEyeText}>{showPw ? 'Masquer' : 'Voir'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.pwWrap}>
-            <TextInput
-              ref={confirmInputRef}
-              style={[styles.input, styles.pwInput, confirmFocused && styles.inputFocused]}
-              placeholder="Confirmer le mot de passe"
-              placeholderTextColor={MUTED}
-              value={confirm}
-              onChangeText={setConfirm}
-              secureTextEntry={!showConfirm}
-              editable={!loading}
-              onFocus={() => setConfirmFocused(true)}
-              onBlur={() => setConfirmFocused(false)}
-              returnKeyType="done"
-              onSubmitEditing={handleSignup}
-            />
-            <TouchableOpacity style={styles.pwEye} onPress={() => { hapticSelection(); setShowConfirm(v => !v); }} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Text style={styles.pwEyeText}>{showConfirm ? 'Masquer' : 'Voir'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {error && (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
-          )}
-        </Animated.View>
-
-        {/* ─── Buttons ───────────────────────────────────────────────────────── */}
-        <Animated.View style={[styles.btnsBlock, { opacity: btnsO, transform: [{ translateY: btnsY }] }]}>
-          <TouchableOpacity style={[styles.primaryBtn, loading && styles.btnDim]} onPress={handleSignup} activeOpacity={0.85} disabled={loading}>
-            {loading ? (
-              <View style={styles.loaderContainer}>
-                <ActivityIndicator color={BG} />
-              </View>
-            ) : (
-              <Text style={styles.primaryBtnText}>Créer mon compte</Text>
-            )}
-          </TouchableOpacity>
-        </Animated.View>
-
-      </ScrollView>
-    </KeyboardAvoidingView>
+    <SignupSurface
+      email={email}
+      password={password}
+      confirm={confirm}
+      showPw={showPw}
+      showConfirm={showConfirm}
+      loading={loading}
+      error={error}
+      emailFocused={emailFocused}
+      passwordFocused={passwordFocused}
+      confirmFocused={confirmFocused}
+      anim={animValues}
+      passwordInputRef={passwordInputRef}
+      confirmInputRef={confirmInputRef}
+      onEmailChange={setEmail}
+      onPasswordChange={setPassword}
+      onConfirmChange={setConfirm}
+      onSignup={handleSignup}
+      onEmailFocus={() => setEmailFocused(true)}
+      onEmailBlur={() => setEmailFocused(false)}
+      onPasswordFocus={() => setPasswordFocused(true)}
+      onPasswordBlur={() => setPasswordFocused(false)}
+      onConfirmFocus={() => setConfirmFocused(true)}
+      onConfirmBlur={() => setConfirmFocused(false)}
+      onToggleShowPw={() => { hapticSelection(); setShowPw(v => !v); }}
+      onToggleShowConfirm={() => { hapticSelection(); setShowConfirm(v => !v); }}
+    />
   );
 }
 

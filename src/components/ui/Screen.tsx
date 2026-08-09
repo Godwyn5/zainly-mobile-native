@@ -9,9 +9,10 @@ interface ScreenProps {
   children: ReactNode;
   scroll?: boolean;
   contentStyle?: ViewStyle;
+  onLayout?: (event: { nativeEvent: { layout: { width: number; height: number; x: number; y: number } } }) => void;
 }
 
-export function Screen({ children, scroll = true, contentStyle }: ScreenProps) {
+export function Screen({ children, scroll = true, contentStyle, onLayout }: ScreenProps) {
   const insets = useSafeAreaInsets();
   // Total clearance needed: pill height + inset + gap + breathing room
   const bottomPad = TAB_BAR_HEIGHT + Math.max(insets.bottom, TAB_BAR_BOTTOM_GAP) + TAB_BAR_BOTTOM_GAP + TAB_BAR_BREATHING_ROOM;
@@ -25,7 +26,7 @@ export function Screen({ children, scroll = true, contentStyle }: ScreenProps) {
     const mergedContent: ViewStyle = { ...styles.content, ...flat, paddingBottom: safePb };
 
     return (
-      <SafeAreaView style={styles.safe}>
+      <SafeAreaView style={styles.safe} onLayout={onLayout}>
         <ScrollView
           style={styles.scroll}
           contentContainerStyle={mergedContent}
@@ -43,7 +44,7 @@ export function Screen({ children, scroll = true, contentStyle }: ScreenProps) {
   // The floating tab bar clearance must always be preserved for no-scroll screens.
   const noScrollStyle: ViewStyle = { paddingBottom: bottomPad };
   return (
-    <SafeAreaView style={[styles.safe, styles.content, contentStyle, noScrollStyle]}>
+    <SafeAreaView style={[styles.safe, styles.content, contentStyle, noScrollStyle]} onLayout={onLayout}>
       {children}
     </SafeAreaView>
   );

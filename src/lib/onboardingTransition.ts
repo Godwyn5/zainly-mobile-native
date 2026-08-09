@@ -28,6 +28,7 @@ import {
   setTransitionLeaseUserId,
   getActiveTransitionLeaseFlowId,
   completeTransitionLease,
+  type SignupVisualSnapshot,
 } from '@/lib/transitionLease';
 import { planQueryOptions, progressQueryOptions } from '@/queries';
 
@@ -64,6 +65,8 @@ export async function runOnboardingTransition(
   queryClient: QueryClient,
   userId: string,
   leaseId: string,
+  sessionGen: string,
+  visual: SignupVisualSnapshot,
 ): Promise<OnboardingTransitionResult> {
   try {
     // ── Step 1: Finalize with premium gate ──────────────────────────────
@@ -144,12 +147,11 @@ export async function runOnboardingTransition(
       };
     }
 
-    // ── Step 5: Atomic transition ACTIVE → READY_UNACKNOWLEDGED ──────
-    // Single mutation+notification: lease becomes inactive for routing
-    // AND verified handoff is available in the same snapshot. This
-    // ensures _layout.tsx sees both states simultaneously on the first
-    // render after this call — no intermediate beige screen.
-    completeTransitionLease(leaseId, userId, authFlowId);
+    // ── Step 5: Atomic transition ACTIVE → DATA_READY_COVERED ──────
+    // Single mutation+notification: lease becomes inactive for routing,
+    // verified handoff is available, and visual snapshot is stored for
+    // the cover overlay — all in the same render.
+    completeTransitionLease(leaseId, userId, authFlowId, sessionGen, visual);
     return { status: 'success' };
   } catch (error) {
     releaseTransitionLease(leaseId);

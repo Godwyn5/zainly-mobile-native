@@ -16,7 +16,7 @@ import {
   runOnboardingTransition,
   type OnboardingTransitionResult,
 } from '@/lib/onboardingTransition';
-import { forceReleaseTransitionLease } from '@/lib/transitionLease';
+import { forceReleaseTransitionLease, type SignupVisualSnapshot } from '@/lib/transitionLease';
 import { hapticLight, hapticMedium, hapticSelection } from '@/utils/haptics';
 import ZainlyLogo from '@/components/auth/ZainlyLogo';
 
@@ -124,16 +124,26 @@ export default function LoginEmailScreen() {
       // ── Onboarding transition: finalize+handoff+clear+verify ──
       if (leaseIdRef.current && fromOnboarding && flowIdParam) {
         const userId = data.session.user.id;
+        const sessionGen = data.session.access_token?.slice(-16) ?? `${Date.now()}-${userId.slice(-8)}`;
         setTransitionUserId(userId);
-        const result = await runOnboardingTransition(queryClient, userId, leaseIdRef.current);
+        const visual: SignupVisualSnapshot = {
+          surfaceType: 'login',
+          email: trimEmail,
+          password,
+          confirm: '',
+          showPw,
+          showConfirm: false,
+        };
+        const result = await runOnboardingTransition(queryClient, userId, leaseIdRef.current, sessionGen, visual);
         leaseIdRef.current = null;
         if (result.status === 'error') {
           setTransitionError(result);
           setLoading(false);
           return;
         }
-        // Success — lease released, cache verified. Route group swap will
-        // happen naturally. Keep loading true until unmount.
+        // Success — lease transitioned to DATA_READY_COVERED. The root
+        // layout will show the cover overlay until the dashboard signals.
+        // Keep loading true until unmount.
         return;
       }
       // Non-onboarding login — Stack.Protected will redirect to (app).
@@ -168,8 +178,17 @@ export default function LoginEmailScreen() {
       return;
     }
     const userId = session.user.id;
+    const sessionGen = session.access_token?.slice(-16) ?? `${Date.now()}-${userId.slice(-8)}`;
     setTransitionUserId(userId);
-    const result = await runOnboardingTransition(queryClient, userId, leaseIdRef.current);
+    const visual: SignupVisualSnapshot = {
+      surfaceType: 'login',
+      email,
+      password,
+      confirm: '',
+      showPw,
+      showConfirm: false,
+    };
+    const result = await runOnboardingTransition(queryClient, userId, leaseIdRef.current, sessionGen, visual);
     leaseIdRef.current = null;
     if (result.status === 'error') {
       setTransitionError(result);

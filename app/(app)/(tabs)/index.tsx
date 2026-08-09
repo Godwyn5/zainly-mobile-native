@@ -13,6 +13,7 @@ import { usePendingOnboardingPlanStatus } from '@/hooks/usePendingOnboardingPlan
 import { useOnboardingV2AuthFinalize } from '@/hooks/useOnboardingV2AuthFinalize';
 import { getTodayProgramme } from '@/core/dailyPlan';
 import { Screen } from '@/components/ui/Screen';
+import { useDashboardReady } from '@/components/providers/DashboardReadyProvider';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SecondaryButton } from '@/components/ui/SecondaryButton';
 import { colors } from '@/theme/colors';
@@ -169,6 +170,7 @@ const pb = StyleSheet.create({
 // ─── TodayScreen ──────────────────────────────────────────────────────────────
 
 export default function TodayScreen() {
+  const { onDashboardLayout } = useDashboardReady();
   const isFocused = useIsFocused();
   const user   = useAuthStore((s) => s.user);
   const userId = user?.id;
@@ -566,7 +568,7 @@ export default function TodayScreen() {
   const ctaShineX = ctaShineAnim.interpolate({ inputRange: [-1, 1], outputRange: ['-60%', '160%'] });
 
   return (
-    <Screen>
+    <Screen onLayout={onDashboardLayout}>
 
       {/* ══ BACKGROUND LAYER ══════════════════════════════════════ */}
 
