@@ -669,19 +669,6 @@ const p = StyleSheet.create({
     fontWeight: '700',
     color: colors.gold,
   },
-  // Light beige/cream pill — matches the reference mockup exactly (not a
-  // translucent white outline as before).
-  badgeFree: {
-    backgroundColor: colors.goldSoft,
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-  },
-  badgeFreeText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.primary,
-  },
   headline: {
     fontSize: 18,
     fontWeight: '700',
