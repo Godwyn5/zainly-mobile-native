@@ -100,7 +100,7 @@ export async function completeSession(params: {
   // 1. Fetch the most recent progress row.
   const { data: existing, error: fetchError } = await supabase
     .from('progress')
-    .select('id, streak, total_memorized, last_session_date, session_dates')
+    .select('id, current_surah, current_ayah, streak, total_memorized, last_session_date, session_dates')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(1)
@@ -112,12 +112,27 @@ export async function completeSession(params: {
   const today     = localDateStr();
   const yesterday = localYesterdayStr();
 
-  // 2. Duplicate-completion guard — skipped for Zainly+ multi-session.
+  // 2. Idempotency check — if the row already reflects the target state
+  //    (same current_surah + current_ayah, last_session_date === today),
+  //    this is a retry of a write that succeeded on the server but whose
+  //    response was lost (timeout / transport error). Return success
+  //    without re-applying mutations. This prevents:
+  //      - Free users being blocked by the "déjà validée" guard on retry.
+  //      - Zainly+ users getting total_memorized double-incremented.
+  if (
+    existing.last_session_date === today &&
+    existing.current_surah === currentSurah &&
+    existing.current_ayah === newCurrentAyah
+  ) {
+    return { error: null, data: existing };
+  }
+
+  // 3. Duplicate-completion guard — skipped for Zainly+ multi-session.
   if (existing.last_session_date === today && !allowMultipleToday) {
     return { error: new Error('Session déjà validée aujourd\'hui.') };
   }
 
-  // 3. Streak: safe for multi-session.
+  // 4. Streak: safe for multi-session.
   //    Same-day second validation must NOT increment streak again.
   const newStreak = existing.last_session_date === today
     ? (existing.streak ?? 0)           // already counted today — unchanged
@@ -125,14 +140,14 @@ export async function completeSession(params: {
       ? (existing.streak ?? 0) + 1     // consecutive day — +1
       : 1;                              // gap — reset
 
-  // 4. total_memorized.
+  // 5. total_memorized.
   const newTotalMemorized = (existing.total_memorized ?? 0) + newAyatCount;
 
-  // 5. session_dates: append today if not already present.
+  // 6. session_dates: append today if not already present.
   const prevDates: string[] = Array.isArray(existing.session_dates) ? existing.session_dates : [];
   const newSessionDates = prevDates.includes(today) ? prevDates : [...prevDates, today];
 
-  // 6. Update by id only.
+  // 7. Update by id only.
   const { data, error: updateError } = await supabase
     .from('progress')
     .update({
