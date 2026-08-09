@@ -337,4 +337,21 @@ describe('useOnboardingV2AuthFinalize — multi-account protection', () => {
     expect(mockClearPending).toHaveBeenCalledWith('user-A', 'new-flow-id-T2');
     expect(mockClearPending).not.toHaveBeenCalledWith('user-A', 'test-flow-id');
   });
+
+  it('clearPending returns superseded → hook does NOT announce success', async () => {
+    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockHandoff.mockResolvedValue({ status: 'ready', plan: { id: 'p', user_id: 'user-A' }, progress: { user_id: 'user-A' } });
+    mockClearPending.mockResolvedValueOnce('superseded');
+
+    const harness = renderHookHarness(useOnboardingV2AuthFinalize);
+    await act(async () => {
+      await harness.result.runFinalize('user-A');
+    });
+
+    // superseded means a newer transaction or different user's pending is in storage.
+    // The hook must NOT announce success.
+    expect(harness.result.status).not.toBe('success');
+    expect(harness.result.status).toBe('error');
+    expect(harness.result.lastError?.reason).toBe('superseded');
+  });
 });

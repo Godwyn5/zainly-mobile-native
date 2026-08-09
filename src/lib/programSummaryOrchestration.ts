@@ -11,6 +11,7 @@ export type ProgramSummaryAuthedOutcome =
   | { status: 'finalize_failed'; message?: string }
   | { status: 'session_changed' }
   | { status: 'handoff_failed' }
+  | { status: 'superseded' }
   | { status: 'no_draft' };
 
 interface OrchestrationDeps {
@@ -85,6 +86,13 @@ export async function orchestrateAuthedFinalize(
 
   if (transactionId) {
     const clearResult = await d.clearPending(authedUserId, transactionId);
+
+    // Post-clear session check — the session may have changed during the
+    // await. Never navigate or update visible state for a stale session.
+    if (getSessionUserId() !== authedUserId) {
+      return { status: 'session_changed' };
+    }
+
     if (clearResult === 'storage_error') {
       // The pending matched but the storage delete failed. The pair is
       // durable in Supabase and canonical in the cache — navigation is
@@ -93,6 +101,16 @@ export async function orchestrateAuthedFinalize(
       d.invalidateNonCritical(queryClient, authedUserId);
       return { status: 'navigate_clear_failed' };
     }
+
+    if (clearResult === 'superseded') {
+      // A newer transaction or a different user's pending is in storage.
+      // This operation is obsolete — do NOT navigate or announce success.
+      return { status: 'superseded' };
+    }
+
+    // 'cleared' or 'already_absent' — proceed to navigation.
+    // already_absent is safe here because the session check above passed
+    // and the finalize + handoff already succeeded for this user.
   }
 
   d.invalidateNonCritical(queryClient, authedUserId);

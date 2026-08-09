@@ -175,6 +175,8 @@ export default function OnboardingProgramSummaryScreen() {
             return;
           case 'session_changed':
             return;
+          case 'superseded':
+            return;
           case 'handoff_failed':
             setSaveError("Ton programme est enregistré mais n'a pas pu être chargé. Réessaie.");
             return;

@@ -247,33 +247,35 @@ function isExpired(createdAt: string): boolean {
  * On success, returns the generated flowId so the caller can pass it through
  * the auth routes as explicit proof of the originating onboarding parcours.
  */
-export async function savePendingOnboardingPlan(
+export function savePendingOnboardingPlan(
   input: PendingPlanInput
 ): Promise<{ ok: true; flowId: string } | { ok: false; error: string }> {
-  try {
-    const flowId = generateFlowId();
-    const payload: PendingOnboardingPlanV1 = {
-      version: CURRENT_VERSION,
-      createdAt: new Date().toISOString(),
-      ...input,
-      flowId,
-    };
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  return serializeClaim(async () => {
+    try {
+      const flowId = generateFlowId();
+      const payload: PendingOnboardingPlanV1 = {
+        version: CURRENT_VERSION,
+        createdAt: new Date().toISOString(),
+        ...input,
+        flowId,
+      };
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
 
-    // Write the auth handoff marker with the same flowId — the claim
-    // function will verify both match before allowing the payload to be
-    // used by the authenticated user.
-    const handoff: AuthHandoffV1 = {
-      version: 1,
-      flowId,
-      createdAt: new Date().toISOString(),
-    };
-    await AsyncStorage.setItem(HANDOFF_KEY, JSON.stringify(handoff));
+      // Write the auth handoff marker with the same flowId — the claim
+      // function will verify both match before allowing the payload to be
+      // used by the authenticated user.
+      const handoff: AuthHandoffV1 = {
+        version: 1,
+        flowId,
+        createdAt: new Date().toISOString(),
+      };
+      await AsyncStorage.setItem(HANDOFF_KEY, JSON.stringify(handoff));
 
-    return { ok: true, flowId };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Erreur inconnue.' };
-  }
+      return { ok: true, flowId };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Erreur inconnue.' };
+    }
+  });
 }
 
 /**
@@ -377,11 +379,25 @@ export function clearSessionAuthFlowId(): void {
   _sessionAuthFlowId = '';
 }
 
-// ─── Claim serializer ─────────────────────────────────────────────────────
-// AsyncStorage is not transactional. Two concurrent claim calls for different
-// userId/authFlowId combinations could both read the same unclaimed payload
-// and both attempt to write ownerUserId. The serializer ensures only one
-// claim body executes at a time; the chain survives rejections.
+// ─── Pending mutation serializer ──────────────────────────────────────────
+// AsyncStorage is not transactional. Two concurrent operations (save, claim,
+// clear) could interleave their read-modify-write cycles and corrupt the
+// pending payload or clear the wrong transaction. The serializer ensures
+// only one mutation body executes at a time within the current JS process.
+//
+// ALL pending mutations use this chain:
+//   - savePendingOnboardingPlan (creates a new payload + handoff marker)
+//   - claimPendingOnboardingPlanForUser (writes ownerUserId)
+//   - clearPendingOnboardingIfMatches (conditional delete)
+//
+// Guarantee: within a single JS process, no two pending mutations execute
+// concurrently. A save that starts after a clear will wait for the clear to
+// finish, and vice versa. AsyncStorage's own internal queue is not relied
+// upon for ordering — the chain provides deterministic ordering here.
+//
+// This does NOT provide cross-process or cross-device atomicity. If the app
+// is killed mid-mutation, AsyncStorage may have a partial write. The TTL and
+// shape validation in readPendingOnboardingPlan handle that case.
 let _claimChain: Promise<unknown> = Promise.resolve();
 
 function serializeClaim<T>(fn: () => Promise<T>): Promise<T> {
@@ -546,14 +562,24 @@ export async function clearPendingOnboardingPlan(): Promise<void> {
 /**
  * Result of {@link clearPendingOnboardingIfMatches}.
  *
- * - `cleared`: the pending payload was found, matched, and successfully deleted.
- * - `not_matched`: the pending payload was not found, or did not match the
- *   given userId/transactionId. Nothing was deleted.
+ * - `cleared`: the pending payload was found, matched (correct userId AND
+ *   flowId), and successfully deleted from AsyncStorage.
+ * - `already_absent`: no pending payload exists in storage at all. Nothing
+ *   was deleted. The caller may proceed only if the session and generation
+ *   are still those of the original operation.
+ * - `superseded`: a pending payload exists, but its userId or flowId differs
+ *   from the given values. A newer transaction or a different user's pending
+ *   is in storage. The caller's operation is obsolete — it must NOT navigate
+ *   or announce success. The existing pending is left untouched.
  * - `storage_error`: the pending payload matched (correct userId and flowId)
  *   but the AsyncStorage delete operation failed. The pending still exists
- *   and a retry should be attempted.
+ *   and a retry should be attempted. The caller must NOT navigate.
  */
-export type ClearPendingResult = 'cleared' | 'not_matched' | 'storage_error';
+export type ClearPendingResult =
+  | 'cleared'
+  | 'already_absent'
+  | 'superseded'
+  | 'storage_error';
 
 /**
  * Clears the pending payload and associated auth markers ONLY if:
@@ -587,15 +613,16 @@ export function clearPendingOnboardingIfMatches(
   return serializeClaim(async () => {
     try {
       const pending = await readPendingOnboardingPlan();
-      if (!pending) return 'not_matched' as ClearPendingResult;
-      // Must be owned by this user — unclaimed pending is never cleared here.
+      if (!pending) return 'already_absent' as ClearPendingResult;
+      // Must be owned by this user — unclaimed pending or another user's
+      // pending must never be cleared here.
       if (!pending.ownerUserId || pending.ownerUserId !== userId) {
-        return 'not_matched' as ClearPendingResult;
+        return 'superseded' as ClearPendingResult;
       }
       // Must match the transaction that was finalized — a newer pending
       // from a different onboarding parcours must survive.
       if (!pending.flowId || pending.flowId !== transactionId) {
-        return 'not_matched' as ClearPendingResult;
+        return 'superseded' as ClearPendingResult;
       }
       // Call AsyncStorage.removeItem directly (not via the swallowing
       // wrappers) so that a real storage failure is detectable.

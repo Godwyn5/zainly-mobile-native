@@ -363,20 +363,86 @@ describe('orchestrateAuthedFinalize', () => {
     expect(clearPending).toHaveBeenCalledWith(USER_A, 'test-flow-id');
   });
 
-  it('clearPending returns not_matched → navigate (treated as success, pending is not ours)', async () => {
+  it('clearPending returns superseded → no navigation, no invalidate, silent abort', async () => {
     const client = freshClient();
     mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
     const invalidateNonCritical = jest.fn();
-    const clearPending = jest.fn(async () => 'not_matched' as const);
+    const clearPending = jest.fn(async () => 'superseded' as const);
 
     const result = await orchestrateAuthedFinalize(client, USER_A, makeDeps({
       invalidateNonCritical,
       clearPending,
     }));
 
-    // not_matched is treated as success — the pending is not ours to clear
+    // superseded = a newer transaction or different user's pending is in storage.
+    // The old operation is obsolete — NO navigation, NO success.
+    expect(result.status).toBe('superseded');
+    expect(invalidateNonCritical).not.toHaveBeenCalled();
+    expect(clearPending).toHaveBeenCalledWith(USER_A, 'test-flow-id');
+  });
+
+  it('clearPending returns already_absent → navigate (no pending existed, session still valid)', async () => {
+    const client = freshClient();
+    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
+    const invalidateNonCritical = jest.fn();
+    const clearPending = jest.fn(async () => 'already_absent' as const);
+
+    const result = await orchestrateAuthedFinalize(client, USER_A, makeDeps({
+      invalidateNonCritical,
+      clearPending,
+    }));
+
+    // already_absent is safe — finalize + handoff succeeded, session is still valid
     expect(result.status).toBe('navigate');
     expect(invalidateNonCritical).toHaveBeenCalledWith(client, USER_A);
+  });
+
+  it('T1 handoff done, T2 replaces pending before T1 clear → T1 gets superseded, no navigation', async () => {
+    const client = freshClient();
+    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
+    const invalidateNonCritical = jest.fn();
+
+    // T1 reads pending (flowId = 'test-flow-id'), then T2 replaces it.
+    // The clearPending mock returns 'superseded' because the pending's
+    // flowId no longer matches T1's transactionId.
+    const clearPending = jest.fn(async () => 'superseded' as const);
+
+    const result = await orchestrateAuthedFinalize(client, USER_A, makeDeps({
+      invalidateNonCritical,
+      clearPending,
+    }));
+
+    expect(result.status).toBe('superseded');
+    expect(invalidateNonCritical).not.toHaveBeenCalled();
+    // T1's clear was called with T1's flowId, but the pending was T2's
+    expect(clearPending).toHaveBeenCalledWith(USER_A, 'test-flow-id');
+  });
+
+  it('A→B between pre-clear session check and clear result → session_changed, B pending untouched', async () => {
+    const client = freshClient();
+    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
+    const invalidateNonCritical = jest.fn();
+    const clearPending = jest.fn(async () => 'cleared' as const);
+
+    let currentSession = USER_A;
+    // Session changes DURING the clearPending await
+    clearPending.mockImplementationOnce(async () => {
+      currentSession = 'user-bbb';
+      return 'cleared' as const;
+    });
+
+    const result = await orchestrateAuthedFinalize(client, USER_A, makeDeps({
+      getSessionUserId: () => currentSession,
+      invalidateNonCritical,
+      clearPending,
+    }));
+
+    // Post-clear session check catches the change — no navigation
+    expect(result.status).toBe('session_changed');
+    expect(invalidateNonCritical).not.toHaveBeenCalled();
   });
 });

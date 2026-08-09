@@ -782,7 +782,7 @@ describe('Pending payload as transaction marker', () => {
 
     // USER_B tries to clear with USER_A's flowId — must not affect USER_A's pending
     const result = await clearPendingOnboardingIfMatches(USER_B, saved.flowId);
-    expect(result).toBe('not_matched');
+    expect(result).toBe('superseded');
 
     const pending = await readPendingOnboardingPlan();
     expect(pending).not.toBeNull();
@@ -807,7 +807,7 @@ describe('Pending payload as transaction marker', () => {
     // clearPendingOnboardingIfMatches must NOT clear an unclaimed pending.
     // The post-handoff clear function requires ownership.
     const result = await clearPendingOnboardingIfMatches('any-user', saved.flowId);
-    expect(result).toBe('not_matched');
+    expect(result).toBe('superseded');
 
     expect(await readPendingOnboardingPlan()).not.toBeNull();
   });
@@ -850,7 +850,7 @@ describe('Pending payload as transaction marker', () => {
     // The old transaction T1's handoff completes and tries to clear with T1's flowId.
     // This must NOT clear T2 — the flowId doesn't match.
     const result = await clearPendingOnboardingIfMatches(USER_A, saved1.flowId);
-    expect(result).toBe('not_matched');
+    expect(result).toBe('superseded');
 
     const pending = await readPendingOnboardingPlan();
     expect(pending).not.toBeNull();
@@ -877,7 +877,7 @@ describe('Pending payload as transaction marker', () => {
 
     // Wrong flowId — must not clear
     const result = await clearPendingOnboardingIfMatches(USER_A, 'wrong-flow-id');
-    expect(result).toBe('not_matched');
+    expect(result).toBe('superseded');
 
     const pending = await readPendingOnboardingPlan();
     expect(pending).not.toBeNull();
@@ -911,9 +911,9 @@ describe('Pending payload as transaction marker', () => {
     // Step 2: handoff succeeds (simulated — pair is in mock tables)
 
     // Step 3: clear fails — simulate by using a wrong flowId.
-    // clearPendingOnboardingIfMatches returns 'not_matched' when flowId doesn't match.
+    // clearPendingOnboardingIfMatches returns 'superseded' when flowId doesn't match.
     const wrongResult = await clearPendingOnboardingIfMatches(USER_A, 'wrong-flow-id');
-    expect(wrongResult).toBe('not_matched');
+    expect(wrongResult).toBe('superseded');
 
     // Step 4: pending is STILL present
     let pending = await readPendingOnboardingPlan();
@@ -1058,5 +1058,122 @@ describe('Pending payload as transaction marker', () => {
     // Pair still durable in Supabase throughout
     expect(mockPlansTable.has(USER_A)).toBe(true);
     expect(mockProgressTable.get(USER_A)).toBeDefined();
+  });
+
+  it('clearPendingOnboardingIfMatches returns already_absent when no pending exists', async () => {
+    // No pending was ever saved — clear should return already_absent
+    const result = await clearPendingOnboardingIfMatches(USER_A, 'any-flow-id');
+    expect(result).toBe('already_absent');
+  });
+
+  it('T1 handoff done, T2 replaces pending before T1 clear → T1 gets superseded, T2 survives', async () => {
+    // T1 saves and claims a pending
+    const saved1 = await savePendingOnboardingPlan({
+      firstName: 'Ahmed-T1',
+      learningMode: 'recommended',
+      knownSurahs: [1],
+      startingSurah: null,
+      customSurahOrder: [],
+      continueWithRest: true,
+      notificationPreference: 'enabled',
+      discoverySource: 'tiktok',
+      experienceChoice: 'daily_limited',
+    });
+    if (!saved1.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
+    saveActiveOnboardingAuthFlow(saved1.flowId);
+    setSessionAuthFlowId(saved1.flowId);
+    await claimPendingOnboardingPlanForUser(USER_A, saved1.flowId);
+
+    // T2 replaces the pending with a new transaction
+    const saved2 = await savePendingOnboardingPlan({
+      firstName: 'Ahmed-T2',
+      learningMode: 'start_surah',
+      knownSurahs: [5],
+      startingSurah: 2,
+      customSurahOrder: [],
+      continueWithRest: true,
+      notificationPreference: 'enabled',
+      discoverySource: 'tiktok',
+      experienceChoice: 'daily_limited',
+    });
+    if (!saved2.ok) throw new Error('savePendingOnboardingPlan failed in test setup 2');
+    saveActiveOnboardingAuthFlow(saved2.flowId);
+    setSessionAuthFlowId(saved2.flowId);
+    await claimPendingOnboardingPlanForUser(USER_A, saved2.flowId);
+
+    // T1 tries to clear with T1's flowId — should get superseded
+    const t1Result = await clearPendingOnboardingIfMatches(USER_A, saved1.flowId);
+    expect(t1Result).toBe('superseded');
+
+    // T2's pending survives
+    const pending = await readPendingOnboardingPlan();
+    expect(pending).not.toBeNull();
+    expect(pending?.flowId).toBe(saved2.flowId);
+    expect(pending?.ownerUserId).toBe(USER_A);
+
+    // T2 can clear its own pending
+    const t2Result = await clearPendingOnboardingIfMatches(USER_A, saved2.flowId);
+    expect(t2Result).toBe('cleared');
+    expect(await readPendingOnboardingPlan()).toBeNull();
+  });
+
+  it('write-during-clear determinism: new pending save waits for clear to finish', async () => {
+    // Seed and claim a pending for USER_A
+    const saved1 = await savePendingOnboardingPlan({
+      firstName: 'Ahmed-1',
+      learningMode: 'recommended',
+      knownSurahs: [1],
+      startingSurah: null,
+      customSurahOrder: [],
+      continueWithRest: true,
+      notificationPreference: 'enabled',
+      discoverySource: 'tiktok',
+      experienceChoice: 'daily_limited',
+    });
+    if (!saved1.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
+    saveActiveOnboardingAuthFlow(saved1.flowId);
+    setSessionAuthFlowId(saved1.flowId);
+    await claimPendingOnboardingPlanForUser(USER_A, saved1.flowId);
+
+    // Start a clear for T1
+    const clearPromise = clearPendingOnboardingIfMatches(USER_A, saved1.flowId);
+
+    // While the clear is in-flight, save a new pending (T2).
+    // Because savePendingOnboardingPlan is now serialized via the same chain,
+    // the save will wait for the clear to finish before writing.
+    const savePromise = savePendingOnboardingPlan({
+      firstName: 'Ahmed-2',
+      learningMode: 'start_surah',
+      knownSurahs: [5],
+      startingSurah: 2,
+      customSurahOrder: [],
+      continueWithRest: true,
+      notificationPreference: 'enabled',
+      discoverySource: 'tiktok',
+      experienceChoice: 'daily_limited',
+    });
+
+    // Both should resolve without error
+    const [clearResult, saveResult] = await Promise.all([clearPromise, savePromise]);
+
+    // T1's clear succeeded (the pending matched T1)
+    expect(clearResult).toBe('cleared');
+
+    // T2's save succeeded
+    expect(saveResult.ok).toBe(true);
+
+    // The pending in storage is T2's (the save ran after the clear)
+    const pending = await readPendingOnboardingPlan();
+    expect(pending).not.toBeNull();
+    if (saved1.ok && saveResult.ok) {
+      expect(pending?.flowId).toBe(saveResult.flowId);
+      expect(pending?.flowId).not.toBe(saved1.flowId);
+    }
+
+    // T2 can clear its own pending — but T2 was not claimed, so clear returns 'superseded'
+    if (saveResult.ok) {
+      const t2Clear = await clearPendingOnboardingIfMatches(USER_A, saveResult.flowId);
+      expect(t2Clear).toBe('superseded'); // pending exists but not owned by USER_A
+    }
   });
 });
