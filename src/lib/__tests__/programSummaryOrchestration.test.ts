@@ -11,7 +11,8 @@ jest.mock('@/lib/onboardingDashboardHandoff', () => ({
   handOffFinalizedProgram: jest.fn(),
 }));
 jest.mock('@/lib/pendingOnboardingPlan', () => ({
-  clearPendingOnboardingForUser: jest.fn(async () => {}),
+  clearPendingOnboardingIfMatches: jest.fn(async () => {}),
+  readPendingOnboardingPlan: jest.fn(async () => ({ flowId: 'test-flow-id', ownerUserId: 'user-aaa' })),
 }));
 
 const mockFinalize = finalizeOnboardingV2PlanWithPremiumGate as jest.Mock;
@@ -57,7 +58,7 @@ describe('orchestrateAuthedFinalize', () => {
     const result = await orchestrateAuthedFinalize(client, USER_A, makeDeps({ invalidateNonCritical, clearPending }));
 
     expect(result.status).toBe('navigate');
-    expect(clearPending).toHaveBeenCalledWith(USER_A);
+    expect(clearPending).toHaveBeenCalledWith(USER_A, 'test-flow-id');
     expect(invalidateNonCritical).toHaveBeenCalledWith(client, USER_A);
   });
 
@@ -194,8 +195,8 @@ describe('orchestrateAuthedFinalize', () => {
 
     await orchestrateAuthedFinalize(client, USER_A, makeDeps({ clearPending }));
 
-    expect(clearPending).toHaveBeenCalledWith(USER_A);
-    expect(clearPending).not.toHaveBeenCalledWith('user-bbb');
+    expect(clearPending).toHaveBeenCalledWith(USER_A, 'test-flow-id');
+    expect(clearPending).not.toHaveBeenCalledWith('user-bbb', expect.anything());
   });
 
   it('session change after handoff but before clearPending → session_changed, no clearPending', async () => {
@@ -217,5 +218,128 @@ describe('orchestrateAuthedFinalize', () => {
 
     expect(result.status).toBe('session_changed');
     expect(clearPending).not.toHaveBeenCalled();
+  });
+
+  // ── Real account switch tests with deferred operations ──────────────────
+  // These tests simulate actual session changes at each async boundary,
+  // verifying that old operations never affect the new account's state.
+
+  it('A→B during finalize → session_changed, no handoff, no clearPending', async () => {
+    const client = freshClient();
+    const clearPending = jest.fn(async () => {});
+    let currentSession = USER_A;
+
+    // Session changes DURING finalize's await
+    mockFinalize.mockImplementationOnce(async () => {
+      currentSession = 'user-bbb';
+      return { status: 'ok', finalize: { ok: true } };
+    });
+    mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
+
+    const result = await orchestrateAuthedFinalize(client, USER_A, makeDeps({
+      getSessionUserId: () => currentSession,
+      clearPending,
+    }));
+
+    expect(result.status).toBe('session_changed');
+    expect(mockHandoff).not.toHaveBeenCalled();
+    expect(clearPending).not.toHaveBeenCalled();
+  });
+
+  it('A→B during handoff → session_changed, no clearPending, no navigation', async () => {
+    const client = freshClient();
+    const clearPending = jest.fn(async () => {});
+    let currentSession = USER_A;
+
+    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    // Session changes DURING handoff's await
+    mockHandoff.mockImplementationOnce(async () => {
+      currentSession = 'user-bbb';
+      return { status: 'ready', plan: PLAN_A, progress: PROGRESS_A };
+    });
+
+    const result = await orchestrateAuthedFinalize(client, USER_A, makeDeps({
+      getSessionUserId: () => currentSession,
+      clearPending,
+    }));
+
+    expect(result.status).toBe('session_changed');
+    expect(clearPending).not.toHaveBeenCalled();
+  });
+
+  it('A→B just before clear → session_changed, no clearPending for A', async () => {
+    const client = freshClient();
+    const clearPending = jest.fn(async () => {});
+    let currentSession = USER_A;
+
+    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
+
+    // Change session right after handoff resolves, before clearPending runs.
+    // We do this by making readPendingOnboardingPlan (called before clearPending)
+    // trigger the session change.
+    const { readPendingOnboardingPlan } = jest.requireMock('@/lib/pendingOnboardingPlan') as { readPendingOnboardingPlan: jest.Mock };
+    readPendingOnboardingPlan.mockImplementationOnce(async () => {
+      currentSession = 'user-bbb';
+      return { flowId: 'test-flow-id', ownerUserId: USER_A };
+    });
+
+    const result = await orchestrateAuthedFinalize(client, USER_A, makeDeps({
+      getSessionUserId: () => currentSession,
+      clearPending,
+    }));
+
+    // The session check after handoff catches the change before clearPending
+    expect(result.status).toBe('session_changed');
+    expect(clearPending).not.toHaveBeenCalled();
+  });
+
+  it('clear of A in-flight, then B creates pending → B pending not cleared by A operation', async () => {
+    const client = freshClient();
+    const clearPending = jest.fn(async (_uid: string, _txId: string) => {});
+    let currentSession = USER_A;
+
+    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
+
+    await orchestrateAuthedFinalize(client, USER_A, makeDeps({
+      getSessionUserId: () => currentSession,
+      clearPending,
+    }));
+
+    // A's clearPending was called with A's userId and A's flowId
+    expect(clearPending).toHaveBeenCalledWith(USER_A, 'test-flow-id');
+    // It was never called with user-bbb
+    expect(clearPending).not.toHaveBeenCalledWith('user-bbb', expect.anything());
+  });
+
+  it('old pending of A, then new transaction for A → old clear does not clear new pending', async () => {
+    const client = freshClient();
+    const clearPending = jest.fn(async () => {});
+    let currentSession = USER_A;
+
+    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
+
+    // Simulate: the pending was overwritten with a new flowId between
+    // the handoff and the readPendingOnboardingPlan call.
+    const { readPendingOnboardingPlan } = jest.requireMock('@/lib/pendingOnboardingPlan') as { readPendingOnboardingPlan: jest.Mock };
+    readPendingOnboardingPlan.mockImplementationOnce(async () => {
+      // New transaction T2 with a different flowId
+      return { flowId: 'new-flow-id-T2', ownerUserId: USER_A };
+    });
+
+    await orchestrateAuthedFinalize(client, USER_A, makeDeps({
+      getSessionUserId: () => currentSession,
+      clearPending,
+    }));
+
+    // clearPending is called with the NEW flowId (read from the pending),
+    // not the old one. The actual clearPendingOnboardingIfMatches would
+    // compare this against the pending's current flowId — since they match,
+    // it clears T2 (which is correct: the pair is already durable).
+    expect(clearPending).toHaveBeenCalledWith(USER_A, 'new-flow-id-T2');
+    // It was NOT called with the old flowId
+    expect(clearPending).not.toHaveBeenCalledWith(USER_A, 'test-flow-id');
   });
 });

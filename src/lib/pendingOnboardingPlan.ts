@@ -544,9 +544,18 @@ export async function clearPendingOnboardingPlan(): Promise<void> {
 }
 
 /**
- * Clears the pending payload and associated auth markers ONLY if the payload
- * is owned by the given userId or is unclaimed (pre-auth). A pending payload
- * owned by a different user is never touched.
+ * Clears the pending payload and associated auth markers ONLY if:
+ *   1. The payload exists and is owned by the given userId (not unclaimed).
+ *   2. The payload's flowId matches the given transactionId.
+ *
+ * This prevents:
+ *   - Clearing an unclaimed pending created for another parcours.
+ *   - Clearing a pending owned by a different user.
+ *   - Clearing a NEWER pending belonging to the same user (different flowId).
+ *
+ * Serialized via the same _claimChain as claimPendingOnboardingPlanForUser
+ * to prevent a race where a new pending is written between the read and the
+ * clear.
  *
  * Called by the orchestration layer AFTER handOffFinalizedProgram succeeds,
  * making the pending payload a durable transaction marker that survives
@@ -554,20 +563,29 @@ export async function clearPendingOnboardingPlan(): Promise<void> {
  *
  * Never throws.
  */
-export async function clearPendingOnboardingForUser(userId: string): Promise<void> {
-  try {
-    const pending = await readPendingOnboardingPlan();
-    if (!pending) return;
-    if (pending.ownerUserId && pending.ownerUserId !== userId) return;
-    await clearPendingOnboardingPlan();
-    await clearAuthHandoff();
-    await clearActiveOnboardingAuthFlow();
-    clearSessionAuthFlowId();
-  } catch {
-    // Non-fatal — a leftover entry is harmless and will be discarded on
-    // its next read anyway. The handoff already succeeded, so the user
-    // can reach their dashboard regardless.
-  }
+export function clearPendingOnboardingIfMatches(
+  userId: string,
+  transactionId: string,
+): Promise<void> {
+  return serializeClaim(async () => {
+    try {
+      const pending = await readPendingOnboardingPlan();
+      if (!pending) return;
+      // Must be owned by this user — unclaimed pending is never cleared here.
+      if (!pending.ownerUserId || pending.ownerUserId !== userId) return;
+      // Must match the transaction that was finalized — a newer pending
+      // from a different onboarding parcours must survive.
+      if (!pending.flowId || pending.flowId !== transactionId) return;
+      await clearPendingOnboardingPlan();
+      await clearAuthHandoff();
+      await clearActiveOnboardingAuthFlow();
+      clearSessionAuthFlowId();
+    } catch {
+      // Non-fatal — a leftover entry is harmless and will be discarded on
+      // its next read anyway. The handoff already succeeded, so the user
+      // can reach their dashboard regardless.
+    }
+  }).then(() => undefined, () => undefined);
 }
 
 /**

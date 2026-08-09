@@ -9,6 +9,8 @@
 interface DashboardStateInput {
   planData: unknown | null;
   progressData: unknown | null;
+  planLoading: boolean;
+  progressLoading: boolean;
   pendingLoading: boolean;
   pendingHasPending: boolean;
   finalizeStatus: 'idle' | 'running' | 'success' | 'error'
@@ -17,6 +19,7 @@ interface DashboardStateInput {
 
 function computeDashboardState(input: DashboardStateInput) {
   const hasNoPlan = !input.planData || !input.progressData;
+  const isLoading = input.planLoading || input.progressLoading;
   const isFinalizingOnboardingV2 =
     hasNoPlan &&
     (input.pendingLoading ||
@@ -25,117 +28,156 @@ function computeDashboardState(input: DashboardStateInput) {
       input.finalizeStatus === 'error' ||
       input.finalizeStatus === 'premium_sync_failed' ||
       input.finalizeStatus === 'premium_entitlement_missing');
-  const showFinalizeCard = isFinalizingOnboardingV2;
-  const showLegacyCTA = hasNoPlan && !isFinalizingOnboardingV2;
-  const showNormalDashboard = !hasNoPlan;
-  return { hasNoPlan, isFinalizingOnboardingV2, showFinalizeCard, showLegacyCTA, showNormalDashboard };
+
+  // Early returns in render order:
+  // 1. isLoading → recovery card (safety net, gate prevents in normal operation)
+  // 2. hasError → error card
+  // 3. isFinalizingOnboardingV2 → finalize card
+  // 4. hasNoPlan (alone) → legacy CTA
+  // 5. else → normal dashboard
+  let visibleState: 'recovery_card' | 'finalize_card' | 'legacy_cta' | 'normal_dashboard';
+  if (isLoading) {
+    visibleState = 'recovery_card';
+  } else if (isFinalizingOnboardingV2) {
+    visibleState = 'finalize_card';
+  } else if (hasNoPlan) {
+    visibleState = 'legacy_cta';
+  } else {
+    visibleState = 'normal_dashboard';
+  }
+
+  return {
+    hasNoPlan,
+    isFinalizingOnboardingV2,
+    visibleState,
+    showFinalizeCard: visibleState === 'finalize_card',
+    showLegacyCTA: visibleState === 'legacy_cta',
+    showNormalDashboard: visibleState === 'normal_dashboard',
+    showRecoveryCard: visibleState === 'recovery_card',
+  };
 }
 
 describe('Dashboard state logic (Parcours B)', () => {
-  it('plan=null, progress=null, pending present → finalize card', () => {
+  it('1. plan=null, progress=null, pending owned → finalize card', () => {
     const s = computeDashboardState({
       planData: null, progressData: null,
+      planLoading: false, progressLoading: false,
       pendingLoading: false, pendingHasPending: true,
       finalizeStatus: 'idle',
     });
     expect(s.hasNoPlan).toBe(true);
     expect(s.isFinalizingOnboardingV2).toBe(true);
-    expect(s.showFinalizeCard).toBe(true);
+    expect(s.visibleState).toBe('finalize_card');
     expect(s.showLegacyCTA).toBe(false);
     expect(s.showNormalDashboard).toBe(false);
   });
 
-  it('plan present, progress=null, pending present → finalize card (not legacy CTA)', () => {
+  it('2. plan present, progress=null, pending owned → finalize card (not legacy CTA)', () => {
     const s = computeDashboardState({
       planData: { id: 'plan-A' }, progressData: null,
+      planLoading: false, progressLoading: false,
       pendingLoading: false, pendingHasPending: true,
       finalizeStatus: 'idle',
     });
     expect(s.hasNoPlan).toBe(true);
     expect(s.isFinalizingOnboardingV2).toBe(true);
-    expect(s.showFinalizeCard).toBe(true);
+    expect(s.visibleState).toBe('finalize_card');
     expect(s.showLegacyCTA).toBe(false);
     expect(s.showNormalDashboard).toBe(false);
   });
 
-  it('plan=null, orphan progress present, pending present → finalize card', () => {
+  it('3. plan=null, orphan progress present, pending owned → finalize card', () => {
     const s = computeDashboardState({
       planData: null, progressData: { current_surah: 50 },
+      planLoading: false, progressLoading: false,
       pendingLoading: false, pendingHasPending: true,
       finalizeStatus: 'idle',
     });
     expect(s.hasNoPlan).toBe(true);
     expect(s.isFinalizingOnboardingV2).toBe(true);
-    expect(s.showFinalizeCard).toBe(true);
+    expect(s.visibleState).toBe('finalize_card');
     expect(s.showLegacyCTA).toBe(false);
     expect(s.showNormalDashboard).toBe(false);
   });
 
-  it('complete pair, pending still present after interruption → normal dashboard', () => {
+  it('4. complete pair, pending residual → normal dashboard (idempotent cleanup in background)', () => {
     const s = computeDashboardState({
       planData: { id: 'plan-A' }, progressData: { current_surah: 1 },
+      planLoading: false, progressLoading: false,
       pendingLoading: false, pendingHasPending: true,
       finalizeStatus: 'idle',
     });
     expect(s.hasNoPlan).toBe(false);
     expect(s.isFinalizingOnboardingV2).toBe(false);
+    expect(s.visibleState).toBe('normal_dashboard');
     expect(s.showFinalizeCard).toBe(false);
     expect(s.showLegacyCTA).toBe(false);
-    expect(s.showNormalDashboard).toBe(true);
   });
 
-  it('complete pair, no pending → normal dashboard', () => {
+  it('5. complete pair, no pending → normal dashboard', () => {
     const s = computeDashboardState({
       planData: { id: 'plan-A' }, progressData: { current_surah: 1 },
+      planLoading: false, progressLoading: false,
       pendingLoading: false, pendingHasPending: false,
       finalizeStatus: 'idle',
     });
     expect(s.hasNoPlan).toBe(false);
-    expect(s.showNormalDashboard).toBe(true);
+    expect(s.visibleState).toBe('normal_dashboard');
     expect(s.showFinalizeCard).toBe(false);
     expect(s.showLegacyCTA).toBe(false);
   });
 
-  it('pending loading → finalize card regardless of plan/progress state', () => {
+  it('6. partial state (plan present, progress=null) without pending → legacy CTA', () => {
     const s = computeDashboardState({
-      planData: null, progressData: null,
-      pendingLoading: true, pendingHasPending: false,
+      planData: { id: 'plan-A' }, progressData: null,
+      planLoading: false, progressLoading: false,
+      pendingLoading: false, pendingHasPending: false,
       finalizeStatus: 'idle',
     });
-    expect(s.isFinalizingOnboardingV2).toBe(true);
-    expect(s.showFinalizeCard).toBe(true);
-    expect(s.showLegacyCTA).toBe(false);
+    expect(s.hasNoPlan).toBe(true);
+    expect(s.isFinalizingOnboardingV2).toBe(false);
+    expect(s.visibleState).toBe('legacy_cta');
+    expect(s.showFinalizeCard).toBe(false);
+    expect(s.showNormalDashboard).toBe(false);
   });
 
-  it('finalize running → finalize card, not legacy CTA', () => {
+  it('7. plan/progress queries still loading → recovery card (safety net)', () => {
     const s = computeDashboardState({
       planData: null, progressData: null,
+      planLoading: true, progressLoading: false,
       pendingLoading: false, pendingHasPending: true,
-      finalizeStatus: 'running',
+      finalizeStatus: 'idle',
     });
-    expect(s.showFinalizeCard).toBe(true);
+    expect(s.visibleState).toBe('recovery_card');
+    expect(s.showFinalizeCard).toBe(false);
     expect(s.showLegacyCTA).toBe(false);
+    expect(s.showNormalDashboard).toBe(false);
   });
 
-  it('finalize error → finalize card with retry, not legacy CTA', () => {
+  it('8. finalize error with partial state (plan present, progress=null) → finalize card with retry', () => {
     const s = computeDashboardState({
-      planData: null, progressData: null,
+      planData: { id: 'plan-A' }, progressData: null,
+      planLoading: false, progressLoading: false,
       pendingLoading: false, pendingHasPending: true,
       finalizeStatus: 'error',
     });
-    expect(s.showFinalizeCard).toBe(true);
+    expect(s.hasNoPlan).toBe(true);
+    expect(s.isFinalizingOnboardingV2).toBe(true);
+    expect(s.visibleState).toBe('finalize_card');
     expect(s.showLegacyCTA).toBe(false);
+    expect(s.showNormalDashboard).toBe(false);
   });
 
   it('no pending, no plan → legacy CTA (genuine new user)', () => {
     const s = computeDashboardState({
       planData: null, progressData: null,
+      planLoading: false, progressLoading: false,
       pendingLoading: false, pendingHasPending: false,
       finalizeStatus: 'idle',
     });
     expect(s.hasNoPlan).toBe(true);
     expect(s.isFinalizingOnboardingV2).toBe(false);
-    expect(s.showLegacyCTA).toBe(true);
+    expect(s.visibleState).toBe('legacy_cta');
     expect(s.showFinalizeCard).toBe(false);
   });
 });

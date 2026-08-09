@@ -130,7 +130,7 @@ import {
   claimPendingOnboardingPlanForUser,
   saveActiveOnboardingAuthFlow,
   setSessionAuthFlowId,
-  clearPendingOnboardingForUser,
+  clearPendingOnboardingIfMatches,
 } from '../pendingOnboardingPlan';
 import { fetchPlan, upsertPlan } from '@/db/plans';
 import { fetchProgress, resetProgressForNewPlan } from '@/db/progress';
@@ -750,8 +750,8 @@ describe('Pending payload as transaction marker', () => {
     // Step 6: handoff succeeds (simulated — in production handOffFinalizedProgram
     // would run here; we simulate by confirming the pair is in the mock tables)
 
-    // Step 7: clearPendingOnboardingForUser clears the pending
-    await clearPendingOnboardingForUser(USER_A);
+    // Step 7: clearPendingOnboardingIfMatches clears the pending (flowId matches)
+    await clearPendingOnboardingIfMatches(USER_A, saved.flowId);
     pending = await readPendingOnboardingPlan();
     expect(pending).toBeNull();
 
@@ -760,7 +760,7 @@ describe('Pending payload as transaction marker', () => {
     expect(mockProgressTable.get(USER_A)).toBeDefined();
   });
 
-  it('clearPendingOnboardingForUser does not clear another user pending', async () => {
+  it('clearPendingOnboardingIfMatches does not clear another user pending', async () => {
     // USER_A has a pending payload
     const saved = await savePendingOnboardingPlan({
       firstName: 'Alice',
@@ -778,16 +778,16 @@ describe('Pending payload as transaction marker', () => {
     setSessionAuthFlowId(saved.flowId);
     await claimPendingOnboardingPlanForUser(USER_A, saved.flowId);
 
-    // USER_B tries to clear — must not affect USER_A's pending
-    await clearPendingOnboardingForUser(USER_B);
+    // USER_B tries to clear with USER_A's flowId — must not affect USER_A's pending
+    await clearPendingOnboardingIfMatches(USER_B, saved.flowId);
 
     const pending = await readPendingOnboardingPlan();
     expect(pending).not.toBeNull();
     expect(pending?.ownerUserId).toBe(USER_A);
   });
 
-  it('clearPendingOnboardingForUser clears unclaimed pending (pre-auth)', async () => {
-    await savePendingOnboardingPlan({
+  it('clearPendingOnboardingIfMatches does NOT clear unclaimed pending (pre-auth)', async () => {
+    const saved = await savePendingOnboardingPlan({
       firstName: 'NewUser',
       learningMode: 'recommended',
       knownSurahs: [1],
@@ -799,9 +799,142 @@ describe('Pending payload as transaction marker', () => {
       experienceChoice: 'daily_limited',
     });
     // Not claimed — no ownerUserId
+    if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
 
-    await clearPendingOnboardingForUser('any-user');
+    // clearPendingOnboardingIfMatches must NOT clear an unclaimed pending.
+    // The post-handoff clear function requires ownership.
+    await clearPendingOnboardingIfMatches('any-user', saved.flowId);
 
-    expect(await readPendingOnboardingPlan()).toBeNull();
+    expect(await readPendingOnboardingPlan()).not.toBeNull();
+  });
+
+  it('clearPendingOnboardingIfMatches does not clear a newer transaction for the same user', async () => {
+    // USER_A finalizes transaction T1
+    const saved1 = await savePendingOnboardingPlan({
+      firstName: 'Ahmed',
+      learningMode: 'recommended',
+      knownSurahs: [1],
+      startingSurah: null,
+      customSurahOrder: [],
+      continueWithRest: true,
+      notificationPreference: 'enabled',
+      discoverySource: 'tiktok',
+      experienceChoice: 'daily_limited',
+    });
+    if (!saved1.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
+    saveActiveOnboardingAuthFlow(saved1.flowId);
+    setSessionAuthFlowId(saved1.flowId);
+    await claimPendingOnboardingPlanForUser(USER_A, saved1.flowId);
+
+    // USER_A starts a NEW onboarding parcours, creating transaction T2
+    const saved2 = await savePendingOnboardingPlan({
+      firstName: 'Ahmed',
+      learningMode: 'start_surah',
+      knownSurahs: [5],
+      startingSurah: 2,
+      customSurahOrder: [],
+      continueWithRest: true,
+      notificationPreference: 'enabled',
+      discoverySource: 'tiktok',
+      experienceChoice: 'daily_limited',
+    });
+    if (!saved2.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
+    saveActiveOnboardingAuthFlow(saved2.flowId);
+    setSessionAuthFlowId(saved2.flowId);
+    await claimPendingOnboardingPlanForUser(USER_A, saved2.flowId);
+
+    // The old transaction T1's handoff completes and tries to clear with T1's flowId.
+    // This must NOT clear T2 — the flowId doesn't match.
+    await clearPendingOnboardingIfMatches(USER_A, saved1.flowId);
+
+    const pending = await readPendingOnboardingPlan();
+    expect(pending).not.toBeNull();
+    expect(pending?.flowId).toBe(saved2.flowId);
+    expect(pending?.ownerUserId).toBe(USER_A);
+  });
+
+  it('clearPendingOnboardingIfMatches with wrong flowId does not clear', async () => {
+    const saved = await savePendingOnboardingPlan({
+      firstName: 'Test',
+      learningMode: 'recommended',
+      knownSurahs: [1],
+      startingSurah: null,
+      customSurahOrder: [],
+      continueWithRest: true,
+      notificationPreference: 'enabled',
+      discoverySource: 'tiktok',
+      experienceChoice: 'daily_limited',
+    });
+    if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
+    saveActiveOnboardingAuthFlow(saved.flowId);
+    setSessionAuthFlowId(saved.flowId);
+    await claimPendingOnboardingPlanForUser(USER_A, saved.flowId);
+
+    // Wrong flowId — must not clear
+    await clearPendingOnboardingIfMatches(USER_A, 'wrong-flow-id');
+
+    const pending = await readPendingOnboardingPlan();
+    expect(pending).not.toBeNull();
+    expect(pending?.ownerUserId).toBe(USER_A);
+  });
+
+  it('clear failure after handoff → pending survives, idempotent retry clears it, no progress reset', async () => {
+    // Seed a pending payload and claim it for USER_A
+    const saved = await savePendingOnboardingPlan({
+      firstName: 'Ahmed',
+      learningMode: 'recommended',
+      knownSurahs: [1],
+      startingSurah: null,
+      customSurahOrder: [],
+      continueWithRest: true,
+      notificationPreference: 'enabled',
+      discoverySource: 'tiktok',
+      experienceChoice: 'daily_limited',
+    });
+    if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
+    saveActiveOnboardingAuthFlow(saved.flowId);
+    setSessionAuthFlowId(saved.flowId);
+    await claimPendingOnboardingPlanForUser(USER_A, saved.flowId);
+
+    // Step 1: finalize persists the pair
+    const result1 = await finalizeOnboardingV2Plan(USER_A, '');
+    expect(result1.ok).toBe(true);
+    expect(mockPlansTable.has(USER_A)).toBe(true);
+    expect(mockProgressTable.get(USER_A)).toBeDefined();
+
+    // Step 2: handoff succeeds (simulated — pair is in mock tables)
+
+    // Step 3: clear fails — simulate by using a wrong flowId.
+    // clearPendingOnboardingIfMatches does NOT clear when flowId doesn't match.
+    await clearPendingOnboardingIfMatches(USER_A, 'wrong-flow-id');
+
+    // Step 4: pending is STILL present
+    let pending = await readPendingOnboardingPlan();
+    expect(pending).not.toBeNull();
+    expect(pending?.ownerUserId).toBe(USER_A);
+    expect(pending?.flowId).toBe(saved.flowId);
+
+    // Step 5: no foreign pending was touched (there is none, but verify no error)
+
+    // Step 6: retry — finalize detects existing pair (idempotent)
+    const result2 = await finalizeOnboardingV2Plan(USER_A, '');
+    expect(result2.ok).toBe(true);
+    if (result2.ok) {
+      expect(result2.reason).toBe('plan_already_exists');
+    }
+    // upsertPlan was NOT called again
+    expect(upsertPlan).toHaveBeenCalledTimes(1);
+    // Progress was NOT reset again
+    const resetCalls = (resetProgressForNewPlan as jest.Mock).mock.calls.length;
+    expect(resetCalls).toBe(1);
+
+    // Step 7: correct clear with matching flowId finally clears the pending
+    await clearPendingOnboardingIfMatches(USER_A, saved.flowId);
+    pending = await readPendingOnboardingPlan();
+    expect(pending).toBeNull();
+
+    // Step 8: pair is still durable in Supabase
+    expect(mockPlansTable.has(USER_A)).toBe(true);
+    expect(mockProgressTable.get(USER_A)).toBeDefined();
   });
 });

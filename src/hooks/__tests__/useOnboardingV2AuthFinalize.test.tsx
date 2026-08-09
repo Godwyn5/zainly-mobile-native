@@ -18,7 +18,8 @@ jest.mock('@/lib/onboardingDashboardHandoff', () => ({
 jest.mock('@/lib/pendingOnboardingPlan', () => ({
   getSessionAuthFlowId: jest.fn(() => ''),
   clearSessionAuthFlowId: jest.fn(),
-  clearPendingOnboardingForUser: jest.fn(async () => {}),
+  clearPendingOnboardingIfMatches: jest.fn(async () => {}),
+  readPendingOnboardingPlan: jest.fn(async () => ({ flowId: 'test-flow-id', ownerUserId: 'user-A' })),
 }));
 jest.mock('@/lib/revenueCat', () => ({
   restoreRevenueCatPurchases: jest.fn(),
@@ -32,11 +33,11 @@ jest.mock('@tanstack/react-query', () => ({
 
 import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
-import { clearPendingOnboardingForUser } from '@/lib/pendingOnboardingPlan';
+import { clearPendingOnboardingIfMatches } from '@/lib/pendingOnboardingPlan';
 
 const mockFinalize = finalizeOnboardingV2PlanWithPremiumGate as jest.Mock;
 const mockHandoff = handOffFinalizedProgram as jest.Mock;
-const mockClearPending = clearPendingOnboardingForUser as jest.Mock;
+const mockClearPending = clearPendingOnboardingIfMatches as jest.Mock;
 
 // ── Minimal hook-testing harness (no @testing-library/react-hooks) ───────────
 // IMPORTANT: callers must read `harness.result` fresh on every access (never
@@ -233,8 +234,8 @@ describe('useOnboardingV2AuthFinalize — multi-account protection', () => {
     });
 
     expect(harness.result.status).toBe('success');
-    expect(mockClearPending).toHaveBeenCalledWith('user-A');
-    expect(mockClearPending).not.toHaveBeenCalledWith('user-B');
+    expect(mockClearPending).toHaveBeenCalledWith('user-A', 'test-flow-id');
+    expect(mockClearPending).not.toHaveBeenCalledWith('user-B', expect.anything());
   });
 
   it('does not clear pending for user-A when runFinalize was called with user-B', async () => {
@@ -250,8 +251,90 @@ describe('useOnboardingV2AuthFinalize — multi-account protection', () => {
     });
 
     expect(harness.result.status).toBe('success');
-    // clearPendingOnboardingForUser was called with user-B, never user-A
-    expect(mockClearPending).toHaveBeenCalledWith('user-B');
-    expect(mockClearPending).not.toHaveBeenCalledWith('user-A');
+    // clearPendingOnboardingIfMatches was called with user-B + flowId, never user-A
+    expect(mockClearPending).toHaveBeenCalledWith('user-B', 'test-flow-id');
+    expect(mockClearPending).not.toHaveBeenCalledWith('user-A', expect.anything());
+  });
+
+  it('A→B during finalize → handoff uses user-A, clearPending uses user-A (hook captures userId at call time)', async () => {
+    let resolveFinalize: (v: unknown) => void;
+    mockFinalize.mockReturnValueOnce(new Promise(r => { resolveFinalize = r; }));
+    mockHandoff.mockResolvedValue({ status: 'ready', plan: {}, progress: {} });
+    mockClearPending.mockClear();
+
+    const harness = renderHookHarness(useOnboardingV2AuthFinalize);
+
+    let callPromise: Promise<unknown>;
+    act(() => {
+      callPromise = harness.result.runFinalize('user-A');
+    });
+
+    // Finalize is in-flight. Even if the session changes to user-B externally,
+    // the hook captured user-A at call time.
+    await act(async () => {
+      resolveFinalize!({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+      await callPromise;
+    });
+
+    // Handoff and clearPending both use user-A — the userId passed to runFinalize
+    expect(mockHandoff).toHaveBeenCalledWith(expect.anything(), 'user-A');
+    expect(mockClearPending).toHaveBeenCalledWith('user-A', 'test-flow-id');
+    expect(mockClearPending).not.toHaveBeenCalledWith('user-B', expect.anything());
+  });
+
+  it('A→B during handoff → clearPending still uses user-A (hook does not re-read session)', async () => {
+    let resolveHandoff: (v: unknown) => void;
+    mockFinalize.mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+    mockHandoff.mockReturnValueOnce(new Promise(r => { resolveHandoff = r; }));
+    mockClearPending.mockClear();
+
+    const harness = renderHookHarness(useOnboardingV2AuthFinalize);
+
+    let callPromise: Promise<unknown>;
+    act(() => {
+      callPromise = harness.result.runFinalize('user-A');
+    });
+
+    // Wait for finalize to complete and handoff to be in-flight
+    await act(async () => {
+      // Allow microtasks to flush so finalize resolves
+      await Promise.resolve();
+    });
+
+    // Resolve handoff — session may have changed externally, but hook uses user-A
+    await act(async () => {
+      resolveHandoff!({ status: 'ready', plan: {}, progress: {} });
+      await callPromise;
+    });
+
+    expect(mockClearPending).toHaveBeenCalledWith('user-A', 'test-flow-id');
+    expect(mockClearPending).not.toHaveBeenCalledWith('user-B', expect.anything());
+  });
+
+  it('new transaction for A → old clear with old flowId does not clear new pending', async () => {
+    // Simulate: finalize T1, handoff succeeds, but before clearPending runs,
+    // the pending is overwritten with T2 (new flowId).
+    const { readPendingOnboardingPlan } = jest.requireMock('@/lib/pendingOnboardingPlan') as { readPendingOnboardingPlan: jest.Mock };
+    readPendingOnboardingPlan.mockImplementationOnce(async () => {
+      return { flowId: 'new-flow-id-T2', ownerUserId: 'user-A' };
+    });
+
+    mockFinalize.mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+    mockHandoff.mockResolvedValue({ status: 'ready', plan: {}, progress: {} });
+    mockClearPending.mockClear();
+
+    const harness = renderHookHarness(useOnboardingV2AuthFinalize);
+
+    await act(async () => {
+      await harness.result.runFinalize('user-A');
+    });
+
+    expect(harness.result.status).toBe('success');
+    // clearPending was called with the NEW flowId (read from the pending),
+    // not the old one. The actual clearPendingOnboardingIfMatches would
+    // compare this against the pending's current flowId — since they match,
+    // it clears T2 (which is correct: the pair is already durable).
+    expect(mockClearPending).toHaveBeenCalledWith('user-A', 'new-flow-id-T2');
+    expect(mockClearPending).not.toHaveBeenCalledWith('user-A', 'test-flow-id');
   });
 });

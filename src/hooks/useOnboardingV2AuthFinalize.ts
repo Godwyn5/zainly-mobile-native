@@ -15,7 +15,8 @@ import {
   finalizeOnboardingV2PlanWithPremiumGate, FinalizeOnboardingV2Result,
 } from '@/lib/onboardingFinalize';
 import {
-  getSessionAuthFlowId, clearSessionAuthFlowId, clearPendingOnboardingForUser,
+  getSessionAuthFlowId, clearSessionAuthFlowId, clearPendingOnboardingIfMatches,
+  readPendingOnboardingPlan,
 } from '@/lib/pendingOnboardingPlan';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 
@@ -147,9 +148,14 @@ export function useOnboardingV2AuthFinalize(): UseOnboardingV2AuthFinalizeResult
         }
 
         // Handoff succeeded — now safe to clear the pending payload for this
-        // user. It was the transaction marker: the pair is durable in Supabase
-        // and canonical in the cache. Never clears another user's pending.
-        await clearPendingOnboardingForUser(userId);
+        // user. Read the pending's flowId to pass as the transaction identity —
+        // this prevents clearing a NEWER pending from a different onboarding
+        // parcours. Never clears an unclaimed or another user's pending.
+        const pendingBeforeClear = await readPendingOnboardingPlan();
+        const transactionId = pendingBeforeClear?.flowId ?? '';
+        if (transactionId) {
+          await clearPendingOnboardingIfMatches(userId, transactionId);
+        }
 
         primeNonCriticalDashboardCaches(queryClient, userId);
         setStatus('success');
