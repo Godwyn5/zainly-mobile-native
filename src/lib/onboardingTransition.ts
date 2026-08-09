@@ -27,7 +27,7 @@ import {
   releaseTransitionLease,
   setTransitionLeaseUserId,
   getActiveTransitionLeaseFlowId,
-  setVerifiedHandoff,
+  completeTransitionLease,
 } from '@/lib/transitionLease';
 import { planQueryOptions, progressQueryOptions } from '@/queries';
 
@@ -144,12 +144,12 @@ export async function runOnboardingTransition(
       };
     }
 
-    // ── Step 5: Store verified handoff, then release the lease ────────
-    // The handoff proves plan+progress are canonically cached for this
-    // exact userId/flowId. _layout.tsx consumes it to skip the preparing
-    // state and mount the dashboard directly — no white screen.
-    setVerifiedHandoff(userId, authFlowId);
-    releaseTransitionLease(leaseId);
+    // ── Step 5: Atomic transition ACTIVE → READY_UNACKNOWLEDGED ──────
+    // Single mutation+notification: lease becomes inactive for routing
+    // AND verified handoff is available in the same snapshot. This
+    // ensures _layout.tsx sees both states simultaneously on the first
+    // render after this call — no intermediate beige screen.
+    completeTransitionLease(leaseId, userId, authFlowId);
     return { status: 'success' };
   } catch (error) {
     releaseTransitionLease(leaseId);

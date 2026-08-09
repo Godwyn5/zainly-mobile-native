@@ -9,8 +9,7 @@ import {
   forceReleaseTransitionLease,
   hasActiveTransitionLease,
   getActiveTransitionLeaseFlowId,
-  consumeVerifiedHandoff,
-  clearVerifiedHandoff,
+  getLeaseSnapshot,
 } from '../transitionLease';
 import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
@@ -63,7 +62,6 @@ describe('runOnboardingTransition', () => {
 
   afterEach(() => {
     forceReleaseTransitionLease();
-    clearVerifiedHandoff();
   });
 
   async function setupLease(flowId: string): Promise<string> {
@@ -83,11 +81,12 @@ describe('runOnboardingTransition', () => {
     expect(hasActiveTransitionLease()).toBe(false);
     expect(clearSessionAuthFlowId).toHaveBeenCalled();
     expect(clearPendingOnboardingIfMatches).toHaveBeenCalledWith('user-A', 'flow-123');
-    // Verified handoff was set and can be consumed
-    const handoff = consumeVerifiedHandoff('user-A');
-    expect(handoff).not.toBeNull();
-    expect(handoff!.userId).toBe('user-A');
-    expect(handoff!.flowId).toBe('flow-123');
+    // Lease transitioned atomically to ready_unacknowledged
+    const snapshot = getLeaseSnapshot();
+    expect(snapshot.phase).toBe('ready_unacknowledged');
+    expect(snapshot.userId).toBe('user-A');
+    expect(snapshot.flowId).toBe('flow-123');
+    expect(snapshot.cacheVerified).toBe(true);
   });
 
   it('returns error when finalize fails (ok: false)', async () => {
@@ -102,8 +101,8 @@ describe('runOnboardingTransition', () => {
     expect((result as { error: { kind: string } }).error.kind).toBe('finalize_error');
     expect(hasActiveTransitionLease()).toBe(false);
     expect(handOffFinalizedProgram).not.toHaveBeenCalled();
-    // No verified handoff on error
-    expect(consumeVerifiedHandoff('user-A')).toBeNull();
+    // No verified handoff on error — phase is idle, not ready_unacknowledged
+    expect(getLeaseSnapshot().phase).toBe('idle');
   });
 
   it('returns error when premium entitlement is missing', async () => {

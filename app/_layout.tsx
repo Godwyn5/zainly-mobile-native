@@ -16,9 +16,10 @@ import { prepareAuthenticatedLaunch } from '@/lib/prepareAuthenticatedLaunch';
 import { clearOnboardingStateForSessionExpiry } from '@/lib/pendingOnboardingPlan';
 import {
   subscribeToTransitionLease,
-  hasActiveTransitionLease,
-  consumeVerifiedHandoff,
-  clearVerifiedHandoff,
+  getLeaseSnapshot,
+  commitTransitionLease,
+  clearTransitionLease,
+  forceReleaseTransitionLease,
 } from '@/lib/transitionLease';
 import {
   acceptResultForUser,
@@ -166,19 +167,22 @@ export default function RootLayout() {
     return () => clearTimeout(timer);
   }, [fontsLoaded, ready, session]);
 
-  // ── Transition lease ──
-  // When an onboarding transition lease is active (signup/login handler is
-  // running finalize+handoff), treat the user as NOT yet authenticated so
-  // Stack.Protected keeps the (auth) group mounted and the dashboard does
-  // not appear prematurely.
-  const leaseActive = useSyncExternalStore(
+  // ── Transition lease — atomic state machine ──
+  // The snapshot contains the full handoff identity (userId, flowId,
+  // leaseId, cacheVerified). We read it synchronously during render via
+  // useSyncExternalStore so that the FIRST render after
+  // completeTransitionLease() sees both:
+  //   - lease inactive (authed can become true)
+  //   - handoff verified (canRenderStack can become true)
+  // This eliminates the beige screen that occurred when the handoff was
+  // consumed in a useEffect (which runs AFTER the first render).
+  const leaseSnapshot = useSyncExternalStore(
     subscribeToTransitionLease,
-    hasActiveTransitionLease,
-    hasActiveTransitionLease,
+    getLeaseSnapshot,
+    getLeaseSnapshot,
   );
 
-  // Track the previous lease state to detect lease release.
-  const prevLeaseActiveRef = useRef(false);
+  const leaseActive = leaseSnapshot.phase === 'active';
 
   // ── Dimension B: account preparation ──
   // Tracks whether the dashboard-critical queries for the CURRENT userId
@@ -206,37 +210,38 @@ export default function RootLayout() {
   useEffect(() => {
     if (prevUserIdRef.current !== userId) {
       handoffReadyRef.current = null;
-      clearVerifiedHandoff();
+      forceReleaseTransitionLease();
       prevUserIdRef.current = userId;
     }
   }, [userId]);
 
-  // ── Consume verified handoff when lease is released ──
-  // When the transition lease transitions from active to inactive, the
-  // signup/login handler has already populated and verified the cache.
-  // If a verified handoff exists for the current userId, we can skip
-  // the preparing state entirely — set accountPreparation directly to
-  // ready. This eliminates the white/beige screen that would otherwise
-  // appear between the signup screen and the dashboard.
-  //
-  // If no handoff exists (error path, session change, or userId mismatch),
-  // fall back to the preparing state so the preparation effect runs
-  // normally.
+  // ── Synchronous handoff matching during render ──
+  // Compute matchingReadyHandoff from the snapshot read during THIS render.
+  // This is the critical fix: the decision is made in the render body,
+  // not in a useEffect, so the FIRST render after completeTransitionLease
+  // already has canRenderStack=true and showMinimalScreen=false.
+  const matchingReadyHandoff =
+    leaseSnapshot.phase === 'ready_unacknowledged' &&
+    leaseSnapshot.userId === userId &&
+    leaseSnapshot.cacheVerified === true;
+
+  // ── Promote READY_UNACKNOWLEDGED → READY_COMMITTED → IDLE ──
+  // This effect runs AFTER the render in which matchingReadyHandoff was
+  // true. It commits the durable accountPreparation state to 'ready'
+  // and then promotes the lease to READY_COMMITTED and clears it.
+  // The durable state ensures subsequent renders stay ready even after
+  // the token is cleared.
   useEffect(() => {
-    if (prevLeaseActiveRef.current && !leaseActive && userId) {
-      const handoff = consumeVerifiedHandoff(userId);
-      if (handoff) {
-        // Cache is verified — skip preparing, go directly to ready.
-        handoffReadyRef.current = userId;
-        setAccountPreparation(createReadyState(userId));
-      } else {
-        // No valid handoff — run normal preparation.
-        handoffReadyRef.current = null;
-        setAccountPreparation(createPreparingState(userId));
+    if (leaseSnapshot.phase === 'ready_unacknowledged' && leaseSnapshot.userId === userId && userId) {
+      handoffReadyRef.current = userId;
+      setAccountPreparation(createReadyState(userId));
+      const leaseId = leaseSnapshot.leaseId;
+      if (leaseId) {
+        commitTransitionLease(leaseId);
+        clearTransitionLease(leaseId);
       }
     }
-    prevLeaseActiveRef.current = leaseActive;
-  }, [leaseActive, userId]);
+  }, [leaseSnapshot, userId]);
 
   useEffect(() => {
     if (!ready || !userId) return;
@@ -322,11 +327,20 @@ export default function RootLayout() {
   const guest = ready && (!session || leaseActive);
 
   // For authenticated users, also require account preparation.
+  // matchingReadyHandoff is computed synchronously during render from the
+  // lease snapshot. When true, it is equivalent to accountPreparation ===
+  // 'ready' for this exact render — canRenderStack is true immediately,
+  // showMinimalScreen stays false, and the dashboard mounts without any
+  // intermediate beige screen.
+  const preparationReady =
+    (accountPreparation.userId === userId && accountPreparation.status === 'ready') ||
+    matchingReadyHandoff;
+
   const canRenderStack = canRenderStackForUser(
     initialVisualReleased,
     ready,
     authed,
-    accountPreparation,
+    { userId, status: preparationReady ? 'ready' : accountPreparation.status },
     userId,
   );
 

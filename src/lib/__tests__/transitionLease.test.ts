@@ -8,9 +8,10 @@ import {
   getActiveTransitionLeaseUserId,
   setTransitionLeaseUserId,
   subscribeToTransitionLease,
-  setVerifiedHandoff,
-  consumeVerifiedHandoff,
-  clearVerifiedHandoff,
+  completeTransitionLease,
+  commitTransitionLease,
+  clearTransitionLease,
+  getLeaseSnapshot,
 } from '../transitionLease';
 
 describe('transitionLease', () => {
@@ -78,45 +79,85 @@ describe('transitionLease', () => {
   });
 });
 
-describe('verifiedHandoff', () => {
+describe('atomic transition (ACTIVE → READY_UNACKNOWLEDGED → READY_COMMITTED → IDLE)', () => {
   afterEach(() => {
     forceReleaseTransitionLease();
-    clearVerifiedHandoff();
   });
 
-  it('consumeVerifiedHandoff returns null when no handoff is set', () => {
-    expect(consumeVerifiedHandoff('user-A')).toBeNull();
+  it('completeTransitionLease atomically transitions to ready_unacknowledged', () => {
+    const leaseId = createTransitionLease('flow-123');
+    setTransitionLeaseUserId('user-A');
+
+    completeTransitionLease(leaseId, 'user-A', 'flow-123');
+
+    const snapshot = getLeaseSnapshot();
+    expect(snapshot.phase).toBe('ready_unacknowledged');
+    expect(snapshot.userId).toBe('user-A');
+    expect(snapshot.flowId).toBe('flow-123');
+    expect(snapshot.leaseId).toBe(leaseId);
+    expect(snapshot.cacheVerified).toBe(true);
+    // Lease is no longer active for routing
+    expect(hasActiveTransitionLease()).toBe(false);
   });
 
-  it('setVerifiedHandoff then consumeVerifiedHandoff returns the handoff for matching userId', () => {
-    setVerifiedHandoff('user-A', 'flow-123');
-    const handoff = consumeVerifiedHandoff('user-A');
-    expect(handoff).not.toBeNull();
-    expect(handoff!.userId).toBe('user-A');
-    expect(handoff!.flowId).toBe('flow-123');
-    expect(handoff!.handoffId).toContain('flow-123');
+  it('completeTransitionLease is a single notification', () => {
+    const leaseId = createTransitionLease('flow-123');
+    const listener = jest.fn();
+    subscribeToTransitionLease(listener);
+    listener.mockClear();
+
+    completeTransitionLease(leaseId, 'user-A', 'flow-123');
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 
-  it('consumeVerifiedHandoff is atomic — second call returns null', () => {
-    setVerifiedHandoff('user-A', 'flow-123');
-    consumeVerifiedHandoff('user-A');
-    expect(consumeVerifiedHandoff('user-A')).toBeNull();
+  it('completeTransitionLease does nothing if leaseId does not match', () => {
+    createTransitionLease('flow-123');
+    completeTransitionLease('wrong-id', 'user-A', 'flow-123');
+    expect(getLeaseSnapshot().phase).toBe('active');
   });
 
-  it('consumeVerifiedHandoff returns null when userId does not match', () => {
-    setVerifiedHandoff('user-A', 'flow-123');
-    expect(consumeVerifiedHandoff('user-B')).toBeNull();
+  it('completeTransitionLease does nothing if phase is not active', () => {
+    const leaseId = createTransitionLease('flow-123');
+    releaseTransitionLease(leaseId);
+    completeTransitionLease(leaseId, 'user-A', 'flow-123');
+    expect(getLeaseSnapshot().phase).toBe('idle');
   });
 
-  it('consumeVerifiedHandoff clears handoff even on userId mismatch (no stale bypass)', () => {
-    setVerifiedHandoff('user-A', 'flow-123');
-    consumeVerifiedHandoff('user-B');
-    expect(consumeVerifiedHandoff('user-A')).toBeNull();
+  it('commitTransitionLease promotes to ready_committed', () => {
+    const leaseId = createTransitionLease('flow-123');
+    completeTransitionLease(leaseId, 'user-A', 'flow-123');
+    commitTransitionLease(leaseId);
+    expect(getLeaseSnapshot().phase).toBe('ready_committed');
   });
 
-  it('clearVerifiedHandoff clears any stored handoff', () => {
-    setVerifiedHandoff('user-A', 'flow-123');
-    clearVerifiedHandoff();
-    expect(consumeVerifiedHandoff('user-A')).toBeNull();
+  it('clearTransitionLease transitions to idle', () => {
+    const leaseId = createTransitionLease('flow-123');
+    completeTransitionLease(leaseId, 'user-A', 'flow-123');
+    commitTransitionLease(leaseId);
+    clearTransitionLease(leaseId);
+    expect(getLeaseSnapshot().phase).toBe('idle');
+  });
+
+  it('releaseTransitionLease on error path goes directly to idle (no ready_unacknowledged)', () => {
+    const leaseId = createTransitionLease('flow-123');
+    releaseTransitionLease(leaseId);
+    expect(getLeaseSnapshot().phase).toBe('idle');
+    expect(getLeaseSnapshot().cacheVerified).toBe(false);
+  });
+
+  it('snapshot userId mismatch — matchingReadyHandoff would be false', () => {
+    const leaseId = createTransitionLease('flow-123');
+    completeTransitionLease(leaseId, 'user-A', 'flow-123');
+    const snapshot = getLeaseSnapshot();
+    // If current userId is 'user-B', the snapshot userId 'user-A' does not match
+    expect(snapshot.userId).toBe('user-A');
+    expect(snapshot.userId === 'user-B').toBe(false);
+  });
+
+  it('forceReleaseTransitionLease clears everything regardless of phase', () => {
+    const leaseId = createTransitionLease('flow-123');
+    completeTransitionLease(leaseId, 'user-A', 'flow-123');
+    forceReleaseTransitionLease();
+    expect(getLeaseSnapshot().phase).toBe('idle');
   });
 });

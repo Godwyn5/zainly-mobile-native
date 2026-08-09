@@ -1,102 +1,193 @@
-// ─── Transition lease — prevents route group swap during onboarding finalization ──
-// When the user taps "Créer mon compte" or "Se connecter" from an onboarding-v2
-// parcours, a transition lease is created BEFORE supabase.auth.signUp/signIn.
-// While the lease is active, _layout.tsx treats the user as still
-// unauthenticated — Stack.Protected does NOT swap to the (app) group, the
-// signup/login screen stays mounted, and prepareAuthenticatedLaunch is skipped.
+// ─── Transition lease — atomic state machine for onboarding finalization ────
 //
-// The handler then runs finalize → handoff → clear → cache verification
-// synchronously after signUp returns, and releases the lease only when the
-// cache is confirmed populated. The route group swap then happens naturally,
-// and the dashboard mounts with canonical data on its first frame.
+// State machine:
+//   IDLE → ACTIVE → READY_UNACKNOWLEDGED → READY_COMMITTED → IDLE
 //
-// On any failure (finalize, handoff, premium gate, session change), the lease
-// is released but the handler sets an error state on the signup/login screen
-// itself — the dashboard never mounts with incomplete data.
+// ACTIVE: signup/login screen is mounted, finalize+handoff is running.
+//   _layout.tsx treats user as unauthenticated (guest=true).
+//
+// READY_UNACKNOWLEDGED: finalize+handoff+clear+cache-verification all succeeded.
+//   The lease is no longer active for routing, AND the verified handoff
+//   identity is available in the SAME snapshot. _layout.tsx reads the
+//   snapshot synchronously during render and computes matchingReadyHandoff.
+//   If it matches, canRenderStack=true and showMinimalScreen=false for that
+//   exact render — no beige screen.
+//
+// READY_COMMITTED: _layout.tsx has committed the durable accountPreparation
+//   state to 'ready' via setState. The handoff token is no longer needed.
+//
+// IDLE: token cleared, no observable side effects.
 
-interface ActiveLease {
-  flowId: string;
-  leaseId: string;
+export type LeasePhase = 'idle' | 'active' | 'ready_unacknowledged' | 'ready_committed';
+
+export interface LeaseSnapshot {
+  phase: LeasePhase;
+  leaseId: string | null;
+  flowId: string | null;
   userId: string | null;
+  cacheVerified: boolean;
 }
 
 export interface VerifiedHandoff {
   userId: string;
   flowId: string;
-  handoffId: string;
+  leaseId: string;
+  cacheVerified: boolean;
 }
 
-let _activeLease: ActiveLease | null = null;
-let _verifiedHandoff: VerifiedHandoff | null = null;
+const IDLE_SNAPSHOT: LeaseSnapshot = {
+  phase: 'idle',
+  leaseId: null,
+  flowId: null,
+  userId: null,
+  cacheVerified: false,
+};
+
+let _snapshot: LeaseSnapshot = IDLE_SNAPSHOT;
 const _subscribers = new Set<() => void>();
 
 function notify(): void {
   _subscribers.forEach((fn) => fn());
 }
 
+function setSnapshot(next: LeaseSnapshot): void {
+  _snapshot = next;
+  notify();
+}
+
+// ── Public API ─────────────────────────────────────────────────────────────
+
 /**
  * Creates a transition lease identified by the onboarding flowId.
- * Returns a unique leaseId that must be passed to releaseTransitionLease.
+ * Returns a unique leaseId that must be passed to releaseTransitionLease
+ * and completeTransitionLease.
  * Throws if a lease is already active (double-tap guard).
  */
 export function createTransitionLease(flowId: string): string {
-  if (_activeLease) {
+  if (_snapshot.phase === 'active' || _snapshot.phase === 'ready_unacknowledged') {
     throw new Error('A transition lease is already active');
   }
   const leaseId = `${flowId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  _activeLease = { flowId, leaseId, userId: null };
-  notify();
+  setSnapshot({
+    phase: 'active',
+    leaseId,
+    flowId,
+    userId: null,
+    cacheVerified: false,
+  });
   return leaseId;
 }
 
 /**
- * Releases the transition lease. Only releases if the leaseId matches
- * the active lease (prevents stale releases from a superseded flow).
+ * Releases the transition lease WITHOUT a verified handoff.
+ * Used on error paths (finalize failure, handoff failure, etc.).
+ * Only releases if the leaseId matches the active lease.
+ * Transitions directly to IDLE — no READY_UNACKNOWLEDGED state.
  */
 export function releaseTransitionLease(leaseId: string): void {
-  if (_activeLease?.leaseId === leaseId) {
-    _activeLease = null;
-    notify();
+  if (_snapshot.leaseId === leaseId) {
+    setSnapshot(IDLE_SNAPSHOT);
   }
 }
 
 /**
- * Force-releases the active lease (e.g. on unmount cleanup).
+ * Atomically transitions the lease from ACTIVE to READY_UNACKNOWLEDGED.
+ * This is the single mutation+notification that makes both:
+ *   - the lease inactive for routing (authed can become true)
+ *   - the verified handoff available in the same render
+ *
+ * Must be called ONLY after cache verification succeeds.
+ * Requires the leaseId to match.
+ */
+export function completeTransitionLease(
+  leaseId: string,
+  userId: string,
+  flowId: string,
+): void {
+  if (_snapshot.leaseId !== leaseId) return;
+  if (_snapshot.phase !== 'active') return;
+  setSnapshot({
+    phase: 'ready_unacknowledged',
+    leaseId,
+    flowId,
+    userId,
+    cacheVerified: true,
+  });
+}
+
+/**
+ * Promotes from READY_UNACKNOWLEDGED to READY_COMMITTED.
+ * Called by _layout.tsx AFTER it has committed the durable
+ * accountPreparation state to 'ready'. This prevents the handoff
+ * token from being consumed before the durable state is committed.
+ */
+export function commitTransitionLease(leaseId: string): void {
+  if (_snapshot.leaseId !== leaseId) return;
+  if (_snapshot.phase !== 'ready_unacknowledged') return;
+  setSnapshot({
+    ..._snapshot,
+    phase: 'ready_committed',
+  });
+}
+
+/**
+ * Clears the token after the durable state is committed.
+ * Transitions from READY_COMMITTED to IDLE.
+ */
+export function clearTransitionLease(leaseId: string): void {
+  if (_snapshot.leaseId !== leaseId) return;
+  setSnapshot(IDLE_SNAPSHOT);
+}
+
+/**
+ * Force-clears the lease to IDLE regardless of current state.
+ * Used on unmount cleanup, logout, session change.
  */
 export function forceReleaseTransitionLease(): void {
-  if (_activeLease) {
-    _activeLease = null;
-    notify();
+  if (_snapshot.phase !== 'idle') {
+    setSnapshot(IDLE_SNAPSHOT);
   }
 }
 
+// ── Synchronous snapshot readers (for useSyncExternalStore) ────────────────
+
 /**
- * Returns true if a transition lease is currently active.
+ * Returns true if a transition lease is currently active (phase=active).
+ * READY_UNACKNOWLEDGED is NOT active — routing can proceed.
  */
 export function hasActiveTransitionLease(): boolean {
-  return _activeLease !== null;
+  return _snapshot.phase === 'active';
 }
 
 /**
- * Returns the flowId of the active lease, or null if no lease is active.
+ * Returns the current snapshot. Used by useSyncExternalStore.
+ * The snapshot contains the full handoff identity so _layout.tsx
+ * can compute matchingReadyHandoff synchronously during render.
+ */
+export function getLeaseSnapshot(): LeaseSnapshot {
+  return _snapshot;
+}
+
+/**
+ * Returns the flowId of the active lease, or null.
  */
 export function getActiveTransitionLeaseFlowId(): string | null {
-  return _activeLease?.flowId ?? null;
+  return _snapshot.phase === 'active' ? _snapshot.flowId : null;
 }
 
 /**
- * Returns the userId of the active lease, or null if not yet set.
+ * Returns the userId of the active lease, or null.
  */
 export function getActiveTransitionLeaseUserId(): string | null {
-  return _activeLease?.userId ?? null;
+  return _snapshot.phase === 'active' ? _snapshot.userId : null;
 }
 
 /**
  * Sets the userId on the active lease (after signUp returns with a session).
  */
 export function setTransitionLeaseUserId(userId: string): void {
-  if (_activeLease) {
-    _activeLease = { ..._activeLease, userId };
+  if (_snapshot.phase === 'active') {
+    setSnapshot({ ..._snapshot, userId });
   }
 }
 
@@ -111,42 +202,29 @@ export function subscribeToTransitionLease(fn: () => void): () => void {
   };
 }
 
-/**
- * Stores a verified handoff — called by runOnboardingTransition AFTER
- * cache verification succeeds, BEFORE releasing the lease.
- * The handoff proves that plan+progress are canonically cached for this
- * exact userId/flowId, so _layout.tsx can skip the preparing state.
- */
+// ── Legacy handoff API (deprecated, replaced by snapshot) ──────────────────
+// These are kept for backward compatibility with tests but should not
+// be used in new code. The snapshot-based API is the source of truth.
+
 export function setVerifiedHandoff(userId: string, flowId: string): void {
-  _verifiedHandoff = {
-    userId,
-    flowId,
-    handoffId: `${flowId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-  };
+  // No-op in the new state machine — handoff is part of the snapshot.
+  // Kept for backward compatibility.
+  void userId;
+  void flowId;
 }
 
-/**
- * Atomically reads and clears the verified handoff.
- * Returns the handoff if it exists and matches the given userId.
- * Returns null if no handoff exists or the userId doesn't match
- * (prevents cross-account bypass).
- *
- * Called by _layout.tsx when the lease is released.
- */
 export function consumeVerifiedHandoff(userId: string): VerifiedHandoff | null {
-  if (_verifiedHandoff && _verifiedHandoff.userId === userId) {
-    const handoff = _verifiedHandoff;
-    _verifiedHandoff = null;
-    return handoff;
+  if (_snapshot.phase === 'ready_unacknowledged' && _snapshot.userId === userId) {
+    return {
+      userId: _snapshot.userId,
+      flowId: _snapshot.flowId!,
+      leaseId: _snapshot.leaseId!,
+      cacheVerified: _snapshot.cacheVerified,
+    };
   }
-  _verifiedHandoff = null;
   return null;
 }
 
-/**
- * Clears any stored handoff without returning it.
- * Called on logout, session change, or force-release.
- */
 export function clearVerifiedHandoff(): void {
-  _verifiedHandoff = null;
+  // No-op in the new state machine — clearing is done via clearTransitionLease.
 }
