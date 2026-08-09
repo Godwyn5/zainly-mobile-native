@@ -15,7 +15,8 @@ import {
   PENDING_SIGNUP_USER_ID,
 } from '@/lib/onboardingPlanValidation';
 import { savePendingOnboardingPlan, saveActiveOnboardingAuthFlow, setSessionAuthFlowId } from '@/lib/pendingOnboardingPlan';
-import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { orchestrateAuthedFinalize } from '@/lib/programSummaryOrchestration';
+import { createSubmissionLock } from '@/lib/submissionLock';
 import {
   TOTAL_ONBOARDING_PHASES, phaseStepNumber, PROGRAM_SUMMARY_BACK_TARGET,
 } from '@/lib/onboardingQuestionnaire';
@@ -55,7 +56,7 @@ export default function OnboardingProgramSummaryScreen() {
   const [knownCount, setKnownCount] = useState(0);
   const [saveError, setSaveError] = useState<string | null>(null);
   const mountedRef = useRef(true);
-  const isSubmittingRef = useRef(false);
+  const submissionLock = useRef(createSubmissionLock());
 
   useEffect(() => {
     AccessibilityInfo.isReduceMotionEnabled()
@@ -118,8 +119,7 @@ export default function OnboardingProgramSummaryScreen() {
   }
 
   async function handleContinue() {
-    if (isSubmittingRef.current) return;
-    isSubmittingRef.current = true;
+    if (!submissionLock.current.acquire()) return;
     setSaveError(null);
     hapticLight();
 
@@ -140,29 +140,38 @@ export default function OnboardingProgramSummaryScreen() {
       // The premium gate is still applied for 'unlimited' experience.
       const authedUserId = session?.user?.id;
       if (authedUserId) {
-        const outcome = await finalizeOnboardingV2PlanWithPremiumGate(authedUserId, '');
-        if (outcome.status === 'premium_sync_failed') {
-          setSaveError('Impossible de vérifier ton abonnement. Réessaie.');
-          return;
+        const result = await orchestrateAuthedFinalize(
+          queryClient,
+          authedUserId,
+          {
+            getSessionUserId: () => useAuthStore.getState().session?.user?.id,
+            invalidateNonCritical: (qc, uid) => {
+              qc.invalidateQueries({ queryKey: ['dueReviews', uid] });
+              qc.invalidateQueries({ queryKey: ['profile', uid] });
+              qc.invalidateQueries({ queryKey: ['pendingOnboarding', uid] });
+            },
+          },
+        );
+
+        switch (result.status) {
+          case 'premium_sync_failed':
+            setSaveError('Impossible de vérifier ton abonnement. Réessaie.');
+            return;
+          case 'premium_entitlement_missing':
+            setSaveError("Ton abonnement Zainly+ n'a pas pu être confirmé. Réessaie ou restaure ton achat.");
+            return;
+          case 'finalize_failed':
+            setSaveError(result.message ?? 'Impossible de créer ton programme. Réessaie.');
+            return;
+          case 'session_changed':
+            return;
+          case 'handoff_failed':
+            setSaveError("Ton programme est enregistré mais n'a pas pu être chargé. Réessaie.");
+            return;
+          case 'navigate':
+            router.replace('/(app)/(tabs)');
+            return;
         }
-        if (outcome.status === 'premium_entitlement_missing') {
-          setSaveError('Ton abonnement Zainly+ n’a pas pu être confirmé. Réessaie ou restaure ton achat.');
-          return;
-        }
-        if (!outcome.finalize.ok) {
-          setSaveError(outcome.finalize.message ?? 'Impossible de créer ton programme. Réessaie.');
-          return;
-        }
-        // Success — invalidate dashboard queries and navigate.
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ['plan', authedUserId] }),
-          queryClient.invalidateQueries({ queryKey: ['progress', authedUserId] }),
-          queryClient.invalidateQueries({ queryKey: ['dueReviews', authedUserId] }),
-          queryClient.invalidateQueries({ queryKey: ['profile', authedUserId] }),
-          queryClient.invalidateQueries({ queryKey: ['pendingOnboarding', authedUserId] }),
-        ]);
-        router.replace('/(app)/(tabs)');
-        return;
       }
 
       // ── Pre-auth path — save pending plan, navigate to signup ──
@@ -201,7 +210,7 @@ export default function OnboardingProgramSummaryScreen() {
       // claiming a pending payload.
       router.push(`/(auth)/signup-methods?context=onboarding&flowId=${encodeURIComponent(saved.flowId)}`);
     } finally {
-      isSubmittingRef.current = false;
+      submissionLock.current.release();
     }
   }
 

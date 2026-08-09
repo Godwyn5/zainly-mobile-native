@@ -19,7 +19,7 @@
 
 import { computePlan, isPlanError } from '@/core/planEngine';
 import { upsertPlan, fetchPlan } from '@/db/plans';
-import { upsertProgress } from '@/db/progress';
+import { fetchProgress, resetProgressForNewPlan } from '@/db/progress';
 import { upsertProfileFirstName } from '@/db/profiles';
 import { readOnboardingDraft, clearOnboardingDraft } from './onboardingDraft';
 import {
@@ -27,11 +27,8 @@ import {
 } from './onboardingPlanValidation';
 import {
   readPendingOnboardingPlan,
-  clearPendingOnboardingPlan,
   claimPendingOnboardingPlanForUser,
   readOwnedPendingOnboardingPlanForUser,
-  clearAuthHandoff,
-  clearActiveOnboardingAuthFlow,
 } from './pendingOnboardingPlan';
 import { scheduleDailyHifzReminder } from '@/notifications/scheduler';
 import { saveNotificationSettings } from '@/notifications/storage';
@@ -128,32 +125,23 @@ export async function finalizeOnboardingV2PlanWithPremiumGate(
 }
 
 async function runFinalize(userId: string, authFlowId: string): Promise<FinalizeOnboardingV2Result> {
-  // ── Plan-already-exists guard ──────────────────────────────────────────
-  // The authoritative source of truth for "has a plan" is the Supabase
-  // plans table (fetched via fetchPlan, same as usePlan on the dashboard).
-  // A deep link or direct navigation to program-summary must never be able
-  // to replace or recreate an already-configured account's plan. This guard
-  // runs BEFORE any draft or pending payload resolution — no source data is
-  // even read if the user already has a plan.
+  // ── Plan/progress state guard ──────────────────────────────────────────
+  // The authoritative source of truth for "has a plan" / "has progress" is
+  // the Supabase plans/progress tables (fetched via fetchPlan/fetchProgress,
+  // same as usePlan/useProgress on the dashboard) — never the draft or
+  // pending payload. This guard runs BEFORE any draft/pending resolution —
+  // no source data is even read if the user already has a plan.
+  //
+  // Unlike the original guard (plan existence only), this also verifies
+  // progress: a plan with no matching progress row is an INCOMPLETE pair
+  // (e.g. a prior finalize whose upsertPlan succeeded but the progress
+  // write failed) and must be repaired here, never silently reported as
+  // already-finalized — a bare "plan_already_exists" would leave the
+  // dashboard permanently unable to render (getTodayProgramme requires
+  // both plan and progress).
+  let existingPlan: Awaited<ReturnType<typeof fetchPlan>>;
   try {
-    const existingPlan = await fetchPlan(userId);
-    if (existingPlan) {
-      // Always clear the in-memory draft — it has no ownerUserId and cannot
-      // belong to another account.
-      await clearOnboardingDraft();
-
-      // Only clear durable pending data if it belongs to this user or is
-      // unclaimed (pre-auth). A pending payload owned by a different user
-      // must survive — it is not ours to clear.
-      const pending = await readPendingOnboardingPlan();
-      if (pending && (!pending.ownerUserId || pending.ownerUserId === userId)) {
-        await clearPendingOnboardingPlan();
-        await clearAuthHandoff();
-        await clearActiveOnboardingAuthFlow();
-      }
-
-      return { ok: true, reason: 'plan_already_exists' };
-    }
+    existingPlan = await fetchPlan(userId);
   } catch {
     // If the plan check itself fails (network error, Supabase down), we
     // must NOT proceed with finalization — we can't safely determine
@@ -164,6 +152,77 @@ async function runFinalize(userId: string, authFlowId: string): Promise<Finalize
       reason: 'persist_error',
       message: 'Impossible de vérifier l\'existence d\'un programme. Réessaie.',
     };
+  }
+
+  if (existingPlan) {
+    let existingProgress: Awaited<ReturnType<typeof fetchProgress>>;
+    try {
+      existingProgress = await fetchProgress(userId);
+    } catch {
+      // Plan is confirmed present but progress can't be verified — never
+      // guess. Returning persist_error (instead of plan_already_exists)
+      // keeps any pending source alive for a retry that CAN confirm the
+      // pair, rather than reporting a false success.
+      return {
+        ok: false,
+        reason: 'persist_error',
+        message: 'Impossible de vérifier ta progression. Réessaie.',
+      };
+    }
+
+    if (!existingProgress) {
+      // Repair: a plan exists with no progress row — reconstruct the
+      // initial progress from the persisted plan's OWN canonical starting
+      // fields, never from the draft/pending source (which may be stale or
+      // belong to an unrelated attempt). This mapping is not a guess: it
+      // mirrors exactly how computePlan() derives progressPayload from
+      // planPayload in src/core/planEngine.ts —
+      //   current_surah = surah_start, current_ayah = start_ayah - 1,
+      //   ayah_per_day = ayah_per_day.
+      try {
+        await resetProgressForNewPlan(userId, {
+          current_surah: existingPlan.surah_start,
+          current_ayah:  existingPlan.start_ayah - 1,
+          ayah_per_day:  existingPlan.ayah_per_day,
+        });
+      } catch (err) {
+        return {
+          ok: false,
+          reason: 'persist_error',
+          message: err instanceof Error ? err.message : 'Erreur de réparation de la progression.',
+        };
+      }
+
+      // Confirm the pair is now complete before treating this as a durable
+      // success — a read failure here does not corrupt the just-repaired
+      // progress, it only defers clearing any pending source to a retry
+      // that can actually confirm the pair.
+      const confirmProgress = await fetchProgress(userId).catch(() => null);
+      if (!confirmProgress) {
+        return {
+          ok: false,
+          reason: 'persist_error',
+          message: 'Impossible de vérifier ta progression après réparation. Réessaie.',
+        };
+      }
+    }
+
+    // Plan + progress are both confirmed present (already, or just
+    // repaired above) — never recreate or reinitialize a complete,
+    // legitimate pair.
+    // Always clear the in-memory draft — it has no ownerUserId and cannot
+    // belong to another account.
+    await clearOnboardingDraft();
+
+    // IMPORTANT: the durable pending payload is NOT cleared here. It is the
+    // transaction marker for the entire onboarding → dashboard handoff.
+    // The caller (orchestrateAuthedFinalize / useOnboardingV2AuthFinalize)
+    // clears it only after handOffFinalizedProgram succeeds. If the handoff
+    // fails, the pending survives so a retry can detect the existing pair
+    // (idempotent guard above) and re-attempt the handoff without losing
+    // the retry source.
+
+    return { ok: true, reason: 'plan_already_exists' };
   }
 
   const draft = await readOnboardingDraft();
@@ -211,7 +270,13 @@ async function runFinalize(userId: string, authFlowId: string): Promise<Finalize
 
   try {
     await upsertPlan(userId, planResult.planPayload);
-    await upsertProgress(userId, planResult.progressPayload);
+    // A brand-new plan is being created for this user — any progress row
+    // found here necessarily predates it (this branch only runs when
+    // fetchPlan(userId) returned null above), so it can never be a
+    // legitimate continuation. Always reset to the new plan's own initial
+    // position rather than upsertProgress()'s preserve-on-update semantics
+    // (which exist for real session-completion callers, not onboarding).
+    await resetProgressForNewPlan(userId, planResult.progressPayload);
   } catch (err) {
     // Real Supabase failure — nothing is cleared, so the exact same source
     // (draft or pending payload) can be retried on the next login attempt.
@@ -219,6 +284,22 @@ async function runFinalize(userId: string, authFlowId: string): Promise<Finalize
       ok: false,
       reason: 'persist_error',
       message: err instanceof Error ? err.message : 'Erreur de sauvegarde.',
+    };
+  }
+
+  // Confirm the pair actually exists before treating this as durable and
+  // clearing any pre-auth source — a read failure here does NOT undo or
+  // corrupt the pair just persisted above, it only defers clearing the
+  // pending payload to a retry that can confirm it.
+  const [confirmPlan, confirmProgress] = await Promise.all([
+    fetchPlan(userId).catch(() => null),
+    fetchProgress(userId).catch(() => null),
+  ]);
+  if (!confirmPlan || !confirmProgress) {
+    return {
+      ok: false,
+      reason: 'persist_error',
+      message: 'Impossible de vérifier ton programme après création. Réessaie.',
     };
   }
 
@@ -255,15 +336,12 @@ async function runFinalize(userId: string, authFlowId: string): Promise<Finalize
   }
 
   // Only reached after plan + progress are both durably persisted — clear
-  // every pre-auth source now, never before. Both are cleared unconditionally
-  // (not just the one that was actually used): a draft-sourced finalization
-  // may still coexist with a pending payload saved earlier in the same
-  // session (e.g. the user went back from signup to program-summary and
-  // tapped "Commencer mon Hifz" again) — it must never linger for a later,
-  // unrelated login.
+  // the in-memory draft (no ownerUserId, cannot belong to another account).
+  // The durable pending payload is NOT cleared here — it is the transaction
+  // marker for the entire onboarding → dashboard handoff. The caller
+  // (orchestrateAuthedFinalize / useOnboardingV2AuthFinalize) clears it
+  // only after handOffFinalizedProgram succeeds, so a handoff failure
+  // leaves the pending intact for retry.
   await clearOnboardingDraft();
-  await clearPendingOnboardingPlan();
-  await clearAuthHandoff();
-  await clearActiveOnboardingAuthFlow();
   return { ok: true, reason: 'created' };
 }

@@ -201,12 +201,15 @@ export default function TodayScreen() {
   const finalize = useOnboardingV2AuthFinalize();
   const autoAttemptRef = useRef(false); // Ensure exactly one auto-attempt per session
 
-  // Auto-trigger finalization once when: authed, no plan, valid pending,
-  // not already running, and we haven't already attempted this session.
+  // Auto-trigger finalization once when: authed, valid pending, not already
+  // running, and we haven't already attempted this session. Fires whether or
+  // not the pair is complete: if the pair is already complete, the idempotent
+  // guard in finalizeOnboardingV2Plan detects it without recreating anything,
+  // the handoff succeeds, and the residual pending is cleaned up. If the pair
+  // is incomplete, the full finalize → handoff → clear sequence runs.
   useEffect(() => {
     if (
       userId &&
-      hasNoPlan &&
       pendingOnboardingV2.hasPending &&
       finalize.status === 'idle' &&
       !autoAttemptRef.current
@@ -214,7 +217,7 @@ export default function TodayScreen() {
       autoAttemptRef.current = true;
       finalize.runFinalize(userId);
     }
-  }, [userId, hasNoPlan, pendingOnboardingV2.hasPending, finalize.status, finalize.runFinalize]);
+  }, [userId, pendingOnboardingV2.hasPending, finalize.status, finalize.runFinalize]);
 
   // True while there is no plan yet AND either the pending-payload check
   // hasn't resolved, or it found a still-valid one, OR the finalize hook

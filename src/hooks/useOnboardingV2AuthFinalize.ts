@@ -14,31 +14,32 @@ import { restoreRevenueCatPurchases, hasRevenueCatEntitlement } from '@/lib/reve
 import {
   finalizeOnboardingV2PlanWithPremiumGate, FinalizeOnboardingV2Result,
 } from '@/lib/onboardingFinalize';
-import { getSessionAuthFlowId, clearSessionAuthFlowId } from '@/lib/pendingOnboardingPlan';
+import {
+  getSessionAuthFlowId, clearSessionAuthFlowId, clearPendingOnboardingForUser,
+} from '@/lib/pendingOnboardingPlan';
+import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 
 // ─── Dashboard queries that decide "has a plan" / "no plan" state ─────────
-// AuthLayout (app/(auth)/_layout.tsx) redirects into the dashboard the
-// instant a Supabase session appears (via the global onAuthStateChange
-// listener in app/_layout.tsx) — independently of, and typically BEFORE,
-// this finalize call finishes persisting the plan/progress rows. If the
-// dashboard's usePlan/useProgress/useDueReviews/useProfile queries fire
-// during that race, they cache an empty "no plan yet" result under their
-// staleTime (up to 5 minutes for plan/progress/dueReviews) — the exact
-// same queryClient instance survives the subsequent router.replace below,
-// so without an explicit invalidation the dashboard would keep showing
-// "Créer mon programme" until a full app restart resets the cache.
-// Invalidating here (right after a successful finalize, still inside this
-// same async call) refetches any already-mounted dashboard query
-// immediately, and marks not-yet-mounted ones stale so their first mount
-// fetches fresh data — never a setTimeout, never a forced reload.
-function invalidateDashboardQueries(queryClient: ReturnType<typeof useQueryClient>, userId: string) {
-  return Promise.all([
-    queryClient.invalidateQueries({ queryKey: ['plan', userId] }),
-    queryClient.invalidateQueries({ queryKey: ['progress', userId] }),
-    queryClient.invalidateQueries({ queryKey: ['dueReviews', userId] }),
-    queryClient.invalidateQueries({ queryKey: ['profile', userId] }),
-    queryClient.invalidateQueries({ queryKey: ['pendingOnboarding', userId] }),
-  ]);
+// This hook is the dashboard's RECOVERY path: the dashboard may already be
+// mounted (auto-triggered by its own useEffect — see
+// app/(app)/(tabs)/index.tsx) when runFinalize() below resolves. Its
+// usePlan/useProgress queries may have cached an empty "no plan yet" result
+// under their staleTime (up to 5 minutes) from the boot-time prefetch. A
+// bare invalidateQueries() only marks that cache stale — it does not
+// guarantee the real fetchPlan/fetchProgress queryFn actually reruns before
+// the next render (see onboardingDashboardHandoff.ts for why). Using the
+// same canonical handoff as the direct (already-authenticated) finalize
+// path in program-summary.tsx guarantees plan/progress are non-null,
+// canonical rows in cache before this hook reports 'success' — never a
+// setTimeout, never a forced reload, never two different cache-priming
+// implementations for the same problem.
+function primeNonCriticalDashboardCaches(queryClient: ReturnType<typeof useQueryClient>, userId: string) {
+  // Best-effort, non-blocking — these don't affect the dashboard's
+  // first-frame hasNoPlan check (see onboardingDashboardHandoff.ts),
+  // unlike plan/progress which go through handOffFinalizedProgram above.
+  queryClient.invalidateQueries({ queryKey: ['dueReviews', userId] });
+  queryClient.invalidateQueries({ queryKey: ['profile', userId] });
+  queryClient.invalidateQueries({ queryKey: ['pendingOnboarding', userId] });
 }
 
 export type PremiumGateIssueKind = 'sync_error' | 'entitlement_missing';
@@ -126,7 +127,31 @@ export function useOnboardingV2AuthFinalize(): UseOnboardingV2AuthFinalizeResult
       setPremiumGateIssue(null);
       if (outcome.finalize.ok) {
         clearSessionAuthFlowId();
-        await invalidateDashboardQueries(queryClient, userId);
+
+        // Canonical handoff — see onboardingDashboardHandoff.ts. A handoff
+        // failure here (e.g. transient network error re-reading the rows
+        // this same finalize() call just durably persisted) reports
+        // status: 'error' — the dashboard's EXISTING retry card (unchanged
+        // UI) lets the user retry: a retried runFinalize() will find the
+        // plan/progress pair already complete (see onboardingFinalize.ts's
+        // own guard) and simply redo the handoff, without recreating
+        // anything.
+        const handoff = await handOffFinalizedProgram(queryClient, userId);
+        if (handoff.status === 'error') {
+          setStatus('error');
+          setLastError({
+            reason: 'handoff_failed',
+            message: 'Ton programme est enregistré mais n’a pas pu être chargé. Réessaie.',
+          });
+          return outcome.finalize;
+        }
+
+        // Handoff succeeded — now safe to clear the pending payload for this
+        // user. It was the transaction marker: the pair is durable in Supabase
+        // and canonical in the cache. Never clears another user's pending.
+        await clearPendingOnboardingForUser(userId);
+
+        primeNonCriticalDashboardCaches(queryClient, userId);
         setStatus('success');
       } else {
         setStatus('error');

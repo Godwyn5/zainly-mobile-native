@@ -42,11 +42,22 @@ jest.mock('@react-native-async-storage/async-storage', () => {
 // ── Mock Supabase plans table ──────────────────────────────────────────────
 // Simulates the plans table: a Map<userId, planRow>
 // Must be prefixed with `mock` to be allowed in jest.mock factory.
-const mockPlansTable = new Map<string, { id: string; user_id: string }>();
+// surah_start/start_ayah/ayah_per_day are seeded on every plan row so the
+// progress-repair path (onboardingFinalize.ts) has real canonical fields to
+// reconstruct progress from, exactly like a real Supabase row would.
+const mockPlansTable = new Map<string, {
+  id: string; user_id: string;
+  surah_start: number; start_ayah: number; ayah_per_day: number;
+}>();
 
 jest.mock('@/db/plans', () => ({
-  upsertPlan: jest.fn(async (userId: string, _payload: unknown) => {
-    mockPlansTable.set(userId, { id: `plan-${userId}`, user_id: userId });
+  upsertPlan: jest.fn(async (userId: string, payload: any) => {
+    mockPlansTable.set(userId, {
+      id: `plan-${userId}`, user_id: userId,
+      surah_start: payload?.surah_start ?? 1,
+      start_ayah: payload?.start_ayah ?? 1,
+      ayah_per_day: payload?.ayah_per_day ?? 2,
+    });
   }),
   fetchPlan: jest.fn(async (userId: string) => {
     return mockPlansTable.get(userId) ?? null;
@@ -54,8 +65,27 @@ jest.mock('@/db/plans', () => ({
 }));
 
 // ── Mock Supabase progress table ───────────────────────────────────────────
+// Simulates the progress table: a Map<userId, progressRow>.
+const mockProgressTable = new Map<string, {
+  id: string; user_id: string;
+  current_surah: number; current_ayah: number; ayah_per_day: number;
+  streak: number; total_memorized: number; last_session_date: string | null;
+}>();
+
 jest.mock('@/db/progress', () => ({
   upsertProgress: jest.fn(async (_userId: string, _payload: unknown) => {}),
+  fetchProgress: jest.fn(async (userId: string) => {
+    return mockProgressTable.get(userId) ?? null;
+  }),
+  resetProgressForNewPlan: jest.fn(async (userId: string, payload: any) => {
+    mockProgressTable.set(userId, {
+      id: `progress-${userId}`, user_id: userId,
+      current_surah: payload.current_surah,
+      current_ayah: payload.current_ayah,
+      ayah_per_day: payload.ayah_per_day,
+      streak: 0, total_memorized: 0, last_session_date: null,
+    });
+  }),
 }));
 
 // ── Mock profiles ──────────────────────────────────────────────────────────
@@ -100,8 +130,10 @@ import {
   claimPendingOnboardingPlanForUser,
   saveActiveOnboardingAuthFlow,
   setSessionAuthFlowId,
+  clearPendingOnboardingForUser,
 } from '../pendingOnboardingPlan';
 import { fetchPlan, upsertPlan } from '@/db/plans';
+import { fetchProgress, resetProgressForNewPlan } from '@/db/progress';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const USER_A = 'user-aaa-111';
@@ -123,19 +155,27 @@ async function seedValidDraft() {
 beforeEach(() => {
   // Reset all state
   mockPlansTable.clear();
+  mockProgressTable.clear();
   (AsyncStorage.clear as jest.Mock)();
   clearOnboardingDraft();
   // Reset mock call tracking
   (fetchPlan as jest.Mock).mockClear();
   (upsertPlan as jest.Mock).mockClear();
+  (fetchProgress as jest.Mock).mockClear();
+  (resetProgressForNewPlan as jest.Mock).mockClear();
 });
 
 // ─── 1. Plan-already-exists guard ──────────────────────────────────────────
 
 describe('Plan-already-exists guard', () => {
-  it('returns ok with reason=plan_already_exists and does NOT call upsertPlan when a plan exists', async () => {
-    // Seed an existing plan for USER_A
-    mockPlansTable.set(USER_A, { id: 'plan-A', user_id: USER_A });
+  it('returns ok with reason=plan_already_exists and does NOT call upsertPlan when both plan and progress exist', async () => {
+    // Seed an existing, COMPLETE plan+progress pair for USER_A
+    mockPlansTable.set(USER_A, { id: 'plan-A', user_id: USER_A, surah_start: 1, start_ayah: 1, ayah_per_day: 2 });
+    mockProgressTable.set(USER_A, {
+      id: 'progress-A', user_id: USER_A,
+      current_surah: 1, current_ayah: 0, ayah_per_day: 2,
+      streak: 5, total_memorized: 40, last_session_date: '2026-01-01',
+    });
 
     // Seed a draft (which would normally be finalized)
     await seedValidDraft();
@@ -148,10 +188,47 @@ describe('Plan-already-exists guard', () => {
     }
     // upsertPlan must NOT have been called — the existing plan is untouched
     expect(upsertPlan).not.toHaveBeenCalled();
+    // A complete pair must never be reset/recreated — the legitimate streak
+    // and total_memorized above must survive untouched.
+    expect(resetProgressForNewPlan).not.toHaveBeenCalled();
+    expect(mockProgressTable.get(USER_A)?.streak).toBe(5);
+    expect(mockProgressTable.get(USER_A)?.total_memorized).toBe(40);
+  });
+
+  it('repairs a missing progress row when plan exists but progress does not (partial-write recovery)', async () => {
+    // Plan exists (e.g. a prior finalize whose upsertPlan succeeded but the
+    // progress write failed) — no progress row seeded.
+    mockPlansTable.set(USER_A, { id: 'plan-A', user_id: USER_A, surah_start: 3, start_ayah: 5, ayah_per_day: 4 });
+
+    const result = await finalizeOnboardingV2Plan(USER_A, '');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.reason).toBe('plan_already_exists');
+    }
+    // The plan itself must never be recreated.
+    expect(upsertPlan).not.toHaveBeenCalled();
+    // The repair must reconstruct progress from the PLAN's own canonical
+    // fields — never guessed, never from a draft/pending source.
+    expect(resetProgressForNewPlan).toHaveBeenCalledWith(USER_A, {
+      current_surah: 3,
+      current_ayah: 4, // start_ayah - 1
+      ayah_per_day: 4,
+    });
+    const repaired = mockProgressTable.get(USER_A);
+    expect(repaired).not.toBeUndefined();
+    expect(repaired?.current_surah).toBe(3);
+    expect(repaired?.current_ayah).toBe(4);
+    expect(repaired?.ayah_per_day).toBe(4);
   });
 
   it('clears all pre-auth sources when plan already exists', async () => {
-    mockPlansTable.set(USER_A, { id: 'plan-A', user_id: USER_A });
+    mockPlansTable.set(USER_A, { id: 'plan-A', user_id: USER_A, surah_start: 1, start_ayah: 1, ayah_per_day: 2 });
+    mockProgressTable.set(USER_A, {
+      id: 'progress-A', user_id: USER_A,
+      current_surah: 1, current_ayah: 0, ayah_per_day: 2,
+      streak: 0, total_memorized: 0, last_session_date: null,
+    });
     await seedValidDraft();
     await savePendingOnboardingPlan({
       firstName: 'Ahmed',
@@ -195,6 +272,107 @@ describe('Plan-already-exists guard', () => {
       expect(result.reason).toBe('created');
     }
     expect(upsertPlan).toHaveBeenCalledWith(USER_A, expect.any(Object));
+    // Creation always uses resetProgressForNewPlan — never the
+    // preserve-on-update upsertProgress() (reserved for real sessions).
+    expect(resetProgressForNewPlan).toHaveBeenCalledWith(USER_A, expect.any(Object));
+  });
+
+  it('resets an orphaned progress row when creating a brand-new plan (no plan, stale progress present)', async () => {
+    // Simulate a leftover progress row from an unrelated prior attempt —
+    // no plan exists for this user right now.
+    mockProgressTable.set(USER_A, {
+      id: 'progress-orphan', user_id: USER_A,
+      current_surah: 50, current_ayah: 12, ayah_per_day: 9,
+      streak: 30, total_memorized: 500, last_session_date: '2025-01-01',
+    });
+    await seedValidDraft();
+
+    const result = await finalizeOnboardingV2Plan(USER_A, '');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.reason).toBe('created');
+    }
+    // The orphan's streak/totals must NEVER carry over into the new plan.
+    const reset = mockProgressTable.get(USER_A);
+    expect(reset?.streak).toBe(0);
+    expect(reset?.total_memorized).toBe(0);
+    expect(reset?.current_surah).not.toBe(50);
+  });
+
+  it('retry after upsertPlan succeeds but progress reset fails repairs on the next attempt', async () => {
+    await seedValidDraft();
+    (resetProgressForNewPlan as jest.Mock).mockRejectedValueOnce(new Error('network dropped'));
+
+    const result1 = await finalizeOnboardingV2Plan(USER_A, '');
+    expect(result1.ok).toBe(false);
+    if (!result1.ok) {
+      expect(result1.reason).toBe('persist_error');
+    }
+    // The plan write itself succeeded and must not be retried/duplicated.
+    expect(upsertPlan).toHaveBeenCalledTimes(1);
+    expect(mockPlansTable.has(USER_A)).toBe(true);
+    // Progress is still missing — the pending/draft source must survive
+    // for the retry below (not asserted directly here; draft persistence
+    // is exercised in "Draft isolation" — this test only proves the retry
+    // itself repairs the pair).
+
+    // Retry — resetProgressForNewPlan now succeeds (mockRejectedValueOnce
+    // only fails the first call).
+    const result2 = await finalizeOnboardingV2Plan(USER_A, '');
+    expect(result2.ok).toBe(true);
+    if (result2.ok) {
+      // Plan already existed on this second attempt — goes through the
+      // repair branch, not a fresh 'created'.
+      expect(result2.reason).toBe('plan_already_exists');
+    }
+    // upsertPlan is still only called once — never recreated.
+    expect(upsertPlan).toHaveBeenCalledTimes(1);
+    expect(mockProgressTable.get(USER_A)).not.toBeUndefined();
+  });
+
+  it('does not clear the pending payload when progress confirmation fails after a successful write', async () => {
+    const saved = await savePendingOnboardingPlan({
+      firstName: 'Ahmed',
+      learningMode: 'recommended',
+      knownSurahs: [1],
+      startingSurah: null,
+      customSurahOrder: [],
+      continueWithRest: true,
+      notificationPreference: 'enabled',
+      discoverySource: 'tiktok',
+      experienceChoice: 'daily_limited',
+    });
+    if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
+    saveActiveOnboardingAuthFlow(saved.flowId);
+    setSessionAuthFlowId(saved.flowId);
+    // No draft — forces the pending-payload source path so we can assert
+    // on it surviving below.
+
+    // The write succeeds, but the very next read used to CONFIRM the pair
+    // fails — this must not clear the pending payload nor report success.
+    (fetchProgress as jest.Mock).mockImplementationOnce(async () => { throw new Error('replica lag'); });
+    // First implementation-once above is consumed by the internal
+    // confirmProgress check inside resetProgressForNewPlan's caller path;
+    // fetchProgress is also called once more for the initial existence
+    // check inside runFinalize's guard — but since no plan exists yet at
+    // that point, the guard branch that calls fetchProgress is skipped
+    // entirely (only called after fetchPlan finds a plan). So this
+    // mockImplementationOnce is guaranteed to hit the post-write
+    // confirmation call.
+
+    const result = await finalizeOnboardingV2Plan(USER_A, '');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('persist_error');
+    }
+    // The plan+progress were actually written — never corrupted or undone.
+    expect(mockPlansTable.has(USER_A)).toBe(true);
+    // Pending payload must survive — confirmation failure must not be
+    // treated as a reason to discard the retry source.
+    const pending = await readPendingOnboardingPlan();
+    expect(pending).not.toBeNull();
   });
 });
 
@@ -456,8 +634,13 @@ describe('Session-expiry boundary (clearOnboardingStateForSessionExpiry)', () =>
 
 describe('Cross-account pending payload protection in plan_already_exists', () => {
   it('does not delete a pending payload owned by another user when plan exists for current user', async () => {
-    // USER_B already has a plan
-    mockPlansTable.set(USER_B, { id: 'plan-B', user_id: USER_B });
+    // USER_B already has a complete plan+progress pair
+    mockPlansTable.set(USER_B, { id: 'plan-B', user_id: USER_B, surah_start: 1, start_ayah: 1, ayah_per_day: 2 });
+    mockProgressTable.set(USER_B, {
+      id: 'progress-B', user_id: USER_B,
+      current_surah: 1, current_ayah: 0, ayah_per_day: 2,
+      streak: 0, total_memorized: 0, last_session_date: null,
+    });
 
     // USER_A has a pending payload claimed for USER_A
     const saved = await savePendingOnboardingPlan({
@@ -495,5 +678,130 @@ describe('Cross-account pending payload protection in plan_already_exists', () =
     const pending = await readPendingOnboardingPlan();
     expect(pending).not.toBeNull();
     expect(pending?.ownerUserId).toBe(USER_A);
+  });
+});
+
+// ─── 9. Pending payload as transaction marker ──────────────────────────────
+// The pending payload must survive a handoff failure and only be cleared
+// after the handoff succeeds. This tests the full sequence:
+// 1. pending owned exists
+// 2. finalize persists + confirms the pair
+// 3. handoff fails (simulated)
+// 4. pending is still present
+// 5. retry: finalize detects existing pair (idempotent, no reset)
+// 6. handoff succeeds
+// 7. clearPendingOnboardingForUser clears the pending
+// 8. dashboard can be revealed
+
+describe('Pending payload as transaction marker', () => {
+  it('pending survives finalize success but handoff failure, then cleared after retry', async () => {
+    // Seed a pending payload and claim it for USER_A
+    const saved = await savePendingOnboardingPlan({
+      firstName: 'Ahmed',
+      learningMode: 'recommended',
+      knownSurahs: [1],
+      startingSurah: null,
+      customSurahOrder: [],
+      continueWithRest: true,
+      notificationPreference: 'enabled',
+      discoverySource: 'tiktok',
+      experienceChoice: 'daily_limited',
+    });
+    if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
+    saveActiveOnboardingAuthFlow(saved.flowId);
+    setSessionAuthFlowId(saved.flowId);
+    await claimPendingOnboardingPlanForUser(USER_A, saved.flowId);
+
+    // Step 1: pending exists and is owned by USER_A
+    let pending = await readPendingOnboardingPlan();
+    expect(pending).not.toBeNull();
+    expect(pending?.ownerUserId).toBe(USER_A);
+
+    // Step 2: finalize persists + confirms the pair
+    const result1 = await finalizeOnboardingV2Plan(USER_A, '');
+    expect(result1.ok).toBe(true);
+    expect(mockPlansTable.has(USER_A)).toBe(true);
+    expect(mockProgressTable.get(USER_A)).toBeDefined();
+
+    // Step 3: handoff fails (simulated — in production this is a network
+    // error in handOffFinalizedProgram; here we just don't call it yet)
+
+    // Step 4: pending is STILL present after finalize (not cleared)
+    pending = await readPendingOnboardingPlan();
+    expect(pending).not.toBeNull();
+    expect(pending?.ownerUserId).toBe(USER_A);
+
+    // Step 5: retry — finalize detects existing pair, no reset
+    const result2 = await finalizeOnboardingV2Plan(USER_A, '');
+    expect(result2.ok).toBe(true);
+    if (result2.ok) {
+      expect(result2.reason).toBe('plan_already_exists');
+    }
+    // upsertPlan was NOT called again
+    expect(upsertPlan).toHaveBeenCalledTimes(1);
+    // Progress was NOT reset again
+    const resetCalls = (resetProgressForNewPlan as jest.Mock).mock.calls.length;
+    // The first finalize created the plan and called resetProgressForNewPlan once.
+    // The retry goes through the plan_already_exists branch which does NOT call
+    // resetProgressForNewPlan (both plan and progress exist).
+    // So total resetProgressForNewPlan calls should still be 1.
+    expect(resetCalls).toBe(1);
+
+    // Step 6: handoff succeeds (simulated — in production handOffFinalizedProgram
+    // would run here; we simulate by confirming the pair is in the mock tables)
+
+    // Step 7: clearPendingOnboardingForUser clears the pending
+    await clearPendingOnboardingForUser(USER_A);
+    pending = await readPendingOnboardingPlan();
+    expect(pending).toBeNull();
+
+    // Step 8: pair is still durable in Supabase (mock tables)
+    expect(mockPlansTable.has(USER_A)).toBe(true);
+    expect(mockProgressTable.get(USER_A)).toBeDefined();
+  });
+
+  it('clearPendingOnboardingForUser does not clear another user pending', async () => {
+    // USER_A has a pending payload
+    const saved = await savePendingOnboardingPlan({
+      firstName: 'Alice',
+      learningMode: 'recommended',
+      knownSurahs: [1],
+      startingSurah: null,
+      customSurahOrder: [],
+      continueWithRest: true,
+      notificationPreference: 'enabled',
+      discoverySource: 'tiktok',
+      experienceChoice: 'daily_limited',
+    });
+    if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
+    saveActiveOnboardingAuthFlow(saved.flowId);
+    setSessionAuthFlowId(saved.flowId);
+    await claimPendingOnboardingPlanForUser(USER_A, saved.flowId);
+
+    // USER_B tries to clear — must not affect USER_A's pending
+    await clearPendingOnboardingForUser(USER_B);
+
+    const pending = await readPendingOnboardingPlan();
+    expect(pending).not.toBeNull();
+    expect(pending?.ownerUserId).toBe(USER_A);
+  });
+
+  it('clearPendingOnboardingForUser clears unclaimed pending (pre-auth)', async () => {
+    await savePendingOnboardingPlan({
+      firstName: 'NewUser',
+      learningMode: 'recommended',
+      knownSurahs: [1],
+      startingSurah: null,
+      customSurahOrder: [],
+      continueWithRest: true,
+      notificationPreference: 'enabled',
+      discoverySource: 'tiktok',
+      experienceChoice: 'daily_limited',
+    });
+    // Not claimed — no ownerUserId
+
+    await clearPendingOnboardingForUser('any-user');
+
+    expect(await readPendingOnboardingPlan()).toBeNull();
   });
 });

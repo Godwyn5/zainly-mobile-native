@@ -544,6 +544,33 @@ export async function clearPendingOnboardingPlan(): Promise<void> {
 }
 
 /**
+ * Clears the pending payload and associated auth markers ONLY if the payload
+ * is owned by the given userId or is unclaimed (pre-auth). A pending payload
+ * owned by a different user is never touched.
+ *
+ * Called by the orchestration layer AFTER handOffFinalizedProgram succeeds,
+ * making the pending payload a durable transaction marker that survives
+ * handoff failures, app kills, and process restarts.
+ *
+ * Never throws.
+ */
+export async function clearPendingOnboardingForUser(userId: string): Promise<void> {
+  try {
+    const pending = await readPendingOnboardingPlan();
+    if (!pending) return;
+    if (pending.ownerUserId && pending.ownerUserId !== userId) return;
+    await clearPendingOnboardingPlan();
+    await clearAuthHandoff();
+    await clearActiveOnboardingAuthFlow();
+    clearSessionAuthFlowId();
+  } catch {
+    // Non-fatal — a leftover entry is harmless and will be discarded on
+    // its next read anyway. The handoff already succeeded, so the user
+    // can reach their dashboard regardless.
+  }
+}
+
+/**
  * Clears both the pending payload and the auth handoff marker.
  * Used by logout, session expiry, and finalization success.
  * Never throws.
