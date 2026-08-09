@@ -123,6 +123,16 @@ export default function OnboardingProgramSummaryScreen() {
     setSaveError(null);
     hapticLight();
 
+    // The lock is released only on recoverable failures. After successful
+    // navigation, the lock is intentionally NOT released — the screen
+    // unmounts and the ref is garbage-collected, destroying the lock
+    // naturally. This prevents a second call from firing between
+    // router.replace() and the actual unmount.
+    //
+    // If navigation itself throws, the catch block releases the lock so
+    // the user can retry.
+    let navigated = false;
+
     try {
       // Re-read the full draft (only learningMode/knownCount were kept in
       // state above) — the in-memory draft is still the source of truth for
@@ -169,7 +179,13 @@ export default function OnboardingProgramSummaryScreen() {
             setSaveError("Ton programme est enregistré mais n'a pas pu être chargé. Réessaie.");
             return;
           case 'navigate':
-            router.replace('/(app)/(tabs)');
+          case 'navigate_clear_failed':
+            try {
+              router.replace('/(app)/(tabs)');
+              navigated = true;
+            } catch (navErr) {
+              setSaveError('Erreur de navigation. Réessaie.');
+            }
             return;
         }
       }
@@ -208,9 +224,19 @@ export default function OnboardingProgramSummaryScreen() {
       // flowId is passed explicitly so each auth route can supply it as
       // proof of the originating parcours — prevents a Welcome login from
       // claiming a pending payload.
-      router.push(`/(auth)/signup-methods?context=onboarding&flowId=${encodeURIComponent(saved.flowId)}`);
+      try {
+        router.push(`/(auth)/signup-methods?context=onboarding&flowId=${encodeURIComponent(saved.flowId)}`);
+        navigated = true;
+      } catch (navErr) {
+        setSaveError('Erreur de navigation. Réessaie.');
+      }
     } finally {
-      submissionLock.current.release();
+      // Only release the lock if we did NOT navigate. After successful
+      // navigation, the screen unmounts and the lock is destroyed with
+      // the ref — no second call can fire.
+      if (!navigated) {
+        submissionLock.current.release();
+      }
     }
   }
 

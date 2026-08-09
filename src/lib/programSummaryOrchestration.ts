@@ -5,6 +5,7 @@ import { clearPendingOnboardingIfMatches, readPendingOnboardingPlan } from '@/li
 
 export type ProgramSummaryAuthedOutcome =
   | { status: 'navigate' }
+  | { status: 'navigate_clear_failed' }
   | { status: 'premium_sync_failed' }
   | { status: 'premium_entitlement_missing' }
   | { status: 'finalize_failed'; message?: string }
@@ -83,7 +84,15 @@ export async function orchestrateAuthedFinalize(
   }
 
   if (transactionId) {
-    await d.clearPending(authedUserId, transactionId);
+    const clearResult = await d.clearPending(authedUserId, transactionId);
+    if (clearResult === 'storage_error') {
+      // The pending matched but the storage delete failed. The pair is
+      // durable in Supabase and canonical in the cache — navigation is
+      // safe. The pending survives as a stale marker and will be cleaned
+      // up on next read, logout, or a future retry.
+      d.invalidateNonCritical(queryClient, authedUserId);
+      return { status: 'navigate_clear_failed' };
+    }
   }
 
   d.invalidateNonCritical(queryClient, authedUserId);

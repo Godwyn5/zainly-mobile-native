@@ -86,27 +86,31 @@ describe('createSubmissionLock — anti-double-submission', () => {
 // ── Integration tests: simulate the real handleContinue handler structure ──
 // These tests mirror the exact pattern used in program-summary.tsx:
 //   if (!lock.acquire()) return;
-//   try { ...await chain... } finally { lock.release(); }
-// They verify the lock's behaviour across the full async lifecycle.
+//   let navigated = false;
+//   try { ...await chain... navigated = true; }
+//   finally { if (!navigated) lock.release(); }
+// The lock is NOT released after successful navigation — the screen unmount
+// destroys the ref naturally. Only recoverable failures release the lock.
 
 describe('submissionLock integration — handleContinue pattern', () => {
-  it('two synchronous taps → only one finalize operation', async () => {
+  it('1. two synchronous taps during operation → only one finalize chain', async () => {
     const lock = createSubmissionLock();
     let finalizeCount = 0;
     let navCount = 0;
 
     async function handleContinue() {
       if (!lock.acquire()) return;
+      let navigated = false;
       try {
         finalizeCount++;
-        await Promise.resolve(); // simulate async finalize
+        await Promise.resolve();
         navCount++;
+        navigated = true;
       } finally {
-        lock.release();
+        if (!navigated) lock.release();
       }
     }
 
-    // Two synchronous calls — the second must be rejected
     const p1 = handleContinue();
     const p2 = handleContinue();
 
@@ -114,9 +118,11 @@ describe('submissionLock integration — handleContinue pattern', () => {
 
     expect(finalizeCount).toBe(1);
     expect(navCount).toBe(1);
+    // Lock is NOT released — navigation succeeded, screen would unmount
+    expect(lock.isLocked()).toBe(true);
   });
 
-  it('rerender during operation → lock still active, second call rejected', async () => {
+  it('2. rerender during operation → lock still active, second call rejected', async () => {
     const lock = createSubmissionLock();
     let finalizeCount = 0;
     let resolveOp: () => void;
@@ -124,59 +130,120 @@ describe('submissionLock integration — handleContinue pattern', () => {
 
     async function handleContinue() {
       if (!lock.acquire()) return;
+      let navigated = false;
       try {
         finalizeCount++;
-        await opPromise; // simulate long-running finalize
+        await opPromise;
+        navigated = true;
       } finally {
-        lock.release();
+        if (!navigated) lock.release();
       }
     }
 
-    // Start the first operation
     const p1 = handleContinue();
 
-    // Simulate a rerender — the lock ref is the same object (useRef),
-    // so the second call sees locked=true
+    // Rerender — lock is still held
     expect(lock.isLocked()).toBe(true);
     const p2 = handleContinue();
 
-    // Resolve the first operation
     resolveOp!();
     await Promise.all([p1, p2]);
 
     expect(finalizeCount).toBe(1);
-    expect(lock.isLocked()).toBe(false);
+    // Lock NOT released — navigation succeeded
+    expect(lock.isLocked()).toBe(true);
   });
 
-  it('error → lock released → retry possible', async () => {
+  it('3. recoverable error → lock released → retry possible', async () => {
     const lock = createSubmissionLock();
     let attemptCount = 0;
 
     async function handleContinue(shouldFail: boolean) {
       if (!lock.acquire()) return false;
+      let navigated = false;
       try {
         attemptCount++;
         await Promise.resolve();
         if (shouldFail) throw new Error('finalize failed');
+        navigated = true;
         return true;
       } finally {
-        lock.release();
+        if (!navigated) lock.release();
       }
     }
 
-    // First attempt fails
+    // First attempt fails — lock released
     await expect(handleContinue(true)).rejects.toThrow('finalize failed');
     expect(lock.isLocked()).toBe(false);
     expect(attemptCount).toBe(1);
 
-    // Retry succeeds
+    // Retry succeeds — lock NOT released (navigation happened)
     const result = await handleContinue(false);
     expect(result).toBe(true);
     expect(attemptCount).toBe(2);
-    expect(lock.isLocked()).toBe(false);
+    expect(lock.isLocked()).toBe(true);
   });
 
-  it('success → single finalize, single handoff, single clear, single navigation', async () => {
+  it('4. navigation succeeded but screen not yet unmounted → second call rejected', async () => {
+    const lock = createSubmissionLock();
+    let navCount = 0;
+
+    async function handleContinue() {
+      if (!lock.acquire()) return;
+      let navigated = false;
+      try {
+        await Promise.resolve();
+        navCount++;
+        navigated = true;
+      } finally {
+        if (!navigated) lock.release();
+      }
+    }
+
+    await handleContinue();
+
+    // Navigation succeeded — lock is still held (screen not yet unmounted)
+    expect(lock.isLocked()).toBe(true);
+    expect(navCount).toBe(1);
+
+    // Second call must be rejected
+    await handleContinue();
+    expect(navCount).toBe(1);
+    expect(lock.isLocked()).toBe(true);
+  });
+
+  it('5. navigation throws → lock released → retry possible', async () => {
+    const lock = createSubmissionLock();
+    let attemptCount = 0;
+    let navShouldThrow = true;
+
+    async function handleContinue() {
+      if (!lock.acquire()) return;
+      let navigated = false;
+      try {
+        attemptCount++;
+        await Promise.resolve();
+        // Simulate navigation
+        if (navShouldThrow) throw new Error('navigation failed');
+        navigated = true;
+      } finally {
+        if (!navigated) lock.release();
+      }
+    }
+
+    // First attempt — navigation throws, lock released
+    await expect(handleContinue()).rejects.toThrow('navigation failed');
+    expect(lock.isLocked()).toBe(false);
+    expect(attemptCount).toBe(1);
+
+    // Fix navigation, retry
+    navShouldThrow = false;
+    await handleContinue();
+    expect(attemptCount).toBe(2);
+    expect(lock.isLocked()).toBe(true);
+  });
+
+  it('6. success → single finalize, single handoff, single clear, single navigation', async () => {
     const lock = createSubmissionLock();
     let finalizeCount = 0;
     let handoffCount = 0;
@@ -185,20 +252,18 @@ describe('submissionLock integration — handleContinue pattern', () => {
 
     async function handleContinue() {
       if (!lock.acquire()) return;
+      let navigated = false;
       try {
-        // finalize
         finalizeCount++;
         await Promise.resolve();
-        // handoff
         handoffCount++;
         await Promise.resolve();
-        // clear pending
         clearCount++;
         await Promise.resolve();
-        // navigate
         navCount++;
+        navigated = true;
       } finally {
-        lock.release();
+        if (!navigated) lock.release();
       }
     }
 
@@ -208,39 +273,36 @@ describe('submissionLock integration — handleContinue pattern', () => {
     expect(handoffCount).toBe(1);
     expect(clearCount).toBe(1);
     expect(navCount).toBe(1);
-    expect(lock.isLocked()).toBe(false);
+    // Lock NOT released after successful navigation
+    expect(lock.isLocked()).toBe(true);
   });
 
-  it('session change during operation → no late navigation after release', async () => {
+  it('session change during operation → no navigation, lock released (recoverable)', async () => {
     const lock = createSubmissionLock();
     let navCount = 0;
     let currentSession = 'user-A';
 
     async function handleContinue(authedUserId: string) {
       if (!lock.acquire()) return;
+      let navigated = false;
       try {
-        await Promise.resolve(); // finalize
-        // Check session before navigation
+        await Promise.resolve();
         if (currentSession !== authedUserId) return;
-        await Promise.resolve(); // handoff
-        // Check session before navigation
+        await Promise.resolve();
         if (currentSession !== authedUserId) return;
         navCount++;
+        navigated = true;
       } finally {
-        lock.release();
+        if (!navigated) lock.release();
       }
     }
 
-    // Start operation for user-A
     const p = handleContinue('user-A');
-
-    // Session changes during the operation
     currentSession = 'user-B';
-
     await p;
 
-    // No navigation happened — session changed
     expect(navCount).toBe(0);
+    // Session change is recoverable → lock released
     expect(lock.isLocked()).toBe(false);
   });
 });

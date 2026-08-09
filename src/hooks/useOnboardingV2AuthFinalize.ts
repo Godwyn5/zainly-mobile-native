@@ -151,6 +151,8 @@ export function useOnboardingV2AuthFinalize(): UseOnboardingV2AuthFinalizeResult
         // user. Read the pending's flowId to pass as the transaction identity —
         // this prevents clearing a NEWER pending from a different onboarding
         // parcours. Never clears an unclaimed or another user's pending.
+        // A storage_error is non-fatal: the pair is durable in Supabase and
+        // the pending will be cleaned up on next read or logout.
         const pendingBeforeClear = await readPendingOnboardingPlan();
         const transactionId = pendingBeforeClear?.flowId ?? '';
         if (transactionId) {

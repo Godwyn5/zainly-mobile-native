@@ -18,7 +18,7 @@ jest.mock('@/lib/onboardingDashboardHandoff', () => ({
 jest.mock('@/lib/pendingOnboardingPlan', () => ({
   getSessionAuthFlowId: jest.fn(() => ''),
   clearSessionAuthFlowId: jest.fn(),
-  clearPendingOnboardingIfMatches: jest.fn(async () => {}),
+  clearPendingOnboardingIfMatches: jest.fn(async () => 'cleared'),
   readPendingOnboardingPlan: jest.fn(async () => ({ flowId: 'test-flow-id', ownerUserId: 'user-A' })),
 }));
 jest.mock('@/lib/revenueCat', () => ({

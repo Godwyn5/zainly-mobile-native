@@ -11,7 +11,7 @@ jest.mock('@/lib/onboardingDashboardHandoff', () => ({
   handOffFinalizedProgram: jest.fn(),
 }));
 jest.mock('@/lib/pendingOnboardingPlan', () => ({
-  clearPendingOnboardingIfMatches: jest.fn(async () => {}),
+  clearPendingOnboardingIfMatches: jest.fn(async () => 'cleared'),
   readPendingOnboardingPlan: jest.fn(async () => ({ flowId: 'test-flow-id', ownerUserId: 'user-aaa' })),
 }));
 
@@ -36,7 +36,7 @@ function makeDeps(overrides: {
     handoff: mockHandoff,
     getSessionUserId: overrides.getSessionUserId ?? (() => USER_A),
     invalidateNonCritical: overrides.invalidateNonCritical ?? jest.fn(),
-    clearPending: overrides.clearPending ?? jest.fn(async () => {}),
+    clearPending: overrides.clearPending ?? jest.fn(async () => 'cleared' as const),
   };
 }
 
@@ -53,7 +53,7 @@ describe('orchestrateAuthedFinalize', () => {
     });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
     const invalidateNonCritical = jest.fn();
-    const clearPending = jest.fn(async () => {});
+    const clearPending = jest.fn(async () => 'cleared' as const);
 
     const result = await orchestrateAuthedFinalize(client, USER_A, makeDeps({ invalidateNonCritical, clearPending }));
 
@@ -148,7 +148,7 @@ describe('orchestrateAuthedFinalize', () => {
     mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
     mockHandoff.mockResolvedValue({ status: 'error', error: new Error('network') });
     const invalidateNonCritical = jest.fn();
-    const clearPending = jest.fn(async () => {});
+    const clearPending = jest.fn(async () => 'cleared' as const);
 
     const result = await orchestrateAuthedFinalize(client, USER_A, makeDeps({ invalidateNonCritical, clearPending }));
 
@@ -191,7 +191,7 @@ describe('orchestrateAuthedFinalize', () => {
     const client = freshClient();
     mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
-    const clearPending = jest.fn(async () => {});
+    const clearPending = jest.fn(async () => 'cleared' as const);
 
     await orchestrateAuthedFinalize(client, USER_A, makeDeps({ clearPending }));
 
@@ -202,7 +202,7 @@ describe('orchestrateAuthedFinalize', () => {
   it('session change after handoff but before clearPending → session_changed, no clearPending', async () => {
     const client = freshClient();
     mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
-    const clearPending = jest.fn(async () => {});
+    const clearPending = jest.fn(async () => 'cleared' as const);
 
     let currentSession = USER_A;
     // Handoff succeeds, but changes session during its await
@@ -226,7 +226,7 @@ describe('orchestrateAuthedFinalize', () => {
 
   it('A→B during finalize → session_changed, no handoff, no clearPending', async () => {
     const client = freshClient();
-    const clearPending = jest.fn(async () => {});
+    const clearPending = jest.fn(async () => 'cleared' as const);
     let currentSession = USER_A;
 
     // Session changes DURING finalize's await
@@ -248,7 +248,7 @@ describe('orchestrateAuthedFinalize', () => {
 
   it('A→B during handoff → session_changed, no clearPending, no navigation', async () => {
     const client = freshClient();
-    const clearPending = jest.fn(async () => {});
+    const clearPending = jest.fn(async () => 'cleared' as const);
     let currentSession = USER_A;
 
     mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
@@ -269,7 +269,7 @@ describe('orchestrateAuthedFinalize', () => {
 
   it('A→B just before clear → session_changed, no clearPending for A', async () => {
     const client = freshClient();
-    const clearPending = jest.fn(async () => {});
+    const clearPending = jest.fn(async () => 'cleared' as const);
     let currentSession = USER_A;
 
     mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
@@ -296,7 +296,7 @@ describe('orchestrateAuthedFinalize', () => {
 
   it('clear of A in-flight, then B creates pending → B pending not cleared by A operation', async () => {
     const client = freshClient();
-    const clearPending = jest.fn(async (_uid: string, _txId: string) => {});
+    const clearPending = jest.fn(async (_uid: string, _txId: string) => 'cleared' as const);
     let currentSession = USER_A;
 
     mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
@@ -315,7 +315,7 @@ describe('orchestrateAuthedFinalize', () => {
 
   it('old pending of A, then new transaction for A → old clear does not clear new pending', async () => {
     const client = freshClient();
-    const clearPending = jest.fn(async () => {});
+    const clearPending = jest.fn(async () => 'cleared' as const);
     let currentSession = USER_A;
 
     mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
@@ -341,5 +341,42 @@ describe('orchestrateAuthedFinalize', () => {
     expect(clearPending).toHaveBeenCalledWith(USER_A, 'new-flow-id-T2');
     // It was NOT called with the old flowId
     expect(clearPending).not.toHaveBeenCalledWith(USER_A, 'test-flow-id');
+  });
+
+  it('clearPending returns storage_error → navigate_clear_failed, invalidate called, no crash', async () => {
+    const client = freshClient();
+    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
+    const invalidateNonCritical = jest.fn();
+    const clearPending = jest.fn(async () => 'storage_error' as const);
+
+    const result = await orchestrateAuthedFinalize(client, USER_A, makeDeps({
+      invalidateNonCritical,
+      clearPending,
+    }));
+
+    // Navigation is safe — pair is durable in Supabase
+    expect(result.status).toBe('navigate_clear_failed');
+    // Invalidate was still called (cache is canonical)
+    expect(invalidateNonCritical).toHaveBeenCalledWith(client, USER_A);
+    // clearPending was called with the correct userId and flowId
+    expect(clearPending).toHaveBeenCalledWith(USER_A, 'test-flow-id');
+  });
+
+  it('clearPending returns not_matched → navigate (treated as success, pending is not ours)', async () => {
+    const client = freshClient();
+    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
+    const invalidateNonCritical = jest.fn();
+    const clearPending = jest.fn(async () => 'not_matched' as const);
+
+    const result = await orchestrateAuthedFinalize(client, USER_A, makeDeps({
+      invalidateNonCritical,
+      clearPending,
+    }));
+
+    // not_matched is treated as success — the pending is not ours to clear
+    expect(result.status).toBe('navigate');
+    expect(invalidateNonCritical).toHaveBeenCalledWith(client, USER_A);
   });
 });

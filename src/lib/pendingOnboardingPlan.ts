@@ -544,6 +544,18 @@ export async function clearPendingOnboardingPlan(): Promise<void> {
 }
 
 /**
+ * Result of {@link clearPendingOnboardingIfMatches}.
+ *
+ * - `cleared`: the pending payload was found, matched, and successfully deleted.
+ * - `not_matched`: the pending payload was not found, or did not match the
+ *   given userId/transactionId. Nothing was deleted.
+ * - `storage_error`: the pending payload matched (correct userId and flowId)
+ *   but the AsyncStorage delete operation failed. The pending still exists
+ *   and a retry should be attempted.
+ */
+export type ClearPendingResult = 'cleared' | 'not_matched' | 'storage_error';
+
+/**
  * Clears the pending payload and associated auth markers ONLY if:
  *   1. The payload exists and is owned by the given userId (not unclaimed).
  *   2. The payload's flowId matches the given transactionId.
@@ -557,6 +569,11 @@ export async function clearPendingOnboardingPlan(): Promise<void> {
  * to prevent a race where a new pending is written between the read and the
  * clear.
  *
+ * Returns {@link ClearPendingResult} so the caller can distinguish between
+ * a successful clear, a transaction mismatch, and a real storage failure.
+ * A `storage_error` means the pending still exists and should be retried —
+ * the caller must NOT treat it as success.
+ *
  * Called by the orchestration layer AFTER handOffFinalizedProgram succeeds,
  * making the pending payload a durable transaction marker that survives
  * handoff failures, app kills, and process restarts.
@@ -566,26 +583,36 @@ export async function clearPendingOnboardingPlan(): Promise<void> {
 export function clearPendingOnboardingIfMatches(
   userId: string,
   transactionId: string,
-): Promise<void> {
+): Promise<ClearPendingResult> {
   return serializeClaim(async () => {
     try {
       const pending = await readPendingOnboardingPlan();
-      if (!pending) return;
+      if (!pending) return 'not_matched' as ClearPendingResult;
       // Must be owned by this user — unclaimed pending is never cleared here.
-      if (!pending.ownerUserId || pending.ownerUserId !== userId) return;
+      if (!pending.ownerUserId || pending.ownerUserId !== userId) {
+        return 'not_matched' as ClearPendingResult;
+      }
       // Must match the transaction that was finalized — a newer pending
       // from a different onboarding parcours must survive.
-      if (!pending.flowId || pending.flowId !== transactionId) return;
-      await clearPendingOnboardingPlan();
-      await clearAuthHandoff();
-      await clearActiveOnboardingAuthFlow();
+      if (!pending.flowId || pending.flowId !== transactionId) {
+        return 'not_matched' as ClearPendingResult;
+      }
+      // Call AsyncStorage.removeItem directly (not via the swallowing
+      // wrappers) so that a real storage failure is detectable.
+      await AsyncStorage.removeItem(STORAGE_KEY);
+      await AsyncStorage.removeItem(HANDOFF_KEY);
+      await AsyncStorage.removeItem(ACTIVE_AUTH_FLOW_KEY);
       clearSessionAuthFlowId();
+      return 'cleared' as ClearPendingResult;
     } catch {
-      // Non-fatal — a leftover entry is harmless and will be discarded on
-      // its next read anyway. The handoff already succeeded, so the user
-      // can reach their dashboard regardless.
+      // Storage error — the pending matched but the delete failed.
+      // The pending still exists; the caller should retry.
+      return 'storage_error' as ClearPendingResult;
     }
-  }).then(() => undefined, () => undefined);
+  }).then(
+    (v) => v as ClearPendingResult,
+    () => 'storage_error' as ClearPendingResult,
+  );
 }
 
 /**

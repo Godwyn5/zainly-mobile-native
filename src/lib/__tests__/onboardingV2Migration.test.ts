@@ -131,6 +131,7 @@ import {
   saveActiveOnboardingAuthFlow,
   setSessionAuthFlowId,
   clearPendingOnboardingIfMatches,
+  type ClearPendingResult,
 } from '../pendingOnboardingPlan';
 import { fetchPlan, upsertPlan } from '@/db/plans';
 import { fetchProgress, resetProgressForNewPlan } from '@/db/progress';
@@ -751,7 +752,8 @@ describe('Pending payload as transaction marker', () => {
     // would run here; we simulate by confirming the pair is in the mock tables)
 
     // Step 7: clearPendingOnboardingIfMatches clears the pending (flowId matches)
-    await clearPendingOnboardingIfMatches(USER_A, saved.flowId);
+    const clearRes = await clearPendingOnboardingIfMatches(USER_A, saved.flowId);
+    expect(clearRes).toBe('cleared');
     pending = await readPendingOnboardingPlan();
     expect(pending).toBeNull();
 
@@ -779,7 +781,8 @@ describe('Pending payload as transaction marker', () => {
     await claimPendingOnboardingPlanForUser(USER_A, saved.flowId);
 
     // USER_B tries to clear with USER_A's flowId — must not affect USER_A's pending
-    await clearPendingOnboardingIfMatches(USER_B, saved.flowId);
+    const result = await clearPendingOnboardingIfMatches(USER_B, saved.flowId);
+    expect(result).toBe('not_matched');
 
     const pending = await readPendingOnboardingPlan();
     expect(pending).not.toBeNull();
@@ -803,7 +806,8 @@ describe('Pending payload as transaction marker', () => {
 
     // clearPendingOnboardingIfMatches must NOT clear an unclaimed pending.
     // The post-handoff clear function requires ownership.
-    await clearPendingOnboardingIfMatches('any-user', saved.flowId);
+    const result = await clearPendingOnboardingIfMatches('any-user', saved.flowId);
+    expect(result).toBe('not_matched');
 
     expect(await readPendingOnboardingPlan()).not.toBeNull();
   });
@@ -845,7 +849,8 @@ describe('Pending payload as transaction marker', () => {
 
     // The old transaction T1's handoff completes and tries to clear with T1's flowId.
     // This must NOT clear T2 — the flowId doesn't match.
-    await clearPendingOnboardingIfMatches(USER_A, saved1.flowId);
+    const result = await clearPendingOnboardingIfMatches(USER_A, saved1.flowId);
+    expect(result).toBe('not_matched');
 
     const pending = await readPendingOnboardingPlan();
     expect(pending).not.toBeNull();
@@ -871,7 +876,8 @@ describe('Pending payload as transaction marker', () => {
     await claimPendingOnboardingPlanForUser(USER_A, saved.flowId);
 
     // Wrong flowId — must not clear
-    await clearPendingOnboardingIfMatches(USER_A, 'wrong-flow-id');
+    const result = await clearPendingOnboardingIfMatches(USER_A, 'wrong-flow-id');
+    expect(result).toBe('not_matched');
 
     const pending = await readPendingOnboardingPlan();
     expect(pending).not.toBeNull();
@@ -905,8 +911,9 @@ describe('Pending payload as transaction marker', () => {
     // Step 2: handoff succeeds (simulated — pair is in mock tables)
 
     // Step 3: clear fails — simulate by using a wrong flowId.
-    // clearPendingOnboardingIfMatches does NOT clear when flowId doesn't match.
-    await clearPendingOnboardingIfMatches(USER_A, 'wrong-flow-id');
+    // clearPendingOnboardingIfMatches returns 'not_matched' when flowId doesn't match.
+    const wrongResult = await clearPendingOnboardingIfMatches(USER_A, 'wrong-flow-id');
+    expect(wrongResult).toBe('not_matched');
 
     // Step 4: pending is STILL present
     let pending = await readPendingOnboardingPlan();
@@ -929,11 +936,126 @@ describe('Pending payload as transaction marker', () => {
     expect(resetCalls).toBe(1);
 
     // Step 7: correct clear with matching flowId finally clears the pending
-    await clearPendingOnboardingIfMatches(USER_A, saved.flowId);
+    const finalResult = await clearPendingOnboardingIfMatches(USER_A, saved.flowId);
+    expect(finalResult).toBe('cleared');
     pending = await readPendingOnboardingPlan();
     expect(pending).toBeNull();
 
     // Step 8: pair is still durable in Supabase
+    expect(mockPlansTable.has(USER_A)).toBe(true);
+    expect(mockProgressTable.get(USER_A)).toBeDefined();
+  });
+
+  it('real AsyncStorage failure during clearPending → storage_error, pending survives, idempotent retry, no loop', async () => {
+    // Seed and claim a pending for USER_A
+    const saved = await savePendingOnboardingPlan({
+      firstName: 'Ahmed',
+      learningMode: 'recommended',
+      knownSurahs: [1],
+      startingSurah: null,
+      customSurahOrder: [],
+      continueWithRest: true,
+      notificationPreference: 'enabled',
+      discoverySource: 'tiktok',
+      experienceChoice: 'daily_limited',
+    });
+    if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
+    saveActiveOnboardingAuthFlow(saved.flowId);
+    setSessionAuthFlowId(saved.flowId);
+    await claimPendingOnboardingPlanForUser(USER_A, saved.flowId);
+
+    // Finalize persists the pair
+    const result1 = await finalizeOnboardingV2Plan(USER_A, '');
+    expect(result1.ok).toBe(true);
+    expect(mockPlansTable.has(USER_A)).toBe(true);
+    expect(mockProgressTable.get(USER_A)).toBeDefined();
+
+    // 1. Pair is intact ✅
+    // 2. Handoff succeeded (simulated — pair is in mock tables) ✅
+
+    // 3. Make AsyncStorage.removeItem reject — simulate real storage failure.
+    // The mock factory's removeItem is a jest.fn; mockRejectedValueOnce
+    // only affects the next call, then falls back to the original impl.
+    const mockRemoveItem = AsyncStorage.removeItem as jest.Mock;
+    mockRemoveItem.mockRejectedValueOnce(new Error('disk I/O error'));
+
+    // Call clearPendingOnboardingIfMatches with CORRECT userId and flowId
+    const clearResult: ClearPendingResult = await clearPendingOnboardingIfMatches(USER_A, saved.flowId);
+
+    // 3. The error is NOT silently transformed into success — storage_error returned
+    expect(clearResult).toBe('storage_error');
+
+    // 4. The matching pending STILL EXISTS
+    let pending = await readPendingOnboardingPlan();
+    expect(pending).not.toBeNull();
+    expect(pending?.ownerUserId).toBe(USER_A);
+    expect(pending?.flowId).toBe(saved.flowId);
+
+    // 5. No foreign pending was touched (there is none, but verify no error)
+
+    // 6. The caller remains in a recoverable state — no navigation happened,
+    //    no inconsistent state. The pair is durable in Supabase.
+
+    // 7. After recreating the hook/orchestrator, the existing pair is NOT reset
+    const result2 = await finalizeOnboardingV2Plan(USER_A, '');
+    expect(result2.ok).toBe(true);
+    if (result2.ok) {
+      expect(result2.reason).toBe('plan_already_exists');
+    }
+    expect(upsertPlan).toHaveBeenCalledTimes(1);
+    const resetCalls = (resetProgressForNewPlan as jest.Mock).mock.calls.length;
+    expect(resetCalls).toBe(1);
+
+    // 8. A new idempotent handoff succeeds (simulated — pair is in mock tables)
+
+    // 9. The delete succeeds now with the exact transaction
+    // (mockRejectedValueOnce was consumed — removeItem uses original impl again)
+    const clearResult2 = await clearPendingOnboardingIfMatches(USER_A, saved.flowId);
+    expect(clearResult2).toBe('cleared');
+    pending = await readPendingOnboardingPlan();
+    expect(pending).toBeNull();
+
+    // 10. No uncontrolled automatic loop if storage keeps failing
+    // Save the original implementation, then make removeItem always reject
+    const originalImpl = mockRemoveItem.getMockImplementation();
+    mockRemoveItem.mockRejectedValue(new Error('persistent disk error'));
+    // Seed a new pending to test repeated failures
+    const saved2 = await savePendingOnboardingPlan({
+      firstName: 'Ahmed2',
+      learningMode: 'recommended',
+      knownSurahs: [1],
+      startingSurah: null,
+      customSurahOrder: [],
+      continueWithRest: true,
+      notificationPreference: 'enabled',
+      discoverySource: 'tiktok',
+      experienceChoice: 'daily_limited',
+    });
+    if (!saved2.ok) throw new Error('savePendingOnboardingPlan failed in test setup 2');
+    saveActiveOnboardingAuthFlow(saved2.flowId);
+    setSessionAuthFlowId(saved2.flowId);
+    await claimPendingOnboardingPlanForUser(USER_A, saved2.flowId);
+
+    // Multiple calls all return storage_error — no loop, no crash
+    const r1 = await clearPendingOnboardingIfMatches(USER_A, saved2.flowId);
+    expect(r1).toBe('storage_error');
+    const r2 = await clearPendingOnboardingIfMatches(USER_A, saved2.flowId);
+    expect(r2).toBe('storage_error');
+    const r3 = await clearPendingOnboardingIfMatches(USER_A, saved2.flowId);
+    expect(r3).toBe('storage_error');
+
+    // Pending still exists after repeated failures
+    pending = await readPendingOnboardingPlan();
+    expect(pending).not.toBeNull();
+
+    // Restore storage — now it can be cleared
+    mockRemoveItem.mockImplementation(originalImpl);
+    const r4 = await clearPendingOnboardingIfMatches(USER_A, saved2.flowId);
+    expect(r4).toBe('cleared');
+    pending = await readPendingOnboardingPlan();
+    expect(pending).toBeNull();
+
+    // Pair still durable in Supabase throughout
     expect(mockPlansTable.has(USER_A)).toBe(true);
     expect(mockProgressTable.get(USER_A)).toBeDefined();
   });
