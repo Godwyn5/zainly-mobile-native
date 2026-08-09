@@ -8,7 +8,7 @@
 // is kept only as a safety net for very small devices (e.g. iPhone SE).
 
 import React from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { colors } from '@/theme/colors';
@@ -85,8 +85,10 @@ function getTrialDurationText(introPrice: PurchasesPackage['product']['introPric
   return 'offre gratuite';
 }
 
+const STORE_SETTINGS_LABEL = Platform.OS === 'android' ? 'Google Play' : 'Apple';
+
 /**
- * Apple-compliant legal text. Only mentions a free trial when a real trial
+ * Platform-aware legal text. Only mentions a free trial when a real trial
  * was detected via RevenueCat's introPrice (hasTrial) — never hardcoded.
  * Uses actual trial duration from introPrice.period if available.
  */
@@ -94,10 +96,10 @@ function legalText(plan: PaywallPlan, priceString: string | undefined, trialDura
   if (plan === 'annual') {
     const trialPrefix = trialDurationText ? `Après ${trialDurationText}, ` : '';
     const pricePart = priceString ? ` à ${priceString} / an` : '';
-    return `${trialPrefix}Renouvellement automatique${pricePart}. Annulable dans les réglages Apple au moins 24 h avant la fin de la période.`;
+    return `${trialPrefix}Renouvellement automatique${pricePart}. Annulable dans les réglages ${STORE_SETTINGS_LABEL} au moins 24 h avant la fin de la période.`;
   }
   const pricePart = priceString ? ` à ${priceString} / mois` : '';
-  return `Renouvellement automatique${pricePart}. Annulable dans les réglages Apple au moins 24 h avant la fin de la période.`;
+  return `Renouvellement automatique${pricePart}. Annulable dans les réglages ${STORE_SETTINGS_LABEL} au moins 24 h avant la fin de la période.`;
 }
 
 export default function PremiumScreen() {
@@ -186,7 +188,7 @@ export default function PremiumScreen() {
           goBackAfterPurchase();
         }
       } else {
-        Alert.alert('Aucun achat trouvé', 'Aucun abonnement Zainly+ actif n’a été trouvé sur ce compte Apple.');
+        Alert.alert('Aucun achat trouvé', `Aucun abonnement Zainly+ actif n'a été trouvé sur ce compte ${STORE_SETTINGS_LABEL}.`);
       }
       return;
     }

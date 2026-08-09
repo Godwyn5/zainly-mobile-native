@@ -410,7 +410,8 @@ export default function RevisionScreen() {
 
     if (error) {
       setIsSubmitting(false);
-      setSubmitError(error.message);
+      if (__DEV__) console.warn('[revision] advanceReviewItem error:', error.message);
+      setSubmitError('Impossible d\u2019enregistrer ta révision pour l\u2019instant. Réessaie.');
       hapticWarning();
       return;
     }

@@ -7,11 +7,13 @@ import { useAuthStore } from '@/store/authStore';
 import { useProfile } from '@/hooks/useProfile';
 import { useZainlyPlusAccess } from '@/hooks/useZainlyPlusAccess';
 import { useLogout } from '@/hooks/useLogout';
+import { useRestorePurchases } from '@/hooks/useRestorePurchases';
+import { manageSubscription } from '@/lib/manageSubscription';
 import { deleteAccountSelfService } from '@/db/accountDeletion';
 import { useNotificationSettings } from '@/hooks/useNotificationSettings';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
-import { hapticLight } from '@/utils/haptics';
+import { hapticLight, hapticMedium } from '@/utils/haptics';
 
 // ─── PremiumCard ────────────────────────────────────────────────────────────
 // The focal point of the screen. Deep multi-tone green gradient, a barely-
@@ -20,7 +22,7 @@ import { hapticLight } from '@/utils/haptics';
 // palette scale beyond colors.primary/primarySoft/gold — this only layers
 // those existing tones for depth, never introduces a new color.
 
-function PremiumCard({ hasZainlyPlus, anim }: { hasZainlyPlus: boolean; anim: Animated.Value }) {
+function PremiumCard({ hasZainlyPlus, anim, userId }: { hasZainlyPlus: boolean; anim: Animated.Value; userId: string | undefined }) {
   const isPushing = useRef(false);
   const shimmerAnim = useRef(new Animated.Value(-1)).current;
   const shimmerLoop = useRef<Animated.CompositeAnimation | null>(null);
@@ -66,15 +68,18 @@ function PremiumCard({ hasZainlyPlus, anim }: { hasZainlyPlus: boolean; anim: An
   function handlePressOut() {
     Animated.timing(scaleAnim, { toValue: 1, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
   }
-  function handlePress() {
+  async function handlePress() {
     if (isPushing.current) return;
     isPushing.current = true;
     hapticLight();
     if (hasZainlyPlus) {
-      Alert.alert(
-        'Bientôt disponible',
-        'La gestion de l\u2019abonnement sera disponible avec les achats intégrés.'
-      );
+      const result = await manageSubscription(userId);
+      if (!result.ok && result.reason !== 'unsupported_platform') {
+        Alert.alert(
+          'Gestion indisponible',
+          'Impossible d\u2019ouvrir la gestion de ton abonnement pour le moment. Réessaie plus tard.'
+        );
+      }
     } else {
       router.push('/premium?context=profile');
     }
@@ -235,7 +240,7 @@ function SettingsCard({ anim }: { anim: Animated.Value }) {
           onPress={handlePress}
           accessibilityRole="button"
           accessibilityLabel={`Rappel quotidien, ${isEnabled ? 'activé' : 'désactivé'}`}
-          accessibilityHint="Ouvre les réglages de notifications d'iOS"
+          accessibilityHint="Ouvre les réglages de notifications"
         >
           <View style={g.iconCircle}>
             <BellIcon color={colors.goldSoft} size={22} />
@@ -272,6 +277,7 @@ export default function ProfileScreen() {
   const userId = user?.id;
   const { data: profile } = useProfile(userId);
   const { hasZainlyPlus } = useZainlyPlusAccess(userId);
+  const { restore, isRestoring } = useRestorePurchases(userId);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const isDeletingRef = useRef(false);
   const logoutScale = useRef(new Animated.Value(1)).current;
@@ -292,9 +298,24 @@ export default function ProfileScreen() {
     return () => seq.stop();
   }, [headerAnim, premiumAnim, settingsAnim, accountAnim]);
 
-  function handleRestorePurchases() {
-    hapticLight();
-    router.push('/premium?context=profile');
+  async function handleRestorePurchases() {
+    if (isRestoring) return;
+    hapticMedium();
+    const result = await restore();
+    if (result.ok) {
+      if (result.hasEntitlement) {
+        hapticLight();
+        Alert.alert('Achats restaurés', 'Ton accès Zainly+ est actif.');
+      } else {
+        const storeLabel = Platform.OS === 'android' ? 'Google Play' : 'Apple';
+        Alert.alert('Aucun achat trouvé', `Aucun abonnement Zainly+ actif n'a été trouvé sur ce compte ${storeLabel}.`);
+      }
+    } else if (result.reason !== 'already_restoring') {
+      Alert.alert(
+        'Restauration impossible',
+        'Une erreur est survenue pendant la restauration. Réessaie dans quelques instants.'
+      );
+    }
   }
 
   async function performAccountDeletion() {
@@ -325,7 +346,7 @@ export default function ProfileScreen() {
 
   function confirmDeletion() {
     const subscriptionNote = hasZainlyPlus
-      ? '\n\nTon abonnement Zainly+ ne sera pas annulé automatiquement : annule-le depuis les Réglages de l\u2019App Store pour éviter un renouvellement.'
+      ? `\n\nTon abonnement Zainly+ ne sera pas annulé automatiquement : annule-le depuis les réglages ${Platform.OS === 'android' ? 'Google Play' : 'de l\u2019App Store'} pour éviter un renouvellement.`
       : '';
     Alert.alert(
       'Supprimer ton compte ?',
@@ -366,16 +387,22 @@ export default function ProfileScreen() {
       </Animated.View>
 
       {/* Premium card — focal point */}
-      <PremiumCard hasZainlyPlus={hasZainlyPlus} anim={premiumAnim} />
+      <PremiumCard hasZainlyPlus={hasZainlyPlus} anim={premiumAnim} userId={userId} />
 
       {/* Restore purchases — discreet link, never competes with the card */}
       <Pressable
         style={({ pressed }) => [s.restoreLink, pressed && s.restoreLinkPressed]}
         onPress={handleRestorePurchases}
+        disabled={isRestoring}
         accessibilityRole="button"
         accessibilityLabel="Restaurer mes achats"
+        accessibilityState={{ disabled: isRestoring }}
       >
-        <Text style={s.restoreText}>Restaurer mes achats</Text>
+        {isRestoring ? (
+          <ActivityIndicator size="small" color={colors.muted} />
+        ) : (
+          <Text style={s.restoreText}>Restaurer mes achats</Text>
+        )}
       </Pressable>
 
       {/* Réglages */}
