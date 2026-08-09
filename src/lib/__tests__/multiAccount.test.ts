@@ -25,6 +25,7 @@ import {
   createReadyState,
   createErrorState,
   canRenderStackForUser,
+  shouldShowCustomSplash,
   shouldShowPreparationError,
 } from '../preparationStateMachine';
 
@@ -94,8 +95,12 @@ describe('acceptResultForUser', () => {
 });
 
 describe('canRenderStackForUser', () => {
-  it('returns false when initialVisualReleased is false', () => {
+  it('returns false when initialVisualReleased is false and user is authed', () => {
     expect(canRenderStackForUser(false, true, true, createReadyState('user-A'), 'user-A')).toBe(false);
+  });
+
+  it('returns true for guest even when initialVisualReleased is false', () => {
+    expect(canRenderStackForUser(false, true, false, createInitialPreparationState(), null)).toBe(true);
   });
 
   it('returns false when authReady is false', () => {
@@ -124,6 +129,40 @@ describe('canRenderStackForUser', () => {
 
   it('returns false when preparation userId is null but user is authed', () => {
     expect(canRenderStackForUser(true, true, true, createInitialPreparationState(), 'user-A')).toBe(false);
+  });
+});
+
+describe('shouldShowCustomSplash', () => {
+  it('returns false during resolving (not ready)', () => {
+    expect(shouldShowCustomSplash(false, false, false, false, false)).toBe(false);
+  });
+
+  it('returns false for guest (unauthenticated)', () => {
+    expect(shouldShowCustomSplash(false, true, false, true, false)).toBe(false);
+  });
+
+  it('returns false for guest even when canRender is false', () => {
+    expect(shouldShowCustomSplash(false, true, false, false, false)).toBe(false);
+  });
+
+  it('returns true for authed user during initial boot, not yet ready to render', () => {
+    expect(shouldShowCustomSplash(false, true, true, false, false)).toBe(true);
+  });
+
+  it('returns false for authed user once stack can render', () => {
+    expect(shouldShowCustomSplash(false, true, true, true, false)).toBe(false);
+  });
+
+  it('returns false after boot completes even if authed and not ready to render', () => {
+    expect(shouldShowCustomSplash(true, true, true, false, false)).toBe(false);
+  });
+
+  it('returns false when preparation error should be shown instead', () => {
+    expect(shouldShowCustomSplash(false, true, true, false, true)).toBe(false);
+  });
+
+  it('returns false after boot completes with preparation error', () => {
+    expect(shouldShowCustomSplash(true, true, true, false, true)).toBe(false);
   });
 });
 

@@ -64,6 +64,8 @@ export function createErrorState(userId: string, error: unknown): PreparationSta
 /**
  * Returns true if the gate should render the Stack (user is authenticated
  * and preparation is ready for the current userId).
+ * Guests can render immediately after authReady — they do not need
+ * initialVisualReleased (the 1200ms branded-splash timer is authed-only).
  */
 export function canRenderStackForUser(
   initialVisualReleased: boolean,
@@ -72,10 +74,32 @@ export function canRenderStackForUser(
   preparation: PreparationState,
   currentUserId: string | null,
 ): boolean {
-  if (!initialVisualReleased || !authReady) return false;
-  if (!authed) return true; // guest can render
+  if (!authReady) return false;
+  if (!authed) return true; // guest can render immediately
+  if (!initialVisualReleased) return false;
   if (preparation.userId !== currentUserId) return false;
   return preparation.status === 'ready';
+}
+
+/**
+ * Returns true if the branded custom splash should be shown.
+ * The splash is shown ONLY for authenticated users during the initial
+ * boot process (before the stack can be rendered). It is never shown
+ * for guests, during resolving, after boot completes, or when an error
+ * screen should be shown instead.
+ */
+export function shouldShowCustomSplash(
+  bootCompleted: boolean,
+  authReady: boolean,
+  authed: boolean,
+  canRender: boolean,
+  hasPreparationError: boolean,
+): boolean {
+  if (!authReady) return false;
+  if (!authed) return false;
+  if (bootCompleted) return false;
+  if (hasPreparationError) return false;
+  return !canRender;
 }
 
 /**

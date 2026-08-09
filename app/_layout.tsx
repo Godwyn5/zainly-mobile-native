@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { View } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
@@ -16,6 +17,7 @@ import { clearOnboardingStateForSessionExpiry } from '@/lib/pendingOnboardingPla
 import {
   acceptResultForUser,
   canRenderStackForUser,
+  shouldShowCustomSplash,
   shouldShowPreparationError,
   createInitialPreparationState,
   createPreparingState,
@@ -115,6 +117,7 @@ function AuthBootstrap() {
 
 const MIN_LOGO_VISIBLE_MS = 1200;
 const PREPARATION_TIMEOUT_MS = 10_000;
+const SPLASH_BEIGE = '#F7F2E7';
 
 export default function RootLayout() {
   const { session, ready } = useAuthStore();
@@ -125,12 +128,29 @@ export default function RootLayout() {
     Cinzel_600SemiBold,
   });
 
+  // ── Boot completion tracking ──
+  // Set once the stack is first rendered (initial boot complete).
+  // Never reset — ensures the branded splash is never replayed after
+  // login, logout, background return, or any subsequent auth change.
+  const bootCompletedRef = useRef(false);
+
   // ── Dimension A: initial visual release ──
-  // Timer starts only when fontsLoaded becomes true. Once released, stays
-  // released — never re-armed on logout or account switch.
+  // The 1200ms branded-splash timer is authed-only. Guests get an immediate
+  // release so they see Welcome without delay. Once released, stays released
+  // — never re-armed on logout or account switch.
   const [initialVisualReleased, setInitialVisualReleased] = useState(false);
 
   useEffect(() => {
+    if (!ready) return;
+    if (!session) {
+      // Guest: release immediately, no branded splash timer.
+      setInitialVisualReleased(true);
+      return;
+    }
+    // Authenticated: start the branded-splash timer only during initial boot.
+    // After boot completes, initialVisualReleased is already true and the
+    // timer is never re-armed.
+    if (bootCompletedRef.current) return;
     if (!fontsLoaded) return;
 
     const timer = setTimeout(() => {
@@ -138,7 +158,7 @@ export default function RootLayout() {
     }, MIN_LOGO_VISIBLE_MS);
 
     return () => clearTimeout(timer);
-  }, [fontsLoaded]);
+  }, [fontsLoaded, ready, session]);
 
   // ── Dimension B: account preparation ──
   // Tracks whether the dashboard-critical queries for the CURRENT userId
@@ -224,8 +244,6 @@ export default function RootLayout() {
   }, [ready, userId, retryCount]);
 
   // ── Gate decision ──
-  const showSplash = !fontsLoaded || !initialVisualReleased || !ready;
-
   const authed = ready && !!session;
   const guest = ready && !session;
 
@@ -244,16 +262,38 @@ export default function RootLayout() {
     userId,
   );
 
+  const showBrandedSplash = shouldShowCustomSplash(
+    bootCompletedRef.current,
+    ready,
+    authed,
+    canRenderStack,
+    showPreparationError,
+  );
+
+  // Minimal beige screen: during resolving (session unknown) or post-boot
+  // preparation (e.g. after in-app login). Never the branded splash.
+  const showMinimalScreen =
+    !ready || (bootCompletedRef.current && authed && !canRenderStack && !showPreparationError);
+
+  // Mark boot complete once the stack is first rendered.
+  useEffect(() => {
+    if (canRenderStack) {
+      bootCompletedRef.current = true;
+    }
+  }, [canRenderStack]);
+
   return (
     <QueryClientProvider client={queryClient}>
       <StatusBar style="dark" />
       <AuthBootstrap />
       <RevenueCatProvider />
-      {showSplash ? (
+      {showMinimalScreen ? (
+        <View style={{ flex: 1, backgroundColor: SPLASH_BEIGE }} />
+      ) : showBrandedSplash ? (
         <ColdStartSplash fontsLoaded={fontsLoaded} />
       ) : showPreparationError ? (
         <LaunchErrorScreen onRetry={triggerRetry} />
-      ) : canRenderStack ? (
+      ) : (
         <Stack screenOptions={{ headerShown: false }}>
           {/* Private routes — accessible ONLY when authenticated.
               When session becomes null, these are automatically removed
@@ -276,8 +316,6 @@ export default function RootLayout() {
           <Stack.Screen name="onboarding-v2" />
           <Stack.Screen name="premium" />
         </Stack>
-      ) : (
-        <ColdStartSplash fontsLoaded={fontsLoaded} />
       )}
     </QueryClientProvider>
   );
