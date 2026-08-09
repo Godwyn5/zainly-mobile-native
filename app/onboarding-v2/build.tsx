@@ -23,7 +23,7 @@ const CARD_CREAM         = '#FFFDF7';
 // language, proving the programme is built FROM the answers to come. ────
 const NIVEAU_VALUE   = 'Débutant';
 const OBJECTIF_VALUE = 'Juz Amma';
-const RYTHME_VALUE   = '3 ayats / jour';
+const RYTHME_VALUE   = 'Adapté à toi';
 const EMPTY_PLACEHOLDER = '—';
 
 /** A slow, symmetric 0→1→0 breathing loop — the single primitive behind

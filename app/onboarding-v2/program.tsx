@@ -23,8 +23,8 @@ const CARD_CREAM         = '#FFFDF7';
 // proving the plan adapts to the person rather than the other way round. ──
 const LEVEL_BEFORE     = 'Al-Fatiha';
 const LEVEL_AFTER      = 'Al-Baqara';
-const RHYTHM_BEFORE    = '5 ayats / jour';
-const RHYTHM_AFTER     = '2 ayats / jour';
+const RHYTHM_BEFORE    = 'Standard';
+const RHYTHM_AFTER     = 'Adapté à toi';
 const OBJECTIVE_BEFORE = 'Terminer Juz Amma';
 const OBJECTIVE_AFTER  = 'Consolider';
 
