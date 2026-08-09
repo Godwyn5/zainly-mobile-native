@@ -59,18 +59,6 @@ export default function WelcomeScreen() {
               <Text style={styles.headlineAccent}>avec constance.</Text>
             </View>
 
-            <View style={styles.rosette}>
-              <View style={styles.rosetteCenter} />
-              <View style={styles.rosetteArm1} />
-              <View style={styles.rosetteArm2} />
-              <View style={styles.rosetteArm3} />
-              <View style={styles.rosetteArm4} />
-            </View>
-
-            <Text style={styles.subtitle}>
-              Chaque jour, Zainly te montre quoi mémoriser
-              et quoi réviser pour continuer d'avancer.
-            </Text>
           </View>
 
           <View style={styles.ctaSection}>
@@ -176,7 +164,6 @@ const styles = StyleSheet.create({
   },
   headlineWrap: {
     alignItems: 'center',
-    marginBottom: 20,
   },
   headline: {
     fontFamily: 'Lora_500Medium',
@@ -194,62 +181,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     flexShrink: 0,
   },
-  subtitle: {
-    fontWeight: '500',
-    fontSize: 16,
-    color: SPLASH_GREEN,
-    lineHeight: 24,
-    textAlign: 'center',
-    maxWidth: 300,
-    marginTop: 20,
-  },
-
-  rosette: {
-    width: 24,
-    height: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-  },
-  rosetteCenter: {
-    position: 'absolute',
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: GOLD,
-  },
-  rosetteArm1: {
-    position: 'absolute',
-    width: 2,
-    height: 10,
-    backgroundColor: GOLD,
-    borderRadius: 1,
-  },
-  rosetteArm2: {
-    position: 'absolute',
-    width: 2,
-    height: 10,
-    backgroundColor: GOLD,
-    borderRadius: 1,
-    transform: [{ rotate: '45deg' }],
-  },
-  rosetteArm3: {
-    position: 'absolute',
-    width: 2,
-    height: 10,
-    backgroundColor: GOLD,
-    borderRadius: 1,
-    transform: [{ rotate: '90deg' }],
-  },
-  rosetteArm4: {
-    position: 'absolute',
-    width: 2,
-    height: 10,
-    backgroundColor: GOLD,
-    borderRadius: 1,
-    transform: [{ rotate: '135deg' }],
-  },
-
   ctaSection: {
     gap: 14,
     width: '100%',
