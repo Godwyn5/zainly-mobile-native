@@ -86,6 +86,22 @@ export async function prepareAuthenticatedLaunch(
       const authFlowId = getSessionAuthFlowId();
       const outcome = await finalizeOnboardingV2PlanWithPremiumGate(userId, authFlowId);
 
+      if (outcome.status === 'premium_sync_failed') {
+        // Premium sync failure — the dashboard's recovery hook handles retry.
+        // Return error so the gate blocks the dashboard until the user retries.
+        return {
+          status: 'error',
+          error: new Error('premium_sync_failed'),
+        };
+      }
+      if (outcome.status === 'premium_entitlement_missing') {
+        // Premium entitlement missing — same: block dashboard, let recovery handle.
+        return {
+          status: 'error',
+          error: new Error('premium_entitlement_missing'),
+        };
+      }
+
       if (outcome.status === 'finalized' && outcome.finalize.ok) {
         // Finalize succeeded — run handoff to populate cache with canonical rows.
         const handoff = await handOffFinalizedProgram(queryClient, userId);
@@ -105,12 +121,24 @@ export async function prepareAuthenticatedLaunch(
           }).catch(() => {});
           // Set pendingOnboarding cache to false — no refetch needed.
           queryClient.setQueryData(['pendingOnboarding', userId], false);
+        } else {
+          // Handoff failed — do NOT fall through to normal fetch. The plan
+          // was persisted but the cache re-read failed. Return error so the
+          // gate blocks the dashboard — the user can retry via the
+          // preparation error screen, which re-triggers this function.
+          return {
+            status: 'error',
+            error: new Error('handoff_failed'),
+          };
         }
-        // If handoff failed, fall through to normal fetch — the dashboard's
-        // recovery hook will handle it.
+      } else if (outcome.status === 'finalized' && !outcome.finalize.ok) {
+        // Finalize failed (persist_error, no_source, etc.) — do NOT fall
+        // through. Return error so the gate blocks the dashboard.
+        return {
+          status: 'error',
+          error: new Error(`finalize_failed:${outcome.finalize.reason}`),
+        };
       }
-      // If finalize failed or premium gate blocked, fall through to normal
-      // fetch — the dashboard's recovery hook will handle retry/premium states.
     }
 
     // Critical sources: plan, progress — must all succeed for a

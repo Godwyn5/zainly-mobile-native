@@ -192,43 +192,54 @@ describe('prepareAuthenticatedLaunch', () => {
     expect(cachedPending).toBe(false);
   });
 
-  it('when pending is true but finalize fails, falls through to normal fetch (dashboard recovery handles it)', async () => {
+  it('when pending is true but finalize fails, returns error (no fallthrough)', async () => {
     (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValueOnce(true);
     (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValueOnce({
       status: 'finalized', finalize: { ok: false, reason: 'persist_error' },
     });
 
     const result = await prepareAuthenticatedLaunch(queryClient, 'user-A');
-    expect(result.status).toBe('ready');
+    expect(result.status).toBe('error');
     // Handoff was NOT called because finalize failed
     expect(handOffFinalizedProgram).not.toHaveBeenCalled();
-    // Plan/progress still fetched normally
-    expect(fetchPlan).toHaveBeenCalledWith('user-A');
+    // Plan/progress were NOT fetched — no fallthrough
+    expect(fetchPlan).not.toHaveBeenCalledWith('user-A');
   });
 
-  it('when pending is true but premium gate blocks, falls through to normal fetch', async () => {
+  it('when pending is true but premium gate blocks, returns error (no fallthrough)', async () => {
     (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValueOnce(true);
     (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValueOnce({
       status: 'premium_entitlement_missing',
     });
 
     const result = await prepareAuthenticatedLaunch(queryClient, 'user-A');
-    expect(result.status).toBe('ready');
+    expect(result.status).toBe('error');
     expect(handOffFinalizedProgram).not.toHaveBeenCalled();
   });
 
-  it('when pending is true, finalize ok, but handoff fails, falls through to normal fetch', async () => {
+  it('when pending is true and premium sync fails, returns error (no fallthrough)', async () => {
+    (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValueOnce(true);
+    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValueOnce({
+      status: 'premium_sync_failed', reason: 'configure_failed',
+    });
+
+    const result = await prepareAuthenticatedLaunch(queryClient, 'user-A');
+    expect(result.status).toBe('error');
+    expect(handOffFinalizedProgram).not.toHaveBeenCalled();
+  });
+
+  it('when pending is true, finalize ok, but handoff fails, returns error (no fallthrough)', async () => {
     (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValueOnce(true);
     (handOffFinalizedProgram as jest.Mock).mockResolvedValueOnce({
       status: 'error', error: new Error('handoff_failed'),
     });
 
     const result = await prepareAuthenticatedLaunch(queryClient, 'user-A');
-    expect(result.status).toBe('ready');
+    expect(result.status).toBe('error');
     // Clear was NOT called because handoff failed
     expect(clearPendingOnboardingIfMatches).not.toHaveBeenCalled();
-    // Plan/progress still fetched normally
-    expect(fetchPlan).toHaveBeenCalledWith('user-A');
+    // Plan/progress were NOT fetched — no fallthrough
+    expect(fetchPlan).not.toHaveBeenCalledWith('user-A');
   });
 
   it('when no pending exists, finalize/handoff/clear are never called', async () => {

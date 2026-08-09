@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { View } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -14,6 +14,12 @@ import { ColdStartSplash } from '@/components/launch/ColdStartSplash';
 import { LaunchErrorScreen } from '@/components/launch/LaunchErrorScreen';
 import { prepareAuthenticatedLaunch } from '@/lib/prepareAuthenticatedLaunch';
 import { clearOnboardingStateForSessionExpiry } from '@/lib/pendingOnboardingPlan';
+import {
+  subscribeToTransitionLease,
+  hasActiveTransitionLease,
+  consumeVerifiedHandoff,
+  clearVerifiedHandoff,
+} from '@/lib/transitionLease';
 import {
   acceptResultForUser,
   canRenderStackForUser,
@@ -160,6 +166,20 @@ export default function RootLayout() {
     return () => clearTimeout(timer);
   }, [fontsLoaded, ready, session]);
 
+  // ── Transition lease ──
+  // When an onboarding transition lease is active (signup/login handler is
+  // running finalize+handoff), treat the user as NOT yet authenticated so
+  // Stack.Protected keeps the (auth) group mounted and the dashboard does
+  // not appear prematurely.
+  const leaseActive = useSyncExternalStore(
+    subscribeToTransitionLease,
+    hasActiveTransitionLease,
+    hasActiveTransitionLease,
+  );
+
+  // Track the previous lease state to detect lease release.
+  const prevLeaseActiveRef = useRef(false);
+
   // ── Dimension B: account preparation ──
   // Tracks whether the dashboard-critical queries for the CURRENT userId
   // have been resolved. Reset to idle whenever userId changes.
@@ -176,8 +196,58 @@ export default function RootLayout() {
   // response, timeout, and React Strict Mode double-invoke.
   const generationRef = useRef(0);
 
+  // Track whether preparation was completed via a verified handoff for the
+  // current userId. When true, the preparation effect skips entirely —
+  // the cache is already verified and ready. Reset when userId changes.
+  const handoffReadyRef = useRef<string | null>(null);
+  const prevUserIdRef = useRef<string | null>(null);
+
+  // Clear handoff bypass when userId changes (account switch, logout).
+  useEffect(() => {
+    if (prevUserIdRef.current !== userId) {
+      handoffReadyRef.current = null;
+      clearVerifiedHandoff();
+      prevUserIdRef.current = userId;
+    }
+  }, [userId]);
+
+  // ── Consume verified handoff when lease is released ──
+  // When the transition lease transitions from active to inactive, the
+  // signup/login handler has already populated and verified the cache.
+  // If a verified handoff exists for the current userId, we can skip
+  // the preparing state entirely — set accountPreparation directly to
+  // ready. This eliminates the white/beige screen that would otherwise
+  // appear between the signup screen and the dashboard.
+  //
+  // If no handoff exists (error path, session change, or userId mismatch),
+  // fall back to the preparing state so the preparation effect runs
+  // normally.
+  useEffect(() => {
+    if (prevLeaseActiveRef.current && !leaseActive && userId) {
+      const handoff = consumeVerifiedHandoff(userId);
+      if (handoff) {
+        // Cache is verified — skip preparing, go directly to ready.
+        handoffReadyRef.current = userId;
+        setAccountPreparation(createReadyState(userId));
+      } else {
+        // No valid handoff — run normal preparation.
+        handoffReadyRef.current = null;
+        setAccountPreparation(createPreparingState(userId));
+      }
+    }
+    prevLeaseActiveRef.current = leaseActive;
+  }, [leaseActive, userId]);
+
   useEffect(() => {
     if (!ready || !userId) return;
+    // Skip preparation while a transition lease is active — the signup/login
+    // handler is running finalize+handoff and will release the lease when
+    // the cache is ready. prepareAuthenticatedLaunch would run prematurely.
+    if (leaseActive) return;
+    // Skip if preparation was already completed via a verified handoff
+    // for this exact userId — the cache is already populated and verified.
+    // But NOT on retry — a manual retry must re-run preparation.
+    if (handoffReadyRef.current === userId && retryCount === 0) return;
 
     const generation = ++generationRef.current;
     let cancelled = false;
@@ -241,11 +311,15 @@ export default function RootLayout() {
       cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [ready, userId, retryCount]);
+  }, [ready, userId, retryCount, leaseActive]);
 
   // ── Gate decision ──
-  const authed = ready && !!session;
-  const guest = ready && !session;
+  // While a transition lease is active, the signup/login screen is still
+  // mounted and running finalize+handoff. The session may already exist in
+  // Supabase, but we must NOT treat the user as authenticated — the route
+  // group must not swap yet.
+  const authed = ready && !!session && !leaseActive;
+  const guest = ready && (!session || leaseActive);
 
   // For authenticated users, also require account preparation.
   const canRenderStack = canRenderStackForUser(
@@ -294,7 +368,7 @@ export default function RootLayout() {
       ) : showPreparationError ? (
         <LaunchErrorScreen onRetry={triggerRetry} />
       ) : (
-        <Stack screenOptions={{ headerShown: false }}>
+        <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#F5F0E6' } }}>
           {/* Private routes — accessible ONLY when authenticated.
               When session becomes null, these are automatically removed
               and their history is cleared by Stack.Protected. */}

@@ -8,8 +8,15 @@ import {
 import { useFonts } from 'expo-font';
 import { Lora_500Medium } from '@expo-google-fonts/lora';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/db/client';
-import { setSessionAuthFlowId } from '@/lib/pendingOnboardingPlan';
+import {
+  beginOnboardingTransition,
+  setTransitionUserId,
+  runOnboardingTransition,
+  type OnboardingTransitionResult,
+} from '@/lib/onboardingTransition';
+import { forceReleaseTransitionLease } from '@/lib/transitionLease';
 import { hapticLight, hapticMedium, hapticSelection } from '@/utils/haptics';
 import ZainlyLogo from '@/components/auth/ZainlyLogo';
 
@@ -34,6 +41,7 @@ function friendlySignupError(msg: string): string {
 export default function SignupEmailScreen() {
   const { context, flowId: flowIdParam } = useLocalSearchParams<{ context?: string; flowId?: string }>();
   const fromOnboarding = context === 'onboarding';
+  const queryClient = useQueryClient();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -41,10 +49,12 @@ export default function SignupEmailScreen() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [transitionError, setTransitionError] = useState<OnboardingTransitionResult | null>(null);
   const [emailSent, setEmailSent] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
   const [confirmFocused, setConfirmFocused] = useState(false);
+  const leaseIdRef = useRef<string | null>(null);
 
   const [fontsLoaded] = useFonts({
     Lora_500Medium,
@@ -77,9 +87,20 @@ export default function SignupEmailScreen() {
     ]).start();
   }, [fontsLoaded]);
 
+  // ── Cleanup: force-release any lingering lease on unmount ──
+  useEffect(() => {
+    return () => {
+      if (leaseIdRef.current) {
+        forceReleaseTransitionLease();
+        leaseIdRef.current = null;
+      }
+    };
+  }, []);
+
   async function handleSignup() {
     if (loading) return;
     setError(null);
+    setTransitionError(null);
     hapticMedium();
     const trimEmail = email.trim().toLowerCase();
     if (!trimEmail) { setError('Saisis ton adresse e-mail.'); return; }
@@ -87,23 +108,91 @@ export default function SignupEmailScreen() {
     if (password.length < 6) { setError('Le mot de passe doit contenir au moins 6 caractères.'); return; }
     if (password !== confirm) { setError('Les mots de passe ne correspondent pas.'); return; }
     setLoading(true);
-    const { data, error: signupError } = await supabase.auth.signUp({ email: trimEmail, password });
-    if (signupError) { setLoading(false); setError(friendlySignupError(signupError.message)); return; }
-    // If this is an onboarding auth flow, store the flowId in-memory so
-    // claimPendingOnboardingPlanForUser can use it as a fast-path proof.
-    // Cold-start resume (no flowId in params) is handled inside claim via
-    // readActiveOnboardingAuthFlow() — no need to read handoff here.
+
+    // ── Onboarding transition: create lease BEFORE signUp ──
+    // The lease prevents Stack.Protected from swapping route groups when
+    // the session is created. The signup screen stays mounted while we run
+    // finalize+handoff+clear+verify, then release the lease.
     if (fromOnboarding && flowIdParam) {
-      setSessionAuthFlowId(flowIdParam);
+      try {
+        leaseIdRef.current = beginOnboardingTransition(flowIdParam);
+      } catch {
+        // A lease is already active (double-tap) — ignore.
+        setLoading(false);
+        return;
+      }
     }
-    if (data.session) {
-      // Session created — Stack.Protected will redirect to (app) automatically.
-      // Keep loading true so the button stays in its loading state until
-      // the screen is unmounted by the route group swap.
+
+    const { data, error: signupError } = await supabase.auth.signUp({ email: trimEmail, password });
+    if (signupError) {
+      if (leaseIdRef.current) {
+        forceReleaseTransitionLease();
+        leaseIdRef.current = null;
+      }
+      setLoading(false);
+      setError(friendlySignupError(signupError.message));
       return;
+    }
+
+    if (data.session) {
+      // ── Onboarding transition: finalize+handoff+clear+verify ──
+      if (leaseIdRef.current && fromOnboarding && flowIdParam) {
+        const userId = data.session.user.id;
+        setTransitionUserId(userId);
+        const result = await runOnboardingTransition(queryClient, userId, leaseIdRef.current);
+        leaseIdRef.current = null;
+        if (result.status === 'error') {
+          setTransitionError(result);
+          setLoading(false);
+          return;
+        }
+        // Success — lease released, cache verified. Route group swap will
+        // happen naturally. Keep loading true until unmount.
+        return;
+      }
+      // Non-onboarding signup with immediate session — Stack.Protected will
+      // redirect to (app) automatically. Keep loading true until unmount.
+      return;
+    }
+
+    if (leaseIdRef.current) {
+      forceReleaseTransitionLease();
+      leaseIdRef.current = null;
     }
     setLoading(false);
     setEmailSent(true);
+  }
+
+  async function retryTransition() {
+    if (!leaseIdRef.current || !flowIdParam) return;
+    setTransitionError(null);
+    setLoading(true);
+    // Re-create the lease for the retry
+    try {
+      leaseIdRef.current = beginOnboardingTransition(flowIdParam);
+    } catch {
+      setLoading(false);
+      return;
+    }
+    // Re-signUp is not needed — the session already exists. We need the
+    // userId from the current session.
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      forceReleaseTransitionLease();
+      leaseIdRef.current = null;
+      setLoading(false);
+      setError('Session expirée. Reconnecte-toi.');
+      return;
+    }
+    const userId = session.user.id;
+    setTransitionUserId(userId);
+    const result = await runOnboardingTransition(queryClient, userId, leaseIdRef.current);
+    leaseIdRef.current = null;
+    if (result.status === 'error') {
+      setTransitionError(result);
+      setLoading(false);
+    }
+    // Success — lease released, route swap happens.
   }
 
   function handleBack() {
@@ -113,6 +202,45 @@ export default function SignupEmailScreen() {
 
   if (!fontsLoaded) {
     return <View style={styles.root} />;
+  }
+
+  // ─── Transition error state ──────────────────────────────────────────────
+  // When finalize/handoff/clear fails, show a stable error on the same
+  // screen — the dashboard is never exposed with incomplete data.
+  if (transitionError && transitionError.status === 'error') {
+    const err = transitionError.error;
+    let title = 'Impossible de finaliser ton programme';
+    let desc = "Ton programme n'a pas été perdu. Vérifie ta connexion puis réessaie.";
+    if (err.kind === 'premium_entitlement_missing') {
+      title = 'Abonnement Zainly+ requis';
+      desc = "Ce parcours nécessite un abonnement Zainly+ actif. Restaure ton achat ou réessaie.";
+    } else if (err.kind === 'premium_sync_failed') {
+      title = "Vérification de l'abonnement impossible";
+      desc = "Impossible de vérifier ton abonnement Zainly+. Réessaie.";
+    } else if (err.kind === 'handoff_error') {
+      desc = err.message;
+    } else if (err.kind === 'clear_superseded') {
+      desc = err.message;
+    } else if (err.kind === 'cache_verification_failed') {
+      desc = err.message;
+    }
+    return (
+      <View style={styles.root}>
+        <StatusBar barStyle="dark-content" backgroundColor={BG} />
+        <View style={styles.confirmedShell}>
+          <ZainlyLogo />
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.subtitle}>{desc}</Text>
+          <TouchableOpacity onPress={retryTransition} style={styles.retryButton} disabled={loading}>
+            {loading ? (
+              <ActivityIndicator color={BG} />
+            ) : (
+              <Text style={styles.primaryBtnText}>Réessayer</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
   }
 
   // ─── Email confirmation state ─────────────────────────────────────────────
@@ -357,5 +485,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: MUTED,
     fontWeight: '500',
+  },
+  retryButton: {
+    backgroundColor: GREEN,
+    borderRadius: 16,
+    paddingVertical: 18,
+    alignItems: 'center',
+    minHeight: 56,
+    marginTop: 24,
+    marginHorizontal: 28,
   },
 });

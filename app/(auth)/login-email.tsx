@@ -8,8 +8,15 @@ import {
 import { useFonts } from 'expo-font';
 import { Lora_500Medium } from '@expo-google-fonts/lora';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/db/client';
-import { setSessionAuthFlowId } from '@/lib/pendingOnboardingPlan';
+import {
+  beginOnboardingTransition,
+  setTransitionUserId,
+  runOnboardingTransition,
+  type OnboardingTransitionResult,
+} from '@/lib/onboardingTransition';
+import { forceReleaseTransitionLease } from '@/lib/transitionLease';
 import { hapticLight, hapticMedium, hapticSelection } from '@/utils/haptics';
 import ZainlyLogo from '@/components/auth/ZainlyLogo';
 
@@ -32,13 +39,16 @@ function friendlyAuthError(msg: string): string {
 export default function LoginEmailScreen() {
   const { context, flowId: flowIdParam } = useLocalSearchParams<{ context?: string; flowId?: string }>();
   const fromOnboarding = context === 'onboarding';
+  const queryClient = useQueryClient();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [transitionError, setTransitionError] = useState<OnboardingTransitionResult | null>(null);
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
+  const leaseIdRef = useRef<string | null>(null);
 
   const [fontsLoaded] = useFonts({
     Lora_500Medium,
@@ -70,30 +80,101 @@ export default function LoginEmailScreen() {
     ]).start();
   }, [fontsLoaded]);
 
+  // ── Cleanup: force-release any lingering lease on unmount ──
+  useEffect(() => {
+    return () => {
+      if (leaseIdRef.current) {
+        forceReleaseTransitionLease();
+        leaseIdRef.current = null;
+      }
+    };
+  }, []);
+
   async function handleLogin() {
     if (loading) return;
     setError(null);
+    setTransitionError(null);
     hapticMedium();
     const trimEmail = email.trim().toLowerCase();
     if (!trimEmail || !password) { setError('Saisis ton e-mail et ton mot de passe.'); return; }
     setLoading(true);
-    const { data, error: authError } = await supabase.auth.signInWithPassword({ email: trimEmail, password });
-    if (authError) { setLoading(false); setError(friendlyAuthError(authError.message)); return; }
-    // If this is an onboarding auth flow, store the flowId in-memory so
-    // claimPendingOnboardingPlanForUser can use it as a fast-path proof.
-    // Cold-start resume (no flowId in params) is handled inside claim via
-    // readActiveOnboardingAuthFlow() — no need to read handoff here.
+
+    // ── Onboarding transition: create lease BEFORE signIn ──
     if (fromOnboarding && flowIdParam) {
-      setSessionAuthFlowId(flowIdParam);
+      try {
+        leaseIdRef.current = beginOnboardingTransition(flowIdParam);
+      } catch {
+        setLoading(false);
+        return;
+      }
     }
-    if (data.session) {
-      // Session created — Stack.Protected will redirect to (app) automatically.
-      // Keep loading true so the button stays in its loading state until
-      // the screen is unmounted by the route group swap.
+
+    const { data, error: authError } = await supabase.auth.signInWithPassword({ email: trimEmail, password });
+    if (authError) {
+      if (leaseIdRef.current) {
+        forceReleaseTransitionLease();
+        leaseIdRef.current = null;
+      }
+      setLoading(false);
+      setError(friendlyAuthError(authError.message));
       return;
+    }
+
+    if (data.session) {
+      // ── Onboarding transition: finalize+handoff+clear+verify ──
+      if (leaseIdRef.current && fromOnboarding && flowIdParam) {
+        const userId = data.session.user.id;
+        setTransitionUserId(userId);
+        const result = await runOnboardingTransition(queryClient, userId, leaseIdRef.current);
+        leaseIdRef.current = null;
+        if (result.status === 'error') {
+          setTransitionError(result);
+          setLoading(false);
+          return;
+        }
+        // Success — lease released, cache verified. Route group swap will
+        // happen naturally. Keep loading true until unmount.
+        return;
+      }
+      // Non-onboarding login — Stack.Protected will redirect to (app).
+      // Keep loading true until unmount.
+      return;
+    }
+
+    if (leaseIdRef.current) {
+      forceReleaseTransitionLease();
+      leaseIdRef.current = null;
     }
     setLoading(false);
     setError('Connexion impossible pour le moment. Réessaie dans un instant.');
+  }
+
+  async function retryTransition() {
+    if (!flowIdParam) return;
+    setTransitionError(null);
+    setLoading(true);
+    try {
+      leaseIdRef.current = beginOnboardingTransition(flowIdParam);
+    } catch {
+      setLoading(false);
+      return;
+    }
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      forceReleaseTransitionLease();
+      leaseIdRef.current = null;
+      setLoading(false);
+      setError('Session expirée. Reconnecte-toi.');
+      return;
+    }
+    const userId = session.user.id;
+    setTransitionUserId(userId);
+    const result = await runOnboardingTransition(queryClient, userId, leaseIdRef.current);
+    leaseIdRef.current = null;
+    if (result.status === 'error') {
+      setTransitionError(result);
+      setLoading(false);
+    }
   }
 
   function handleForgotPassword() {
@@ -103,6 +184,43 @@ export default function LoginEmailScreen() {
 
   if (!fontsLoaded) {
     return <View style={styles.root} />;
+  }
+
+  // ─── Transition error state ──────────────────────────────────────────────
+  if (transitionError && transitionError.status === 'error') {
+    const err = transitionError.error;
+    let title = 'Impossible de finaliser ton programme';
+    let desc = "Ton programme n'a pas été perdu. Vérifie ta connexion puis réessaie.";
+    if (err.kind === 'premium_entitlement_missing') {
+      title = 'Abonnement Zainly+ requis';
+      desc = "Ce parcours nécessite un abonnement Zainly+ actif. Restaure ton achat ou réessaie.";
+    } else if (err.kind === 'premium_sync_failed') {
+      title = "Vérification de l'abonnement impossible";
+      desc = "Impossible de vérifier ton abonnement Zainly+. Réessaie.";
+    } else if (err.kind === 'handoff_error') {
+      desc = err.message;
+    } else if (err.kind === 'clear_superseded') {
+      desc = err.message;
+    } else if (err.kind === 'cache_verification_failed') {
+      desc = err.message;
+    }
+    return (
+      <View style={styles.root}>
+        <StatusBar barStyle="dark-content" backgroundColor={BG} />
+        <View style={styles.transitionErrorShell}>
+          <ZainlyLogo />
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.subtitle}>{desc}</Text>
+          <TouchableOpacity onPress={retryTransition} style={styles.retryButton} disabled={loading}>
+            {loading ? (
+              <ActivityIndicator color={BG} />
+            ) : (
+              <Text style={styles.primaryBtnText}>Réessayer</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
   }
 
   return (
@@ -291,5 +409,27 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: BG,
     letterSpacing: 0.2,
+  },
+  transitionErrorShell: {
+    paddingHorizontal: 28,
+    paddingTop: 72,
+    alignItems: 'center',
+  },
+  subtitle: {
+    fontSize: 16,
+    color: MUTED,
+    textAlign: 'center',
+    lineHeight: 24,
+    maxWidth: 280,
+    marginBottom: 32,
+  },
+  retryButton: {
+    backgroundColor: GREEN,
+    borderRadius: 16,
+    paddingVertical: 18,
+    alignItems: 'center',
+    minHeight: 56,
+    marginTop: 24,
+    marginHorizontal: 28,
   },
 });
