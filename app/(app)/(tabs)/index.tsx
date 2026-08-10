@@ -238,6 +238,23 @@ export default function TodayScreen() {
       finalize.status === 'premium_sync_failed' ||
       finalize.status === 'premium_entitlement_missing');
 
+  // ── dashboard-ready signal: gated on the REAL hydrated branch, not mount ──
+  // Screen's onLayout resolves the instant its flex:1 SafeAreaView is laid
+  // out — independent of children — which is BEFORE the hero/cards below
+  // finish fading in from opacity 0 (staggered entrance, ~630ms). Signaling
+  // from that onLayout exposes Screen's own beige background (colors.
+  // background) for that whole window. isRealDashboardRef is refreshed on
+  // every render (effect below, no deps) so the entrance-animation
+  // completion callback — the actual first moment hero+cards are fully
+  // opaque — can check it and only signal when this render's branch is the
+  // final hydrated one (never loading/error/finalizing/no-plan).
+  const isRealDashboard =
+    !isLoading && !hasError && !isFinalizingOnboardingV2 && !hasNoPlan;
+  const isRealDashboardRef = useRef(false);
+  useEffect(() => {
+    isRealDashboardRef.current = isRealDashboard;
+  });
+
   // ── animation refs ──
   const mountedRef   = useRef(true);
   const heroAnim     = useRef(new Animated.Value(0)).current;
@@ -274,7 +291,17 @@ export default function TodayScreen() {
       Animated.timing(card1Anim, { toValue: 1, duration: 460, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       Animated.timing(card2Anim, { toValue: 1, duration: 430, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
     ]);
-    seq.start();
+    // This is the actual first moment the hero+cards are fully opaque —
+    // the real signal for the signup-transition cover overlay (see
+    // DashboardReadyProvider/onDashboardLayout). Not an artificial delay:
+    // it reports the completion of an entrance animation that already runs
+    // unconditionally on every mount, gated to fire only when this finished
+    // render is genuinely the final hydrated branch.
+    seq.start(({ finished }) => {
+      if (finished && mountedRef.current && isRealDashboardRef.current) {
+        onDashboardLayout();
+      }
+    });
 
     // hero gold line grow
     const goldLine = Animated.timing(goldLineAnim, {
@@ -568,7 +595,7 @@ export default function TodayScreen() {
   const ctaShineX = ctaShineAnim.interpolate({ inputRange: [-1, 1], outputRange: ['-60%', '160%'] });
 
   return (
-    <Screen onLayout={onDashboardLayout}>
+    <Screen>
 
       {/* ══ BACKGROUND LAYER ══════════════════════════════════════ */}
 
