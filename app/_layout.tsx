@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View } from 'react-native';
 import { Stack } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
@@ -13,7 +13,7 @@ import { RevenueCatProvider } from '@/components/providers/RevenueCatProvider';
 import { DashboardReadyProvider } from '@/components/providers/DashboardReadyProvider';
 import { ColdStartSplash } from '@/components/launch/ColdStartSplash';
 import { LaunchErrorScreen } from '@/components/launch/LaunchErrorScreen';
-import { SignupSurface } from '@/components/auth/SignupSurface';
+import { TransitionCoverOverlay } from '@/components/auth/TransitionCoverOverlay';
 import { prepareAuthenticatedLaunch } from '@/lib/prepareAuthenticatedLaunch';
 import { clearOnboardingStateForSessionExpiry } from '@/lib/pendingOnboardingPlan';
 import {
@@ -423,31 +423,10 @@ export default function RootLayout() {
             <Stack.Screen name="premium" />
           </Stack>
           {showCoverOverlay && leaseSnapshot.visual && (
-            <View style={styles.coverOverlay} pointerEvents="auto">
-              <SignupSurface
-                email={leaseSnapshot.visual.email}
-                password={leaseSnapshot.visual.password}
-                confirm={leaseSnapshot.visual.confirm}
-                showPw={leaseSnapshot.visual.showPw}
-                showConfirm={leaseSnapshot.visual.showConfirm}
-                loading={true}
-                error={null}
-                emailFocused={false}
-                passwordFocused={false}
-                confirmFocused={false}
-              />
-            </View>
+            <TransitionCoverOverlay visible={showCoverOverlay} visual={leaseSnapshot.visual} />
           )}
         </DashboardReadyProvider>
       )}
     </QueryClientProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  coverOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 1000,
-    elevation: 1000,
-  },
-});
