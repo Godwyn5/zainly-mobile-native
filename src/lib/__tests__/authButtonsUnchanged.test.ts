@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 
-// Verifies that the Apple and Google login/signup buttons have NOT been modified
-// by checking that the key strings and handlers still exist in the source files.
+// Verifies that the Apple and Google login/signup buttons are wired to the
+// social auth coordinator (performSocialAuth) and retain their visual identity.
 
 const fs = require('fs') as typeof import('fs');
 const path = require('path') as typeof import('path');
@@ -25,9 +25,10 @@ describe('Apple and Google auth buttons — unchanged', () => {
     expect(content).toContain('GoogleIcon');
   });
 
-  it('login-methods.tsx still shows "Bientôt disponible" alert for Apple', () => {
+  it('login-methods.tsx wires Apple button to performSocialAuth', () => {
     const content = fs.readFileSync(loginMethodsPath, 'utf-8');
-    expect(content).toContain('Bientôt disponible');
+    expect(content).toContain('performSocialAuth');
+    expect(content).toContain("handleSocial('apple')");
   });
 
   it('signup-methods.tsx still has Apple button with "Continuer avec Apple"', () => {
@@ -45,8 +46,9 @@ describe('Apple and Google auth buttons — unchanged', () => {
     expect(content).toContain('GoogleIcon');
   });
 
-  it('signup-methods.tsx still shows "Bientôt disponible" alert for Apple', () => {
+  it('signup-methods.tsx wires Apple button to performSocialAuth', () => {
     const content = fs.readFileSync(signupMethodsPath, 'utf-8');
-    expect(content).toContain('Bientôt disponible');
+    expect(content).toContain('performSocialAuth');
+    expect(content).toContain("handleSocial('apple')");
   });
 });

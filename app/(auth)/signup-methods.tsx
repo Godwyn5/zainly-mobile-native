@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity,
+  View, Text, StyleSheet, TouchableOpacity, Alert,
   Animated, Easing, StatusBar, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useFonts } from 'expo-font';
+import { useQueryClient } from '@tanstack/react-query';
 import { Lora_500Medium } from '@expo-google-fonts/lora';
 import { hapticMedium } from '@/utils/haptics';
 import ZainlyLogo from '@/components/auth/ZainlyLogo';
 import AppleIcon from '@/components/auth/icons/AppleIcon';
 import GoogleIcon from '@/components/auth/icons/GoogleIcon';
 import EmailIcon from '@/components/auth/icons/EmailIcon';
+import { performSocialAuth, type SocialAuthFullResult, type SocialProvider } from '@/lib/socialAuth';
+import { type OnboardingTransitionResult } from '@/lib/onboardingTransition';
 
 // ─── palette — matches Splash/Welcome identity ───────────────────────────────
 const BG = '#F7F2E7';              // cream (from Welcome)
@@ -24,7 +27,9 @@ export default function SignupMethodsScreen() {
   const { context, flowId } = useLocalSearchParams<{ context?: string; flowId?: string }>();
   const fromOnboarding = context === 'onboarding';
 
-  const [loading] = useState({ apple: false, google: false });
+  const queryClient = useQueryClient();
+  const [loading, setLoading] = useState<{ apple: boolean; google: boolean }>({ apple: false, google: false });
+  const [transitionError, setTransitionError] = useState<OnboardingTransitionResult | null>(null);
 
   const [fontsLoaded] = useFonts({
     Lora_500Medium,
@@ -55,16 +60,47 @@ export default function SignupMethodsScreen() {
     ]).start();
   }, [fontsLoaded, logoO, logoY, titleO, titleY, subtitleO, subtitleY, btnsO, btnsY]);
 
-  function handleApple() {
+  async function handleSocial(provider: SocialProvider) {
     hapticMedium();
-    // PLACEHOLDER: Real Apple auth to be implemented in separate mission
-    alert('Continuer avec Apple - Bientôt disponible');
+    setLoading(prev => ({ ...prev, [provider]: true }));
+    setTransitionError(null);
+
+    const result: SocialAuthFullResult = await performSocialAuth(
+      provider,
+      queryClient,
+      fromOnboarding && flowId
+        ? { flowId: decodeURIComponent(flowId) }
+        : undefined,
+    );
+
+    setLoading(prev => ({ ...prev, [provider]: false }));
+
+    if (result.ok) {
+      // Success — Stack.Protected handles navigation.
+      // For onboarding flows, the transition lease covers the route swap.
+      return;
+    }
+
+    if (result.reason === 'cancelled') {
+      // User cancelled — silent, no error display.
+      return;
+    }
+
+    if (result.transitionError && result.transitionError.status === 'error') {
+      setTransitionError(result.transitionError);
+      return;
+    }
+
+    const message = result.message ?? 'Connexion impossible pour le moment.';
+    Alert.alert('Erreur', message);
+  }
+
+  function handleApple() {
+    handleSocial('apple');
   }
 
   function handleGoogle() {
-    hapticMedium();
-    // PLACEHOLDER: Real Google auth to be implemented in separate mission
-    alert('Continuer avec Google - Bientôt disponible');
+    handleSocial('google');
   }
 
   function handleEmail() {
@@ -80,6 +116,39 @@ export default function SignupMethodsScreen() {
 
   if (!fontsLoaded) {
     return <View style={styles.root} />;
+  }
+
+  // ─── Transition error state ──────────────────────────────────────────────
+  if (transitionError && transitionError.status === 'error') {
+    const err = transitionError.error;
+    let title = 'Impossible de finaliser ton programme';
+    let desc = "Ton programme n'a pas été perdu. Vérifie ta connexion puis réessaie.";
+    if (err.kind === 'premium_entitlement_missing') {
+      title = 'Abonnement Zainly+ requis';
+      desc = "Ce parcours nécessite un abonnement Zainly+ actif. Restaure ton achat ou réessaie.";
+    } else if (err.kind === 'premium_sync_failed') {
+      title = "Vérification de l'abonnement impossible";
+      desc = "Impossible de vérifier ton abonnement Zainly+. Réessaie.";
+    } else if (err.kind === 'handoff_error') {
+      desc = err.message;
+    } else if (err.kind === 'clear_superseded') {
+      desc = err.message;
+    } else if (err.kind === 'cache_verification_failed') {
+      desc = err.message;
+    }
+    return (
+      <View style={styles.root}>
+        <StatusBar barStyle="dark-content" backgroundColor={BG} />
+        <View style={styles.confirmedShell}>
+          <ZainlyLogo />
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.subtitle}>{desc}</Text>
+          <TouchableOpacity onPress={() => setTransitionError(null)} style={styles.retryButton}>
+            <Text style={styles.primaryBtnText}>Retour</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
   }
 
   return (
@@ -249,5 +318,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 12,
+  },
+  confirmedShell: {
+    paddingHorizontal: 28,
+    paddingTop: 72,
+    alignItems: 'center',
+  },
+  retryButton: {
+    backgroundColor: GREEN,
+    borderRadius: 16,
+    paddingVertical: 18,
+    alignItems: 'center',
+    minHeight: 56,
+    marginTop: 24,
+    marginHorizontal: 28,
+  },
+  primaryBtnText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: BG,
+    letterSpacing: 0.2,
   },
 });

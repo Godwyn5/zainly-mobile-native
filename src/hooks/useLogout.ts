@@ -16,6 +16,7 @@ import { clearNotificationData }       from '@/notifications/storage';
 import { revenueCatLogOut }            from '@/lib/revenueCat';
 import { clearAllPendingOnboardingData } from '@/lib/pendingOnboardingPlan';
 import { clearOnboardingDraft }           from '@/lib/onboardingDraft';
+import { signOutGoogle }                  from '@/lib/socialAuth';
 
 export function useLogout() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -38,6 +39,10 @@ export function useLogout() {
 
       // 2. Best-effort RevenueCat identity reset — must never affect logout flow
       await revenueCatLogOut().catch(() => {/* non-fatal */});
+
+      // 2a. Best-effort Google Sign-Out — clears the native Google credential
+      // so a different account can sign in after logout. Must never affect flow.
+      await signOutGoogle();
 
       // 2b. Clear any pending onboarding-v2 payload — a logout must never
       // leave a pending plan that a different account could claim after

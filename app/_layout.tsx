@@ -33,6 +33,20 @@ import {
   createErrorState,
   type PreparationState,
 } from '@/lib/preparationStateMachine';
+import { configureGoogleSignIn } from '@/lib/socialAuth';
+
+// ── Google Sign-In configuration (module level, runs once) ──────────────────
+// webClientId is required to obtain an idToken from Google Sign-In.
+// iosClientId is optional — if omitted, the plugin reads from GoogleService-Info.plist.
+const _googleWebClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
+const _googleIosClientId = process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
+if (_googleWebClientId) {
+  configureGoogleSignIn(_googleWebClientId, _googleIosClientId);
+} else if (__DEV__) {
+  console.warn(
+    '[socialAuth] EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID is missing — Google Sign-In will not produce an idToken.'
+  );
+}
 
 // ── Foreground notification handler ──────────────────────────────────────────
 // Must be called once at module level (outside any component).
