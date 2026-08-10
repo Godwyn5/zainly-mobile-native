@@ -114,9 +114,21 @@ export default function SignupEmailScreen() {
     // The lease prevents Stack.Protected from swapping route groups when
     // the session is created. The signup screen stays mounted while we run
     // finalize+handoff+clear+verify, then release the lease.
+    //
+    // The visual snapshot is passed in immediately so the root layout's
+    // cover overlay is already mounted (as the same instance) BEFORE any
+    // route swap ever happens — not only once finalize+handoff completes.
+    const visual: SignupVisualSnapshot = {
+      surfaceType: 'signup',
+      email: trimEmail,
+      password,
+      confirm,
+      showPw,
+      showConfirm,
+    };
     if (fromOnboarding && flowIdParam) {
       try {
-        leaseIdRef.current = beginOnboardingTransition(flowIdParam);
+        leaseIdRef.current = beginOnboardingTransition(flowIdParam, visual);
       } catch {
         // A lease is already active (double-tap) — ignore.
         setLoading(false);
@@ -141,14 +153,6 @@ export default function SignupEmailScreen() {
         const userId = data.session.user.id;
         const sessionGen = data.session.access_token?.slice(-16) ?? `${Date.now()}-${userId.slice(-8)}`;
         setTransitionUserId(userId);
-        const visual: SignupVisualSnapshot = {
-          surfaceType: 'signup',
-          email: trimEmail,
-          password,
-          confirm,
-          showPw,
-          showConfirm,
-        };
         const result = await runOnboardingTransition(queryClient, userId, leaseIdRef.current, sessionGen, visual);
         leaseIdRef.current = null;
         if (result.status === 'error') {
@@ -178,9 +182,17 @@ export default function SignupEmailScreen() {
     if (!leaseIdRef.current || !flowIdParam) return;
     setTransitionError(null);
     setLoading(true);
+    const visual: SignupVisualSnapshot = {
+      surfaceType: 'signup',
+      email,
+      password,
+      confirm,
+      showPw,
+      showConfirm,
+    };
     // Re-create the lease for the retry
     try {
-      leaseIdRef.current = beginOnboardingTransition(flowIdParam);
+      leaseIdRef.current = beginOnboardingTransition(flowIdParam, visual);
     } catch {
       setLoading(false);
       return;
@@ -198,14 +210,6 @@ export default function SignupEmailScreen() {
     const userId = session.user.id;
     const sessionGen = session.access_token?.slice(-16) ?? `${Date.now()}-${userId.slice(-8)}`;
     setTransitionUserId(userId);
-    const visual: SignupVisualSnapshot = {
-      surfaceType: 'signup',
-      email,
-      password,
-      confirm,
-      showPw,
-      showConfirm,
-    };
     const result = await runOnboardingTransition(queryClient, userId, leaseIdRef.current, sessionGen, visual);
     leaseIdRef.current = null;
     if (result.status === 'error') {

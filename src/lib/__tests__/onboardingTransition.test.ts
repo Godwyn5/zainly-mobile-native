@@ -74,6 +74,20 @@ describe('runOnboardingTransition', () => {
     forceReleaseTransitionLease();
   });
 
+  it('beginOnboardingTransition without visual leaves the ACTIVE snapshot visual null (login path unchanged)', () => {
+    beginOnboardingTransition('flow-123');
+    expect(getLeaseSnapshot().phase).toBe('active');
+    expect(getLeaseSnapshot().visual).toBeNull();
+  });
+
+  it('beginOnboardingTransition with visual populates the ACTIVE snapshot immediately — the cover overlay can already mount before signUp/signIn resolves, before any route swap', () => {
+    beginOnboardingTransition('flow-123', VISUAL);
+    const snapshot = getLeaseSnapshot();
+    expect(snapshot.phase).toBe('active');
+    expect(snapshot.visual).toEqual(VISUAL);
+    expect(getActiveTransitionLeaseFlowId()).toBe('flow-123');
+  });
+
   async function setupLease(flowId: string): Promise<string> {
     const leaseId = beginOnboardingTransition(flowId);
     setTransitionUserId('user-A');

@@ -171,10 +171,15 @@ export async function runOnboardingTransition(
  * Returns the leaseId that must be passed to runOnboardingTransition.
  *
  * Call this BEFORE supabase.auth.signUp/signInWithPassword.
+ *
+ * When `visual` is provided, the lease's visual snapshot is populated
+ * immediately (ACTIVE phase) instead of only at completion — allowing the
+ * caller's cover overlay to already be mounted before any route swap.
+ * Callers that omit it keep the previous behavior unchanged.
  */
-export function beginOnboardingTransition(flowId: string): string {
+export function beginOnboardingTransition(flowId: string, visual?: SignupVisualSnapshot): string {
   setSessionAuthFlowId(flowId);
-  return createTransitionLease(flowId);
+  return createTransitionLease(flowId, visual ?? null);
 }
 
 /**

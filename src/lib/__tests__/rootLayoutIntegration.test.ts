@@ -39,6 +39,10 @@ function computeMatchingReadyHandoff(
   );
 }
 
+// Mirrors _layout.tsx's `showCoverOverlay` exactly: mounted from ACTIVE
+// (as soon as the lease carries a visual snapshot) through
+// DATA_READY_COVERED, so the SAME overlay instance is already on top
+// BEFORE Stack.Protected ever swaps route groups.
 function computeShowCoverOverlay(
   phase: string,
   snapshotUserId: string | null,
@@ -46,10 +50,23 @@ function computeShowCoverOverlay(
   currentUserId: string | null,
 ): boolean {
   return (
-    phase === 'data_ready_covered' &&
-    snapshotUserId === currentUserId &&
-    cacheVerified === true
+    phase === 'active' ||
+    (phase === 'data_ready_covered' &&
+      snapshotUserId === currentUserId &&
+      cacheVerified === true)
   );
+}
+
+// Mirrors the JSX render guard: `showCoverOverlay && leaseSnapshot.visual`.
+// The overlay never actually paints without a visual snapshot.
+function computeOverlayRendered(
+  phase: string,
+  snapshotUserId: string | null,
+  cacheVerified: boolean,
+  currentUserId: string | null,
+  visual: unknown,
+): boolean {
+  return computeShowCoverOverlay(phase, snapshotUserId, cacheVerified, currentUserId) && !!visual;
 }
 
 function computeAuthed(
@@ -99,7 +116,7 @@ describe('Root layout integration — 8 scenarios', () => {
   });
 
   // ── Scenario 2: ACTIVE state — lease active, session exists but guest routing ──
-  it('2. ACTIVE: lease blocks auth, guest=true, no cover, no matching handoff', () => {
+  it('2. ACTIVE: lease blocks auth, guest=true, no matching handoff (cover overlay\n     is a separate concern from routing — see scenario 2b)', () => {
     createTransitionLease('flow-123');
     setTransitionLeaseUserId('user-A');
     const snapshot = getLeaseSnapshot();
@@ -113,17 +130,52 @@ describe('Root layout integration — 8 scenarios', () => {
     const matching = computeMatchingReadyHandoff(
       snapshot.phase, snapshot.userId, snapshot.cacheVerified, userId,
     );
-    const cover = computeShowCoverOverlay(
-      snapshot.phase, snapshot.userId, snapshot.cacheVerified, userId,
-    );
 
     expect(snapshot.phase).toBe('active');
     expect(leaseActive).toBe(true);
     expect(authed).toBe(false);
     expect(guest).toBe(true);
     expect(matching).toBe(false);
-    expect(cover).toBe(false);
     expect(hasActiveTransitionLease()).toBe(true);
+  });
+
+  // ── Scenario 2b: ACTIVE with an early visual snapshot — the signup cover
+  // is ALREADY mounted, well before any route swap, closing the
+  // native-stack transition race that produced the beige frame. ──
+  it('2b. ACTIVE with visual: overlay already rendered before any route swap', () => {
+    createTransitionLease('flow-123', VISUAL);
+    setTransitionLeaseUserId('user-A');
+    const snapshot = getLeaseSnapshot();
+    const userId = 'user-A';
+
+    const cover = computeShowCoverOverlay(
+      snapshot.phase, snapshot.userId, snapshot.cacheVerified, userId,
+    );
+    const rendered = computeOverlayRendered(
+      snapshot.phase, snapshot.userId, snapshot.cacheVerified, userId, snapshot.visual,
+    );
+
+    expect(snapshot.phase).toBe('active');
+    expect(snapshot.visual).toEqual(VISUAL);
+    expect(cover).toBe(true);
+    expect(rendered).toBe(true);
+  });
+
+  // ── Scenario 2c: ACTIVE without a visual snapshot (e.g. a caller that
+  // omits it) — showCoverOverlay is true but the overlay never actually
+  // paints, matching the JSX guard. No beige, no blank overlay either. ──
+  it('2c. ACTIVE without visual: overlay flag true but nothing renders', () => {
+    createTransitionLease('flow-123');
+    setTransitionLeaseUserId('user-A');
+    const snapshot = getLeaseSnapshot();
+    const userId = 'user-A';
+
+    const rendered = computeOverlayRendered(
+      snapshot.phase, snapshot.userId, snapshot.cacheVerified, userId, snapshot.visual,
+    );
+
+    expect(snapshot.visual).toBeNull();
+    expect(rendered).toBe(false);
   });
 
   // ── Scenario 3: DATA_READY_COVERED — authed=true, matching handoff, cover visible ──
@@ -145,6 +197,9 @@ describe('Root layout integration — 8 scenarios', () => {
     const cover = computeShowCoverOverlay(
       snapshot.phase, snapshot.userId, snapshot.cacheVerified, userId,
     );
+    const rendered = computeOverlayRendered(
+      snapshot.phase, snapshot.userId, snapshot.cacheVerified, userId, snapshot.visual,
+    );
 
     expect(snapshot.phase).toBe('data_ready_covered');
     expect(leaseActive).toBe(false);
@@ -152,6 +207,7 @@ describe('Root layout integration — 8 scenarios', () => {
     expect(guest).toBe(false);
     expect(matching).toBe(true);
     expect(cover).toBe(true);
+    expect(rendered).toBe(true);
     expect(snapshot.cacheVerified).toBe(true);
     expect(snapshot.visual).toEqual(VISUAL);
     expect(snapshot.sessionGen).toBe('gen-1');

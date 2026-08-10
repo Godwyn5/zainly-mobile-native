@@ -79,7 +79,10 @@ function setSnapshot(next: LeaseSnapshot): void {
  * and completeTransitionLease.
  * Throws if a lease is already active (double-tap guard).
  */
-export function createTransitionLease(flowId: string): string {
+export function createTransitionLease(
+  flowId: string,
+  visual: SignupVisualSnapshot | null = null,
+): string {
   if (_snapshot.phase === 'active' || _snapshot.phase === 'data_ready_covered') {
     throw new Error('A transition lease is already active');
   }
@@ -91,7 +94,13 @@ export function createTransitionLease(flowId: string): string {
     userId: null,
     sessionGen: null,
     cacheVerified: false,
-    visual: null,
+    // Populated immediately (not only at completion) so the cover overlay
+    // in _layout.tsx can already be mounted, as the SAME instance, before
+    // Stack.Protected ever swaps route groups — closing the native-stack
+    // transition race where a NEWLY mounted overlay (previously only
+    // mounted at DATA_READY_COVERED, the exact same tick as the guard
+    // flip) could be outrun by react-native-screens' own transition.
+    visual,
   });
   return leaseId;
 }

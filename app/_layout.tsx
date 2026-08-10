@@ -229,13 +229,20 @@ export default function RootLayout() {
     leaseSnapshot.userId === userId &&
     leaseSnapshot.cacheVerified === true;
 
-  // ── Cover overlay: shown when DATA_READY_COVERED ──
+  // ── Cover overlay: mounted from ACTIVE through DATA_READY_COVERED ──
   // Decided synchronously during render — never in an effect.
-  // The cover blocks interactions while the dashboard mounts behind.
+  // Mounting already during ACTIVE (as soon as the lease's visual snapshot
+  // is available) means the SAME overlay instance is already sitting on
+  // top, unconditionally, BEFORE Stack.Protected ever swaps (auth) for
+  // (app) at DATA_READY_COVERED — closing the native-stack transition race
+  // where a freshly-mounted overlay could be outrun by react-native-screens'
+  // own route-removal transition. It is removed only once the dashboard
+  // reports its first onLayout (phase leaves DATA_READY_COVERED).
   const showCoverOverlay =
-    leaseSnapshot.phase === 'data_ready_covered' &&
-    leaseSnapshot.userId === userId &&
-    leaseSnapshot.cacheVerified === true;
+    leaseSnapshot.phase === 'active' ||
+    (leaseSnapshot.phase === 'data_ready_covered' &&
+      leaseSnapshot.userId === userId &&
+      leaseSnapshot.cacheVerified === true);
 
   // ── Promote DASHBOARD_READY → commit durable state → clear token ──
   // This effect runs AFTER the render in which the dashboard signaled
