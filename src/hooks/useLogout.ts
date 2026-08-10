@@ -16,7 +16,7 @@ import { clearNotificationData }       from '@/notifications/storage';
 import { revenueCatLogOut }            from '@/lib/revenueCat';
 import { clearAllPendingOnboardingData } from '@/lib/pendingOnboardingPlan';
 import { clearOnboardingDraft }           from '@/lib/onboardingDraft';
-import { signOutGoogle, invalidateAllSocialAuthAttempts } from '@/lib/socialAuth';
+import { signOutGoogle, invalidateAllSocialAuthAttempts, waitForSocialAuthSessionMutation } from '@/lib/socialAuth';
 
 export function useLogout() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -33,6 +33,18 @@ export function useLogout() {
     // 0. Invalidate any in-flight social auth attempt — a late OAuth callback
     //    arriving after logout must not exchange its token for a session.
     invalidateAllSocialAuthAttempts();
+
+    // 0a. Wait for any in-flight social exchange to complete before calling
+    //     signOut. The Supabase SDK does not serialize signInWithIdToken
+    //     (which calls _saveSession without the internal lock) with signOut
+    //     (which acquires the lock). Without this wait, a late _saveSession
+    //     could install a session AFTER signOut's _removeSession has run,
+    //     leaving a zombie session in AsyncStorage.
+    //
+    //     The exchange is wrapped in serializeSessionMutation, so this await
+    //     guarantees the exchange (including _saveSession) has completed
+    //     before signOut removes the session.
+    await waitForSocialAuthSessionMutation();
 
     try {
       // 1. Sign out from Supabase (clears persisted session in AsyncStorage via the client).

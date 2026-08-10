@@ -34,7 +34,10 @@ import {
   runOnboardingTransition,
   type OnboardingTransitionResult,
 } from '@/lib/onboardingTransition';
-import { forceReleaseTransitionLease, type SignupVisualSnapshot } from '@/lib/transitionLease';
+import {
+  releaseTransitionLease,
+  type SignupVisualSnapshot,
+} from '@/lib/transitionLease';
 import { fetchPlan } from '@/db/plans';
 import { fetchProgress } from '@/db/progress';
 import {
@@ -42,7 +45,7 @@ import {
   clearSessionAuthFlowId,
 } from '@/lib/pendingOnboardingPlan';
 
-// ─── Attempt generation guard ───────────────────────────────────────────────
+// ─── Attempt generation guard & session mutation serializer ────────────────
 //
 // Protects against OAuth races, double taps, and late callbacks after logout.
 // Each performSocialAuth call receives a unique generation number. After every
@@ -51,13 +54,34 @@ import {
 // result is silently discarded.
 //
 // invalidateAllSocialAuthAttempts() is called by useLogout to immediately
-// invalidate any in-flight attempt. A provider callback arriving after logout
-// finds a stale generation and refuses to exchange the token.
+// invalidate any in-flight attempt AND acquire the session mutation lock so
+// that any in-flight exchange completes before logout removes the session.
 //
-// This guard is NOT based on a React boolean or the onboarding lease — it is a
-// module-level integer that survives component unmounts and navigation.
+// Session mutation serializer:
+//   signInWithIdToken (called by exchangeSocialCredential) does NOT acquire
+//   the Supabase internal lock — it calls _saveSession + _notifyAllSubscribers
+//   directly. signOut DOES acquire the lock. Without serialization, a late
+//   _saveSession can install a session AFTER logout's _removeSession has
+//   already run, leaving a zombie session in AsyncStorage.
+//
+//   The serializer ensures that if an exchange is in-flight when logout
+//   starts, logout waits for the exchange to complete (including _saveSession),
+//   THEN removes the session. If the exchange resolves after logout detected
+//   a stale generation, the coordinator calls supabase.auth.signOut({ scope:
+//   'local' }) to remove the zombie session without revoking tokens globally.
+//
+//   scope: 'local' is used for zombie cleanup because the logout's global
+//   signOut may have already revoked the token server-side — a second global
+//   call would fail with 401 (handled gracefully by the SDK). 'local' only
+//   removes the session from storage and emits SIGNED_OUT, which is exactly
+//   the cleanup needed for a zombie session.
 
 let _currentGeneration = 0;
+
+// Session mutation lock — serializes social exchange and logout.
+// Resolves to 'exchanged' if the exchange completed, or 'cancelled' if
+// logout was waiting and the exchange result was discarded.
+let _sessionMutationChain: Promise<unknown> = Promise.resolve();
 
 export function invalidateAllSocialAuthAttempts(): void {
   _currentGeneration++;
@@ -69,6 +93,25 @@ function startNewAttempt(): number {
 
 function isAttemptCurrent(gen: number): boolean {
   return gen === _currentGeneration;
+}
+
+/**
+ * Serializes an async operation (social exchange or logout) so that
+ * _saveSession (inside signInWithIdToken) and _removeSession (inside signOut)
+ * cannot interleave. The Supabase SDK does not serialize these internally.
+ */
+function serializeSessionMutation<T>(fn: () => Promise<T>): Promise<T> {
+  const next = _sessionMutationChain.then(fn, fn) as Promise<T>;
+  _sessionMutationChain = next.then(() => undefined, () => undefined);
+  return next;
+}
+
+/**
+ * Waits for any in-flight session mutation (social exchange) to complete
+ * before proceeding. Called by useLogout before supabase.auth.signOut().
+ */
+export async function waitForSocialAuthSessionMutation(): Promise<void> {
+  await _sessionMutationChain.catch(() => {});
 }
 
 // ─── Normalized internal types ──────────────────────────────────────────────
@@ -269,42 +312,44 @@ export async function signInWithGoogle(): Promise<SocialAuthResult> {
 export async function exchangeSocialCredential(
   credential: SocialAuthCredential,
 ): Promise<SocialAuthSessionResult> {
-  try {
-    const signInParams: {
-      provider: 'apple' | 'google';
-      token: string;
-      nonce?: string;
-    } = {
-      provider: credential.provider,
-      token: credential.token,
-    };
+  return serializeSessionMutation(async () => {
+    try {
+      const signInParams: {
+        provider: 'apple' | 'google';
+        token: string;
+        nonce?: string;
+      } = {
+        provider: credential.provider,
+        token: credential.token,
+      };
 
-    if (credential.nonce) {
-      signInParams.nonce = credential.nonce;
+      if (credential.nonce) {
+        signInParams.nonce = credential.nonce;
+      }
+
+      const { data, error } = await supabase.auth.signInWithIdToken(signInParams);
+
+      if (error) {
+        return { ok: false, reason: 'auth_error', message: error.message };
+      }
+
+      if (!data.session) {
+        return { ok: false, reason: 'auth_error', message: 'Aucune session retournée par Supabase.' };
+      }
+
+      return {
+        ok: true,
+        session: data.session,
+        userId: data.session.user.id,
+      };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('Network') || message.includes('network') || message.includes('fetch')) {
+        return { ok: false, reason: 'network', message };
+      }
+      return { ok: false, reason: 'unknown', message };
     }
-
-    const { data, error } = await supabase.auth.signInWithIdToken(signInParams);
-
-    if (error) {
-      return { ok: false, reason: 'auth_error', message: error.message };
-    }
-
-    if (!data.session) {
-      return { ok: false, reason: 'auth_error', message: 'Aucune session retournée par Supabase.' };
-    }
-
-    return {
-      ok: true,
-      session: data.session,
-      userId: data.session.user.id,
-    };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.includes('Network') || message.includes('network') || message.includes('fetch')) {
-      return { ok: false, reason: 'network', message };
-    }
-    return { ok: false, reason: 'unknown', message };
-  }
+  });
 }
 
 // ─── Full coordinator ───────────────────────────────────────────────────────
@@ -350,15 +395,24 @@ export async function performSocialAuth(
   const sessionResult = await exchangeSocialCredential(credResult.credential);
 
   if (!isAttemptCurrent(gen)) {
+    // Stale attempt detected after exchange. The SDK may have already
+    // saved a session via _saveSession. Clean it up with scope: 'local'
+    // so we don't revoke tokens globally (the logout's global signOut
+    // may have already done that, or a new session may now be active).
     if (leaseId) {
-      forceReleaseTransitionLease();
+      releaseTransitionLease(leaseId);
     }
+    // Best-effort zombie session cleanup — the serializer ensures this
+    // runs after the exchange's _saveSession completed.
+    try {
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch { /* best-effort */ }
     return { ok: false, reason: 'stale_attempt' };
   }
 
   if (!sessionResult.ok) {
     if (leaseId) {
-      forceReleaseTransitionLease();
+      releaseTransitionLease(leaseId);
       leaseId = null;
     }
     return { ok: false, reason: sessionResult.reason, message: sessionResult.message };
@@ -368,7 +422,7 @@ export async function performSocialAuth(
 
   // ── Post-auth business state check ──────────────────────────────────
   // Before running any onboarding finalization, check if the user already
-  // has a durable plan AND progress. This is the P0 safety guard: an
+  // has a durable plan AND progress. This is the safety guard: an
   // existing user who signs in via social auth from signup-methods with a
   // flowId must NEVER have their program overwritten.
   //
@@ -384,54 +438,44 @@ export async function performSocialAuth(
     try {
       existingPlan = await fetchPlan(userId);
     } catch {
-      if (leaseId) forceReleaseTransitionLease();
+      if (leaseId) releaseTransitionLease(leaseId);
       return { ok: false, reason: 'state_check_failed', message: 'Impossible de vérifier l\'existence d\'un programme. Réessaie.' };
     }
 
     if (!isAttemptCurrent(gen)) {
-      if (leaseId) forceReleaseTransitionLease();
+      if (leaseId) releaseTransitionLease(leaseId);
+      try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* best-effort */ }
       return { ok: false, reason: 'stale_attempt' };
     }
 
     try {
       existingProgress = await fetchProgress(userId);
     } catch {
-      if (leaseId) forceReleaseTransitionLease();
+      if (leaseId) releaseTransitionLease(leaseId);
       return { ok: false, reason: 'state_check_failed', message: 'Impossible de vérifier ta progression. Réessaie.' };
     }
 
     if (!isAttemptCurrent(gen)) {
-      if (leaseId) forceReleaseTransitionLease();
+      if (leaseId) releaseTransitionLease(leaseId);
+      try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* best-effort */ }
       return { ok: false, reason: 'stale_attempt' };
     }
 
     // ── Case 1: User already has a durable plan + progress ───────────
-    // Existing user — never finalize, never overwrite. Invalidate the
-    // stale pending payload for this exact attempt (flowId + owner),
-    // release the lease, and proceed to canonical authenticated launch.
     if (existingPlan && existingProgress) {
       if (leaseId) {
-        forceReleaseTransitionLease();
+        releaseTransitionLease(leaseId);
         leaseId = null;
       }
-      // Clear the stale pending payload — it belongs to this flowId and
-      // this userId. If it doesn't match (different owner or flowId),
-      // clearPendingOnboardingIfMatches returns 'superseded' and leaves
-      // it untouched.
       await clearPendingOnboardingIfMatches(userId, flowId).catch(() => {});
       clearSessionAuthFlowId();
       return { ok: true, userId, skippedFinalization: true };
     }
 
     // ── Case 2: Partial/inconsistent state — fail closed ──────────────
-    // A plan with no progress, or progress with no plan, is an
-    // inconsistent state. Never repair silently during social auth —
-    // fail closed and let the user retry. The existing runFinalize
-    // repair logic handles this for email flows where the user is known
-    // to be new.
     if (existingPlan || existingProgress) {
       if (leaseId) {
-        forceReleaseTransitionLease();
+        releaseTransitionLease(leaseId);
         leaseId = null;
       }
       return {
@@ -442,8 +486,6 @@ export async function performSocialAuth(
     }
 
     // ── Case 3: No plan, no progress — proceed with finalization ─────
-    // The user is new (or has no program). Run the canonical onboarding
-    // transition pipeline.
   }
 
   if (leaseId && flowId) {

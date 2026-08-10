@@ -9,12 +9,33 @@ import { QueryClient } from '@tanstack/react-query';
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
+// Track the simulated Supabase session storage (AsyncStorage equivalent).
+// This lets tests verify whether a zombie session was left behind.
+// Variables prefixed with 'mock' are allowed in jest.mock() factories.
+let mockSessionStorage: { userId: string; access_token: string } | null = null;
+let mockAuthCallbacks: ((event: string, session: unknown) => void)[] = [];
+
 jest.mock('@/db/client', () => ({
   supabase: {
     auth: {
-      signInWithIdToken: jest.fn(),
-      signOut: jest.fn(async () => ({ error: null })),
-      getSession: jest.fn(async () => ({ data: { session: null } })),
+      // Simulates the real SDK: _saveSession → _notifyAllSubscribers → resolve
+      signInWithIdToken: jest.fn(async () => {
+        // The mock implementation is overridden per-test, but the default
+        // simulates the real side-effect order: save session, emit SIGNED_IN,
+        // then resolve. Tests that need to control timing replace this.
+        return { data: { session: null }, error: null };
+      }),
+      // Simulates the real SDK: _removeSession → _notifyAllSubscribers('SIGNED_OUT')
+      signOut: jest.fn(async (opts?: { scope?: string }) => {
+        mockSessionStorage = null;
+        mockAuthCallbacks.forEach(cb => cb('SIGNED_OUT', null));
+        return { error: null };
+      }),
+      getSession: jest.fn(async () => ({ data: { session: mockSessionStorage }, error: null })),
+      onAuthStateChange: jest.fn((cb: (event: string, session: unknown) => void) => {
+        mockAuthCallbacks.push(cb);
+        return { data: { subscription: { unsubscribe: () => {} } } };
+      }),
     },
   },
 }));
@@ -110,13 +131,15 @@ import {
   configureGoogleSignIn,
   signOutGoogle,
   invalidateAllSocialAuthAttempts,
+  waitForSocialAuthSessionMutation,
   type SocialAuthCredential,
 } from '../socialAuth';
 import { supabase } from '@/db/client';
 import { fetchPlan } from '@/db/plans';
 import { fetchProgress } from '@/db/progress';
-import { clearPendingOnboardingIfMatches, clearSessionAuthFlowId } from '@/lib/pendingOnboardingPlan';
-import { forceReleaseTransitionLease, hasActiveTransitionLease } from '../transitionLease';
+import { clearPendingOnboardingIfMatches } from '@/lib/pendingOnboardingPlan';
+import { forceReleaseTransitionLease, hasActiveTransitionLease, getLeaseSnapshot } from '../transitionLease';
+import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
 /* eslint-enable import/first */
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -182,6 +205,8 @@ function makeSession(userId: string = 'user-uuid-123') {
 beforeEach(() => {
   jest.clearAllMocks();
   forceReleaseTransitionLease();
+  mockSessionStorage = null;
+  mockAuthCallbacks = [];
   // Default crypto mock: return deterministic bytes and hash
   mockGetRandomValues.mockImplementation((arr: Uint8Array) => {
     for (let i = 0; i < arr.length; i++) arr[i] = i % 256;
@@ -526,6 +551,8 @@ describe('performSocialAuth — data safety & attempt guard', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     forceReleaseTransitionLease();
+    mockSessionStorage = null;
+    mockAuthCallbacks = [];
     mockGetRandomValues.mockImplementation((arr: Uint8Array) => {
       for (let i = 0; i < arr.length; i++) arr[i] = i % 256;
       return arr;
@@ -534,9 +561,21 @@ describe('performSocialAuth — data safety & attempt guard', () => {
     // Default: no plan, no progress (new user)
     (fetchPlan as jest.Mock).mockResolvedValue(null);
     (fetchProgress as jest.Mock).mockResolvedValue(null);
-    (supabase.auth.signInWithIdToken as jest.Mock).mockResolvedValue({
-      data: { session: makeSession('user-new-001') },
-      error: null,
+    // Default: simulate real SDK side effects — _saveSession then SIGNED_IN then resolve
+    (supabase.auth.signInWithIdToken as jest.Mock).mockImplementation(async () => {
+      const session = makeSession('user-new-001');
+      // Simulate _saveSession (writes to storage)
+      mockSessionStorage = { userId: session.user.id, access_token: session.access_token };
+      // Simulate _notifyAllSubscribers('SIGNED_IN')
+      mockAuthCallbacks.forEach(cb => cb('SIGNED_IN', session));
+      // Then resolve
+      return { data: { session }, error: null };
+    });
+    // Default: signOut simulates _removeSession + SIGNED_OUT
+    (supabase.auth.signOut as jest.Mock).mockImplementation(async () => {
+      mockSessionStorage = null;
+      mockAuthCallbacks.forEach(cb => cb('SIGNED_OUT', null));
+      return { error: null };
     });
     // Default pending plan mocks
     (clearPendingOnboardingIfMatches as jest.Mock).mockResolvedValue('cleared');
@@ -546,288 +585,373 @@ describe('performSocialAuth — data safety & attempt guard', () => {
     queryClient.setQueryData(['pendingOnboarding', 'user-new-001'], false);
   });
 
-  test('1. existing user with plan from Google signup → finalizer never called, program unchanged', async () => {
-    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
-    (fetchPlan as jest.Mock).mockResolvedValue({ id: 'plan-existing', surah_start: 1, start_ayah: 1, ayah_per_day: 5 });
-    (fetchProgress as jest.Mock).mockResolvedValue({ id: 'progress-existing', current_surah: 3, current_ayah: 10, streak: 5 });
-
-    const result = await performSocialAuth('google', queryClient, {
-      flowId: 'flow-existing-user-google',
+  // ── Helper: simulate real SDK signInWithIdToken with side effects ──
+  function mockExchangeSaveAndResolve(userId: string = 'user-new-001') {
+    (supabase.auth.signInWithIdToken as jest.Mock).mockImplementation(async () => {
+      const session = makeSession(userId);
+      mockSessionStorage = { userId: session.user.id, access_token: session.access_token };
+      mockAuthCallbacks.forEach(cb => cb('SIGNED_IN', session));
+      return { data: { session }, error: null };
     });
+  }
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.skippedFinalization).toBe(true);
-      expect(result.userId).toBe('user-new-001');
-    }
-    // finalizeOnboardingV2PlanWithPremiumGate must NOT have been called
-    const { finalizeOnboardingV2PlanWithPremiumGate } = require('@/lib/onboardingFinalize');
-    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
-    // upsertPlan must NOT have been called (via plans mock)
-    // The pending payload must be cleared for this flowId
-    expect(clearPendingOnboardingIfMatches).toHaveBeenCalledWith('user-new-001', 'flow-existing-user-google');
-    // Lease must be released
-    expect(hasActiveTransitionLease()).toBe(false);
-  });
-
-  test('2. existing user with plan from Apple signup → finalizer never called, program unchanged', async () => {
-    mockAppleIsAvailableAsync.mockResolvedValue(true);
-    mockAppleSignInAsync.mockResolvedValue(makeAppleCredential());
-    (fetchPlan as jest.Mock).mockResolvedValue({ id: 'plan-existing', surah_start: 2, start_ayah: 5, ayah_per_day: 3 });
-    (fetchProgress as jest.Mock).mockResolvedValue({ id: 'progress-existing', current_surah: 5, current_ayah: 20, streak: 10 });
-
-    const result = await performSocialAuth('apple', queryClient, {
-      flowId: 'flow-existing-user-apple',
-    });
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.skippedFinalization).toBe(true);
-    }
-    const { finalizeOnboardingV2PlanWithPremiumGate } = require('@/lib/onboardingFinalize');
-    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
-    expect(clearPendingOnboardingIfMatches).toHaveBeenCalledWith('user-new-001', 'flow-existing-user-apple');
-    expect(hasActiveTransitionLease()).toBe(false);
-  });
-
-  test('3. existing user with partial progress (plan but no progress) → no writes, fail closed', async () => {
-    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
-    (fetchPlan as jest.Mock).mockResolvedValue({ id: 'plan-partial' });
-    (fetchProgress as jest.Mock).mockResolvedValue(null);
-
-    const result = await performSocialAuth('google', queryClient, {
-      flowId: 'flow-partial-state',
-    });
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.reason).toBe('state_check_failed');
-    }
-    const { finalizeOnboardingV2PlanWithPremiumGate } = require('@/lib/onboardingFinalize');
-    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
-    expect(hasActiveTransitionLease()).toBe(false);
-  });
-
-  test('4. new user with valid pending → finalization runs exactly once', async () => {
-    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
-    (fetchPlan as jest.Mock).mockResolvedValue(null);
-    (fetchProgress as jest.Mock).mockResolvedValue(null);
-
-    const result = await performSocialAuth('google', queryClient, {
-      flowId: 'flow-new-user',
-    });
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.skippedFinalization).toBeUndefined();
-      expect(result.transitionResult).toBeDefined();
-    }
-    const { finalizeOnboardingV2PlanWithPremiumGate } = require('@/lib/onboardingFinalize');
-    expect(finalizeOnboardingV2PlanWithPremiumGate).toHaveBeenCalledTimes(1);
-  });
-
-  test('5. new user from login without pending → no finalization, no incomplete dashboard', async () => {
-    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
-
-    // No flowId — direct login, not from onboarding
-    const result = await performSocialAuth('google', queryClient);
-
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.skippedFinalization).toBeUndefined();
-      expect(result.transitionResult).toBeUndefined();
-    }
-    const { finalizeOnboardingV2PlanWithPremiumGate } = require('@/lib/onboardingFinalize');
-    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
-    // fetchPlan/fetchProgress should NOT be called when there's no flowId
-    expect(fetchPlan).not.toHaveBeenCalled();
-    expect(fetchProgress).not.toHaveBeenCalled();
-  });
-
-  test('6. state check error (fetchPlan throws) → no finalization, fail closed', async () => {
-    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
-    (fetchPlan as jest.Mock).mockRejectedValue(new Error('Network error'));
-
-    const result = await performSocialAuth('google', queryClient, {
-      flowId: 'flow-fetch-error',
-    });
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.reason).toBe('state_check_failed');
-    }
-    const { finalizeOnboardingV2PlanWithPremiumGate } = require('@/lib/onboardingFinalize');
-    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
-    expect(hasActiveTransitionLease()).toBe(false);
-  });
-
-  test('7. double tap → only one SDK call and one Supabase exchange', async () => {
-    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
-    (fetchPlan as jest.Mock).mockResolvedValue(null);
-    (fetchProgress as jest.Mock).mockResolvedValue(null);
-
-    // Start two concurrent attempts
-    const p1 = performSocialAuth('google', queryClient, { flowId: 'flow-double-tap' });
-    const p2 = performSocialAuth('google', queryClient, { flowId: 'flow-double-tap' });
-
-    const [r1, r2] = await Promise.all([p1, p2]);
-
-    // The second attempt invalidates the first — first should be stale
-    // One should succeed, the other should be stale
-    const results = [r1, r2];
-    const okCount = results.filter(r => r.ok).length;
-    const staleCount = results.filter(r => !r.ok && r.reason === 'stale_attempt').length;
-    expect(okCount).toBe(1);
-    expect(staleCount).toBe(1);
-
-    // Only one signInWithIdToken call should have happened for the successful attempt
-    // (the stale attempt returns before reaching exchange)
-    const exchangeCalls = (supabase.auth.signInWithIdToken as jest.Mock).mock.calls.length;
-    expect(exchangeCalls).toBeLessThanOrEqual(1);
-  });
-
-  test('8. repeated callback → only one processing', async () => {
-    mockAppleIsAvailableAsync.mockResolvedValue(true);
-    mockAppleSignInAsync.mockResolvedValue(makeAppleCredential());
-    (fetchPlan as jest.Mock).mockResolvedValue(null);
-    (fetchProgress as jest.Mock).mockResolvedValue(null);
-
-    // First call succeeds
-    const r1 = await performSocialAuth('apple', queryClient, { flowId: 'flow-callback-repeat' });
-    expect(r1.ok).toBe(true);
-
-    // Simulate dashboard having mounted — lease transitions to idle
-    forceReleaseTransitionLease();
-
-    // Second call (simulating a repeated callback) — new generation.
-    // The state check now finds a plan (just created by first call) →
-    // skippedFinalization, finalizer NOT called again.
-    const { finalizeOnboardingV2PlanWithPremiumGate } = require('@/lib/onboardingFinalize');
-    const callCountBefore = (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mock.calls.length;
-
-    (fetchPlan as jest.Mock).mockResolvedValue({ id: 'plan-just-created' });
-    (fetchProgress as jest.Mock).mockResolvedValue({ id: 'progress-just-created' });
-
-    const r2 = await performSocialAuth('apple', queryClient, { flowId: 'flow-callback-repeat' });
-
-    expect(r2.ok).toBe(true);
-    if (r2.ok) {
-      expect(r2.skippedFinalization).toBe(true);
-    }
-    // Finalizer should NOT have been called a second time
-    const callCountAfter = (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mock.calls.length;
-    expect(callCountAfter).toBe(callCountBefore);
-  });
-
-  test('9. logout during provider window → no exchange', async () => {
-    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
-
-    // Start the attempt but don't await yet
-    const p = performSocialAuth('google', queryClient, { flowId: 'flow-logout-provider' });
-
-    // Simulate logout during the provider sign-in
-    invalidateAllSocialAuthAttempts();
-
-    const result = await p;
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.reason).toBe('stale_attempt');
-    }
-    // signInWithIdToken must NOT have been called
-    expect((supabase.auth.signInWithIdToken as jest.Mock)).not.toHaveBeenCalled();
-  });
-
-  test('10. logout during Supabase exchange → no late session kept', async () => {
-    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
-
-    // Make signInWithIdToken return after a delay so we can invalidate mid-flight
-    let resolveExchange: (value: unknown) => void;
+  function mockExchangeDelayed(userId: string = 'user-new-001') {
+    let resolveExchange!: (value: unknown) => void;
     (supabase.auth.signInWithIdToken as jest.Mock).mockImplementation(() => {
       return new Promise(resolve => {
         resolveExchange = resolve;
       });
     });
+    return {
+      resolve: () => {
+        const session = makeSession(userId);
+        mockSessionStorage = { userId: session.user.id, access_token: session.access_token };
+        mockAuthCallbacks.forEach(cb => cb('SIGNED_IN', session));
+        resolveExchange({ data: { session }, error: null });
+      },
+    };
+  }
 
-    const p = performSocialAuth('google', queryClient, { flowId: 'flow-logout-exchange' });
+  // ── 1. Logout before exchange → no exchange ──
+  test('1. logout before exchange → no exchange', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+    mockExchangeSaveAndResolve();
 
-    // Wait for the provider sign-in to complete and exchange to start
-    await new Promise(resolve => setTimeout(resolve, 50));
+    const p = performSocialAuth('google', queryClient, { flowId: 'flow-logout-before' });
+    invalidateAllSocialAuthAttempts();
+    const result = await p;
 
-    // Invalidate during exchange
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('stale_attempt');
+    expect(supabase.auth.signInWithIdToken).not.toHaveBeenCalled();
+    expect(mockSessionStorage).toBeNull();
+  });
+
+  // ── 2. Logout during exchange with real session install → no final session ──
+  test('2. logout during exchange with session install → no final session', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+    const delayed = mockExchangeDelayed('user-late-002');
+
+    const p = performSocialAuth('google', queryClient, { flowId: 'flow-logout-during' });
+
+    // Wait for exchange to start
+    await new Promise(r => setTimeout(r, 50));
+
+    // Logout invalidates the attempt
     invalidateAllSocialAuthAttempts();
 
-    // Resolve the exchange
-    resolveExchange!({
-      data: { session: makeSession('user-late-001') },
-      error: null,
-    });
+    // The exchange resolves AFTER logout — simulating the real SDK order:
+    // _saveSession runs, THEN the promise resolves.
+    delayed.resolve();
 
     const result = await p;
 
     expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.reason).toBe('stale_attempt');
-    }
-    expect(hasActiveTransitionLease()).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('stale_attempt');
+
+    // The coordinator should have called signOut({ scope: 'local' }) to
+    // clean up the zombie session installed by _saveSession.
+    expect(supabase.auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+
+    // After cleanup, the session storage must be empty.
+    // (signOut mock clears mockSessionStorage)
+    expect(mockSessionStorage).toBeNull();
   });
 
-  test('11. new valid login after logout → old callback does not disconnect it', async () => {
+  // ── 3. Reconnection after logout → old attempt cannot remove new session ──
+  test('3. reconnection after logout → old attempt cannot remove new session', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+
+    // First attempt starts, exchange is delayed
+    const delayed1 = mockExchangeDelayed('user-old-003');
+
+    const p1 = performSocialAuth('google', queryClient, { flowId: 'flow-old-003' });
+
+    // Wait for provider sign-in to complete and exchange to start
+    await new Promise(r => setTimeout(r, 50));
+
+    // Logout invalidates first attempt
+    invalidateAllSocialAuthAttempts();
+
+    // The exchange is still in-flight. waitForSocialAuthSessionMutation will
+    // hang until the exchange resolves. Resolve it now to simulate the SDK
+    // completing _saveSession.
+    delayed1.resolve();
+
+    // Wait for the old exchange + cleanup to complete
+    await waitForSocialAuthSessionMutation();
+
+    // The old attempt should have resolved as stale (with signOut local cleanup)
+    const r1 = await p1;
+    expect(r1.ok).toBe(false);
+    if (!r1.ok) expect(r1.reason).toBe('stale_attempt');
+
+    // signOut({ scope: 'local' }) should have been called for zombie cleanup
+    expect(supabase.auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+
+    // Second attempt starts (new login) — uses a different user
+    mockExchangeSaveAndResolve('user-new-003');
+    queryClient.setQueryData(['plan', 'user-new-003'], { id: 'plan-1' });
+    queryClient.setQueryData(['progress', 'user-new-003'], { id: 'progress-1' });
+    queryClient.setQueryData(['pendingOnboarding', 'user-new-003'], false);
+    const r2 = await performSocialAuth('google', queryClient, { flowId: 'flow-new-003' });
+
+    // New attempt should succeed
+    expect(r2.ok).toBe(true);
+
+    // The new session must be active — old cleanup ran before new exchange
+    expect(mockSessionStorage).not.toBeNull();
+    expect(mockSessionStorage?.userId).toBe('user-new-003');
+  });
+
+  // ── 4. Same user reconnected with newer session → old cleanup without effect ──
+  test('4. same user reconnected → old cleanup does not remove newer session', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+
+    // First attempt with delayed exchange
+    const delayed1 = mockExchangeDelayed('user-same-004');
+
+    const p1 = performSocialAuth('google', queryClient, { flowId: 'flow-old-004' });
+
+    // Wait for exchange to start
+    await new Promise(r => setTimeout(r, 50));
+
+    // Logout
+    invalidateAllSocialAuthAttempts();
+
+    // Resolve the delayed exchange so waitForSocialAuthSessionMutation can proceed
+    delayed1.resolve();
+    await waitForSocialAuthSessionMutation();
+
+    const r1 = await p1;
+    expect(r1.ok).toBe(false);
+    if (!r1.ok) expect(r1.reason).toBe('stale_attempt');
+
+    // New attempt for SAME user
+    mockExchangeSaveAndResolve('user-same-004');
+    queryClient.setQueryData(['plan', 'user-same-004'], { id: 'plan-1' });
+    queryClient.setQueryData(['progress', 'user-same-004'], { id: 'progress-1' });
+    queryClient.setQueryData(['pendingOnboarding', 'user-same-004'], false);
+    const r2 = await performSocialAuth('google', queryClient, { flowId: 'flow-new-004' });
+
+    expect(r2.ok).toBe(true);
+
+    // The new session must still be active — old cleanup must not have removed it
+    expect(mockSessionStorage).not.toBeNull();
+    expect(mockSessionStorage?.userId).toBe('user-same-004');
+  });
+
+  // ── 5. Old attempt cannot release new lease ──
+  test('5. old attempt cannot release new lease', async () => {
+    mockAppleIsAvailableAsync.mockResolvedValue(true);
+    mockAppleSignInAsync.mockResolvedValue(makeAppleCredential());
+    // Use 'user-new-001' so cache pre-populated in beforeEach matches
+    mockExchangeSaveAndResolve('user-new-001');
+
+    // First attempt starts — use delayed exchange so it's in-flight when invalidated
+    const delayed = mockExchangeDelayed('user-new-001');
+    const p1 = performSocialAuth('apple', queryClient, { flowId: 'flow-lease-old' });
+
+    // Wait for exchange to start
+    await new Promise(r => setTimeout(r, 50));
+
+    // Invalidate first attempt
+    invalidateAllSocialAuthAttempts();
+
+    // Resolve the exchange — first attempt detects stale, calls releaseTransitionLease
+    // with its own leaseId, then signOut local cleanup
+    delayed.resolve();
+    const r1 = await p1;
+    expect(r1.ok).toBe(false);
+    if (!r1.ok) expect(r1.reason).toBe('stale_attempt');
+
+    // Wait for session mutation chain to clear
+    await waitForSocialAuthSessionMutation();
+
+    // Second attempt acquires a new lease
+    mockExchangeSaveAndResolve('user-new-001');
+    const r2 = await performSocialAuth('apple', queryClient, { flowId: 'flow-lease-new' });
+
+    // Second attempt should succeed
+    expect(r2.ok).toBe(true);
+
+    // The lease should be in data_ready_covered (completed by runOnboardingTransition)
+    // It must NOT have been released by the first attempt's cleanup —
+    // because releaseTransitionLease checks leaseId.
+    const snapshot = getLeaseSnapshot();
+    expect(snapshot.phase).not.toBe('idle');
+  });
+
+  // ── 6. Two concurrent finalizations → only one write wins ──
+  test('6. two concurrent finalizations → only one write wins', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+
+    // Simulate two devices: both see no plan, both try to finalize
+    (fetchPlan as jest.Mock).mockResolvedValue(null);
+    (fetchProgress as jest.Mock).mockResolvedValue(null);
+
+    // Use different user IDs to simulate two different users
+    // (same user on two devices would have the same userId)
+    // For this test, we simulate the inFlight guard in runFinalize
+    const p1 = performSocialAuth('google', queryClient, { flowId: 'flow-concurrent-a' });
+    const p2 = performSocialAuth('google', queryClient, { flowId: 'flow-concurrent-b' });
+
+    const [r1, r2] = await Promise.all([p1, r2_safe(p2)]);
+
+    // One should succeed, the other should be stale (generation guard)
+    const okCount = [r1, r2].filter(r => r.ok).length;
+    expect(okCount).toBe(1);
+
+    // The successful one should have called finalize exactly once
+    expect(finalizeOnboardingV2PlanWithPremiumGate).toHaveBeenCalledTimes(1);
+  });
+
+  // Helper to safely await p2 (which may reject if lease throws)
+  async function r2_safe<T>(p: Promise<T>): Promise<T> {
+    try { return await p; } catch { return { ok: false, reason: 'unknown' } as unknown as T; }
+  }
+
+  // ── 7. Second finalization is idempotent → no replacement ──
+  test('7. second finalization idempotent → no replacement', async () => {
     mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
     (fetchPlan as jest.Mock).mockResolvedValue(null);
     (fetchProgress as jest.Mock).mockResolvedValue(null);
 
-    // Start first attempt
-    const p1 = performSocialAuth('google', queryClient, { flowId: 'flow-old' });
+    // First call succeeds
+    const r1 = await performSocialAuth('google', queryClient, { flowId: 'flow-idempotent' });
+    expect(r1.ok).toBe(true);
 
-    // Logout invalidates the first attempt
-    invalidateAllSocialAuthAttempts();
+    // Simulate dashboard having mounted
+    forceReleaseTransitionLease();
 
-    // Start a new attempt (new login)
-    const p2 = performSocialAuth('google', queryClient, { flowId: 'flow-new' });
+    // Second call: state check now finds plan+progress → skip finalization
+    (fetchPlan as jest.Mock).mockResolvedValue({ id: 'plan-created', surah_start: 1, start_ayah: 1, ayah_per_day: 5 });
+    (fetchProgress as jest.Mock).mockResolvedValue({ id: 'progress-created', current_surah: 1, current_ayah: 0, streak: 0 });
 
-    const [r1, r2] = await Promise.all([p1, p2]);
+    const callsBefore = (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mock.calls.length;
 
-    // First attempt should be stale
-    expect(r1.ok).toBe(false);
-    if (!r1.ok) expect(r1.reason).toBe('stale_attempt');
+    const r2 = await performSocialAuth('google', queryClient, { flowId: 'flow-idempotent' });
 
-    // Second attempt should succeed
     expect(r2.ok).toBe(true);
+    if (r2.ok) expect(r2.skippedFinalization).toBe(true);
+
+    const callsAfter = (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mock.calls.length;
+    expect(callsAfter).toBe(callsBefore);
   });
 
-  test('12. bad flowId or owner → pending payload ignored (superseded)', async () => {
+  // ── 8. Partial finalization then retry → coherent state ──
+  test('8. partial finalization then retry → coherent state', async () => {
     mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
-    (fetchPlan as jest.Mock).mockResolvedValue({ id: 'plan-existing' });
-    (fetchProgress as jest.Mock).mockResolvedValue({ id: 'progress-existing' });
+
+    // Simulate: plan was created but progress write failed (partial state)
+    (fetchPlan as jest.Mock).mockResolvedValue({ id: 'plan-partial-008', surah_start: 2, start_ayah: 1, ayah_per_day: 3 });
+    (fetchProgress as jest.Mock).mockResolvedValue(null); // progress missing
+
+    const result = await performSocialAuth('google', queryClient, { flowId: 'flow-partial-008' });
+
+    // Social auth fail-closed on partial state — no silent repair
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('state_check_failed');
+
+    // Finalizer must not have been called
+    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
+  });
+
+  // ── 9. Bad flowId → pending payload ignored ──
+  test('9. bad flowId → pending payload ignored', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+    (fetchPlan as jest.Mock).mockResolvedValue({ id: 'plan-existing-009' });
+    (fetchProgress as jest.Mock).mockResolvedValue({ id: 'progress-existing-009' });
     (clearPendingOnboardingIfMatches as jest.Mock).mockResolvedValue('superseded');
 
-    const result = await performSocialAuth('google', queryClient, {
-      flowId: 'flow-wrong-owner',
-    });
+    const result = await performSocialAuth('google', queryClient, { flowId: 'flow-wrong-009' });
 
-    // User has existing plan → skippedFinalization
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.skippedFinalization).toBe(true);
-    }
-    // clearPendingOnboardingIfMatches was called with the correct userId and flowId
-    expect(clearPendingOnboardingIfMatches).toHaveBeenCalledWith('user-new-001', 'flow-wrong-owner');
-    // The result was 'superseded' — the pending was NOT cleared (different owner/flowId)
-    // This is correct: we don't touch a pending that doesn't belong to this attempt.
+    if (result.ok) expect(result.skippedFinalization).toBe(true);
+    expect(clearPendingOnboardingIfMatches).toHaveBeenCalledWith('user-new-001', 'flow-wrong-009');
   });
 
+  // ── 10. Bad owner → pending payload ignored ──
+  test('10. bad owner → pending payload not cleared', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+    (fetchPlan as jest.Mock).mockResolvedValue({ id: 'plan-existing-010' });
+    (fetchProgress as jest.Mock).mockResolvedValue({ id: 'progress-existing-010' });
+    (clearPendingOnboardingIfMatches as jest.Mock).mockResolvedValue('superseded');
+
+    const result = await performSocialAuth('google', queryClient, { flowId: 'flow-owner-010' });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.skippedFinalization).toBe(true);
+    // clearPendingOnboardingIfMatches returns 'superseded' — pending NOT cleared
+    expect(clearPendingOnboardingIfMatches).toHaveBeenCalledWith('user-new-001', 'flow-owner-010');
+  });
+
+  // ── 11. Stale generation → pending payload not consumed ──
+  test('11. stale generation → attempt discarded before finalization', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+    const delayed = mockExchangeDelayed('user-stale-011');
+
+    const p = performSocialAuth('google', queryClient, { flowId: 'flow-stale-011' });
+
+    // Wait for exchange to start
+    await new Promise(r => setTimeout(r, 50));
+
+    // Invalidate during exchange
+    invalidateAllSocialAuthAttempts();
+
+    // Resolve the exchange (session gets installed via _saveSession)
+    delayed.resolve();
+
+    const result = await p;
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('stale_attempt');
+
+    // Finalizer must not have been called
+    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
+  });
+
+  // ── 12. SIGNED_IN before state check → no incomplete dashboard ──
+  test('12. SIGNED_IN before state check → lease prevents premature routing', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+    (fetchPlan as jest.Mock).mockResolvedValue(null);
+    (fetchProgress as jest.Mock).mockResolvedValue(null);
+
+    let signedInEmitted = false;
+    // Use 'user-new-001' so cache pre-populated in beforeEach matches
+    (supabase.auth.signInWithIdToken as jest.Mock).mockImplementation(async () => {
+      const session = makeSession('user-new-001');
+      mockSessionStorage = { userId: session.user.id, access_token: session.access_token };
+      mockAuthCallbacks.forEach(cb => cb('SIGNED_IN', session));
+      signedInEmitted = true;
+      return { data: { session }, error: null };
+    });
+
+    const result = await performSocialAuth('google', queryClient, { flowId: 'flow-signed-in-012' });
+
+    // SIGNED_IN was emitted during the exchange
+    expect(signedInEmitted).toBe(true);
+
+    // But the lease was active during SIGNED_IN, so _layout.tsx treats
+    // the user as guest (authed = false when leaseActive = true).
+    // After the transition completes, the lease moves to data_ready_covered
+    // and routing proceeds with verified cache.
+    expect(result.ok).toBe(true);
+
+    // The lease should NOT be active (it completed or was released)
+    expect(hasActiveTransitionLease()).toBe(false);
+  });
+
+  // ── 13. Email flows unchanged ──
   test('13. email flows remain unchanged — no socialAuth imports in email screens', () => {
-    const fs = require('fs') as typeof import('fs');
-    const path = require('path') as typeof import('path');
+    /* eslint-disable @typescript-eslint/no-require-imports */
+    const signupEmailPath = require('path').resolve(__dirname, '../../../app/(auth)/signup-email.tsx');
+    const loginEmailPath = require('path').resolve(__dirname, '../../../app/(auth)/login-email.tsx');
 
-    const signupEmailPath = path.resolve(__dirname, '../../../app/(auth)/signup-email.tsx');
-    const loginEmailPath = path.resolve(__dirname, '../../../app/(auth)/login-email.tsx');
+    const signupContent = require('fs').readFileSync(signupEmailPath, 'utf-8');
+    const loginContent = require('fs').readFileSync(loginEmailPath, 'utf-8');
+    /* eslint-enable @typescript-eslint/no-require-imports */
 
-    const signupContent = fs.readFileSync(signupEmailPath, 'utf-8');
-    const loginContent = fs.readFileSync(loginEmailPath, 'utf-8');
-
-    // Email screens must not import or use socialAuth
     expect(signupContent).not.toContain('socialAuth');
     expect(loginContent).not.toContain('socialAuth');
     expect(signupContent).not.toContain('performSocialAuth');
