@@ -16,7 +16,7 @@ import { clearNotificationData }       from '@/notifications/storage';
 import { revenueCatLogOut }            from '@/lib/revenueCat';
 import { clearAllPendingOnboardingData } from '@/lib/pendingOnboardingPlan';
 import { clearOnboardingDraft }           from '@/lib/onboardingDraft';
-import { signOutGoogle }                  from '@/lib/socialAuth';
+import { signOutGoogle, invalidateAllSocialAuthAttempts } from '@/lib/socialAuth';
 
 export function useLogout() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -29,6 +29,10 @@ export function useLogout() {
   async function performLogout(opts?: { preserveDeletionFlag?: boolean }) {
     if (isLoggingOut) return;
     setIsLoggingOut(true);
+
+    // 0. Invalidate any in-flight social auth attempt — a late OAuth callback
+    //    arriving after logout must not exchange its token for a session.
+    invalidateAllSocialAuthAttempts();
 
     try {
       // 1. Sign out from Supabase (clears persisted session in AsyncStorage via the client).

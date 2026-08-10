@@ -81,8 +81,8 @@ export default function SignupMethodsScreen() {
       return;
     }
 
-    if (result.reason === 'cancelled') {
-      // User cancelled — silent, no error display.
+    if (result.reason === 'cancelled' || result.reason === 'stale_attempt') {
+      // User cancelled or attempt was superseded (logout, double tap) — silent.
       return;
     }
 

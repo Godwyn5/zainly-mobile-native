@@ -43,11 +43,11 @@ jest.mock('@/lib/pendingOnboardingPlan', () => ({
 }));
 
 jest.mock('@/db/plans', () => ({
-  fetchPlan: jest.fn(async () => ({ id: 'plan-1' })),
+  fetchPlan: jest.fn(async () => null),
 }));
 
 jest.mock('@/db/progress', () => ({
-  fetchProgress: jest.fn(async () => ({ id: 'progress-1' })),
+  fetchProgress: jest.fn(async () => null),
 }));
 
 jest.mock('@/queries', () => ({
@@ -109,9 +109,13 @@ import {
   performSocialAuth,
   configureGoogleSignIn,
   signOutGoogle,
+  invalidateAllSocialAuthAttempts,
   type SocialAuthCredential,
 } from '../socialAuth';
 import { supabase } from '@/db/client';
+import { fetchPlan } from '@/db/plans';
+import { fetchProgress } from '@/db/progress';
+import { clearPendingOnboardingIfMatches, clearSessionAuthFlowId } from '@/lib/pendingOnboardingPlan';
 import { forceReleaseTransitionLease, hasActiveTransitionLease } from '../transitionLease';
 /* eslint-enable import/first */
 
@@ -509,6 +513,325 @@ describe('performSocialAuth', () => {
       expect(result.reason).toBe('auth_error');
     }
     expect(hasActiveTransitionLease()).toBe(false);
+  });
+});
+
+// ── Data safety & attempt guard tests (P0 fix) ──────────────────────────────
+
+describe('performSocialAuth — data safety & attempt guard', () => {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    forceReleaseTransitionLease();
+    mockGetRandomValues.mockImplementation((arr: Uint8Array) => {
+      for (let i = 0; i < arr.length; i++) arr[i] = i % 256;
+      return arr;
+    });
+    mockDigestStringAsync.mockResolvedValue('a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2');
+    // Default: no plan, no progress (new user)
+    (fetchPlan as jest.Mock).mockResolvedValue(null);
+    (fetchProgress as jest.Mock).mockResolvedValue(null);
+    (supabase.auth.signInWithIdToken as jest.Mock).mockResolvedValue({
+      data: { session: makeSession('user-new-001') },
+      error: null,
+    });
+    // Default pending plan mocks
+    (clearPendingOnboardingIfMatches as jest.Mock).mockResolvedValue('cleared');
+    // Pre-populate cache so runOnboardingTransition's cache verification passes
+    queryClient.setQueryData(['plan', 'user-new-001'], { id: 'plan-1' });
+    queryClient.setQueryData(['progress', 'user-new-001'], { id: 'progress-1' });
+    queryClient.setQueryData(['pendingOnboarding', 'user-new-001'], false);
+  });
+
+  test('1. existing user with plan from Google signup → finalizer never called, program unchanged', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+    (fetchPlan as jest.Mock).mockResolvedValue({ id: 'plan-existing', surah_start: 1, start_ayah: 1, ayah_per_day: 5 });
+    (fetchProgress as jest.Mock).mockResolvedValue({ id: 'progress-existing', current_surah: 3, current_ayah: 10, streak: 5 });
+
+    const result = await performSocialAuth('google', queryClient, {
+      flowId: 'flow-existing-user-google',
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.skippedFinalization).toBe(true);
+      expect(result.userId).toBe('user-new-001');
+    }
+    // finalizeOnboardingV2PlanWithPremiumGate must NOT have been called
+    const { finalizeOnboardingV2PlanWithPremiumGate } = require('@/lib/onboardingFinalize');
+    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
+    // upsertPlan must NOT have been called (via plans mock)
+    // The pending payload must be cleared for this flowId
+    expect(clearPendingOnboardingIfMatches).toHaveBeenCalledWith('user-new-001', 'flow-existing-user-google');
+    // Lease must be released
+    expect(hasActiveTransitionLease()).toBe(false);
+  });
+
+  test('2. existing user with plan from Apple signup → finalizer never called, program unchanged', async () => {
+    mockAppleIsAvailableAsync.mockResolvedValue(true);
+    mockAppleSignInAsync.mockResolvedValue(makeAppleCredential());
+    (fetchPlan as jest.Mock).mockResolvedValue({ id: 'plan-existing', surah_start: 2, start_ayah: 5, ayah_per_day: 3 });
+    (fetchProgress as jest.Mock).mockResolvedValue({ id: 'progress-existing', current_surah: 5, current_ayah: 20, streak: 10 });
+
+    const result = await performSocialAuth('apple', queryClient, {
+      flowId: 'flow-existing-user-apple',
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.skippedFinalization).toBe(true);
+    }
+    const { finalizeOnboardingV2PlanWithPremiumGate } = require('@/lib/onboardingFinalize');
+    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
+    expect(clearPendingOnboardingIfMatches).toHaveBeenCalledWith('user-new-001', 'flow-existing-user-apple');
+    expect(hasActiveTransitionLease()).toBe(false);
+  });
+
+  test('3. existing user with partial progress (plan but no progress) → no writes, fail closed', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+    (fetchPlan as jest.Mock).mockResolvedValue({ id: 'plan-partial' });
+    (fetchProgress as jest.Mock).mockResolvedValue(null);
+
+    const result = await performSocialAuth('google', queryClient, {
+      flowId: 'flow-partial-state',
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('state_check_failed');
+    }
+    const { finalizeOnboardingV2PlanWithPremiumGate } = require('@/lib/onboardingFinalize');
+    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
+    expect(hasActiveTransitionLease()).toBe(false);
+  });
+
+  test('4. new user with valid pending → finalization runs exactly once', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+    (fetchPlan as jest.Mock).mockResolvedValue(null);
+    (fetchProgress as jest.Mock).mockResolvedValue(null);
+
+    const result = await performSocialAuth('google', queryClient, {
+      flowId: 'flow-new-user',
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.skippedFinalization).toBeUndefined();
+      expect(result.transitionResult).toBeDefined();
+    }
+    const { finalizeOnboardingV2PlanWithPremiumGate } = require('@/lib/onboardingFinalize');
+    expect(finalizeOnboardingV2PlanWithPremiumGate).toHaveBeenCalledTimes(1);
+  });
+
+  test('5. new user from login without pending → no finalization, no incomplete dashboard', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+
+    // No flowId — direct login, not from onboarding
+    const result = await performSocialAuth('google', queryClient);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.skippedFinalization).toBeUndefined();
+      expect(result.transitionResult).toBeUndefined();
+    }
+    const { finalizeOnboardingV2PlanWithPremiumGate } = require('@/lib/onboardingFinalize');
+    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
+    // fetchPlan/fetchProgress should NOT be called when there's no flowId
+    expect(fetchPlan).not.toHaveBeenCalled();
+    expect(fetchProgress).not.toHaveBeenCalled();
+  });
+
+  test('6. state check error (fetchPlan throws) → no finalization, fail closed', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+    (fetchPlan as jest.Mock).mockRejectedValue(new Error('Network error'));
+
+    const result = await performSocialAuth('google', queryClient, {
+      flowId: 'flow-fetch-error',
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('state_check_failed');
+    }
+    const { finalizeOnboardingV2PlanWithPremiumGate } = require('@/lib/onboardingFinalize');
+    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
+    expect(hasActiveTransitionLease()).toBe(false);
+  });
+
+  test('7. double tap → only one SDK call and one Supabase exchange', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+    (fetchPlan as jest.Mock).mockResolvedValue(null);
+    (fetchProgress as jest.Mock).mockResolvedValue(null);
+
+    // Start two concurrent attempts
+    const p1 = performSocialAuth('google', queryClient, { flowId: 'flow-double-tap' });
+    const p2 = performSocialAuth('google', queryClient, { flowId: 'flow-double-tap' });
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+
+    // The second attempt invalidates the first — first should be stale
+    // One should succeed, the other should be stale
+    const results = [r1, r2];
+    const okCount = results.filter(r => r.ok).length;
+    const staleCount = results.filter(r => !r.ok && r.reason === 'stale_attempt').length;
+    expect(okCount).toBe(1);
+    expect(staleCount).toBe(1);
+
+    // Only one signInWithIdToken call should have happened for the successful attempt
+    // (the stale attempt returns before reaching exchange)
+    const exchangeCalls = (supabase.auth.signInWithIdToken as jest.Mock).mock.calls.length;
+    expect(exchangeCalls).toBeLessThanOrEqual(1);
+  });
+
+  test('8. repeated callback → only one processing', async () => {
+    mockAppleIsAvailableAsync.mockResolvedValue(true);
+    mockAppleSignInAsync.mockResolvedValue(makeAppleCredential());
+    (fetchPlan as jest.Mock).mockResolvedValue(null);
+    (fetchProgress as jest.Mock).mockResolvedValue(null);
+
+    // First call succeeds
+    const r1 = await performSocialAuth('apple', queryClient, { flowId: 'flow-callback-repeat' });
+    expect(r1.ok).toBe(true);
+
+    // Simulate dashboard having mounted — lease transitions to idle
+    forceReleaseTransitionLease();
+
+    // Second call (simulating a repeated callback) — new generation.
+    // The state check now finds a plan (just created by first call) →
+    // skippedFinalization, finalizer NOT called again.
+    const { finalizeOnboardingV2PlanWithPremiumGate } = require('@/lib/onboardingFinalize');
+    const callCountBefore = (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mock.calls.length;
+
+    (fetchPlan as jest.Mock).mockResolvedValue({ id: 'plan-just-created' });
+    (fetchProgress as jest.Mock).mockResolvedValue({ id: 'progress-just-created' });
+
+    const r2 = await performSocialAuth('apple', queryClient, { flowId: 'flow-callback-repeat' });
+
+    expect(r2.ok).toBe(true);
+    if (r2.ok) {
+      expect(r2.skippedFinalization).toBe(true);
+    }
+    // Finalizer should NOT have been called a second time
+    const callCountAfter = (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mock.calls.length;
+    expect(callCountAfter).toBe(callCountBefore);
+  });
+
+  test('9. logout during provider window → no exchange', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+
+    // Start the attempt but don't await yet
+    const p = performSocialAuth('google', queryClient, { flowId: 'flow-logout-provider' });
+
+    // Simulate logout during the provider sign-in
+    invalidateAllSocialAuthAttempts();
+
+    const result = await p;
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('stale_attempt');
+    }
+    // signInWithIdToken must NOT have been called
+    expect((supabase.auth.signInWithIdToken as jest.Mock)).not.toHaveBeenCalled();
+  });
+
+  test('10. logout during Supabase exchange → no late session kept', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+
+    // Make signInWithIdToken return after a delay so we can invalidate mid-flight
+    let resolveExchange: (value: unknown) => void;
+    (supabase.auth.signInWithIdToken as jest.Mock).mockImplementation(() => {
+      return new Promise(resolve => {
+        resolveExchange = resolve;
+      });
+    });
+
+    const p = performSocialAuth('google', queryClient, { flowId: 'flow-logout-exchange' });
+
+    // Wait for the provider sign-in to complete and exchange to start
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    // Invalidate during exchange
+    invalidateAllSocialAuthAttempts();
+
+    // Resolve the exchange
+    resolveExchange!({
+      data: { session: makeSession('user-late-001') },
+      error: null,
+    });
+
+    const result = await p;
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('stale_attempt');
+    }
+    expect(hasActiveTransitionLease()).toBe(false);
+  });
+
+  test('11. new valid login after logout → old callback does not disconnect it', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+    (fetchPlan as jest.Mock).mockResolvedValue(null);
+    (fetchProgress as jest.Mock).mockResolvedValue(null);
+
+    // Start first attempt
+    const p1 = performSocialAuth('google', queryClient, { flowId: 'flow-old' });
+
+    // Logout invalidates the first attempt
+    invalidateAllSocialAuthAttempts();
+
+    // Start a new attempt (new login)
+    const p2 = performSocialAuth('google', queryClient, { flowId: 'flow-new' });
+
+    const [r1, r2] = await Promise.all([p1, p2]);
+
+    // First attempt should be stale
+    expect(r1.ok).toBe(false);
+    if (!r1.ok) expect(r1.reason).toBe('stale_attempt');
+
+    // Second attempt should succeed
+    expect(r2.ok).toBe(true);
+  });
+
+  test('12. bad flowId or owner → pending payload ignored (superseded)', async () => {
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+    (fetchPlan as jest.Mock).mockResolvedValue({ id: 'plan-existing' });
+    (fetchProgress as jest.Mock).mockResolvedValue({ id: 'progress-existing' });
+    (clearPendingOnboardingIfMatches as jest.Mock).mockResolvedValue('superseded');
+
+    const result = await performSocialAuth('google', queryClient, {
+      flowId: 'flow-wrong-owner',
+    });
+
+    // User has existing plan → skippedFinalization
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.skippedFinalization).toBe(true);
+    }
+    // clearPendingOnboardingIfMatches was called with the correct userId and flowId
+    expect(clearPendingOnboardingIfMatches).toHaveBeenCalledWith('user-new-001', 'flow-wrong-owner');
+    // The result was 'superseded' — the pending was NOT cleared (different owner/flowId)
+    // This is correct: we don't touch a pending that doesn't belong to this attempt.
+  });
+
+  test('13. email flows remain unchanged — no socialAuth imports in email screens', () => {
+    const fs = require('fs') as typeof import('fs');
+    const path = require('path') as typeof import('path');
+
+    const signupEmailPath = path.resolve(__dirname, '../../../app/(auth)/signup-email.tsx');
+    const loginEmailPath = path.resolve(__dirname, '../../../app/(auth)/login-email.tsx');
+
+    const signupContent = fs.readFileSync(signupEmailPath, 'utf-8');
+    const loginContent = fs.readFileSync(loginEmailPath, 'utf-8');
+
+    // Email screens must not import or use socialAuth
+    expect(signupContent).not.toContain('socialAuth');
+    expect(loginContent).not.toContain('socialAuth');
+    expect(signupContent).not.toContain('performSocialAuth');
+    expect(loginContent).not.toContain('performSocialAuth');
   });
 });
 

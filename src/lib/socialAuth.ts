@@ -35,6 +35,41 @@ import {
   type OnboardingTransitionResult,
 } from '@/lib/onboardingTransition';
 import { forceReleaseTransitionLease, type SignupVisualSnapshot } from '@/lib/transitionLease';
+import { fetchPlan } from '@/db/plans';
+import { fetchProgress } from '@/db/progress';
+import {
+  clearPendingOnboardingIfMatches,
+  clearSessionAuthFlowId,
+} from '@/lib/pendingOnboardingPlan';
+
+// ─── Attempt generation guard ───────────────────────────────────────────────
+//
+// Protects against OAuth races, double taps, and late callbacks after logout.
+// Each performSocialAuth call receives a unique generation number. After every
+// async boundary (provider sign-in, session exchange, transition), the
+// generation is checked — if it no longer matches the current attempt, the
+// result is silently discarded.
+//
+// invalidateAllSocialAuthAttempts() is called by useLogout to immediately
+// invalidate any in-flight attempt. A provider callback arriving after logout
+// finds a stale generation and refuses to exchange the token.
+//
+// This guard is NOT based on a React boolean or the onboarding lease — it is a
+// module-level integer that survives component unmounts and navigation.
+
+let _currentGeneration = 0;
+
+export function invalidateAllSocialAuthAttempts(): void {
+  _currentGeneration++;
+}
+
+function startNewAttempt(): number {
+  return ++_currentGeneration;
+}
+
+function isAttemptCurrent(gen: number): boolean {
+  return gen === _currentGeneration;
+}
 
 // ─── Normalized internal types ──────────────────────────────────────────────
 
@@ -59,8 +94,8 @@ export type SocialAuthSessionResult =
   | { ok: false; reason: SocialAuthFailureReason | 'auth_error'; message?: string };
 
 export type SocialAuthFullResult =
-  | { ok: true; userId: string; transitionResult?: OnboardingTransitionResult }
-  | { ok: false; reason: SocialAuthFailureReason | 'auth_error'; message?: string; transitionError?: OnboardingTransitionResult };
+  | { ok: true; userId: string; transitionResult?: OnboardingTransitionResult; skippedFinalization?: boolean }
+  | { ok: false; reason: SocialAuthFailureReason | 'auth_error' | 'state_check_failed' | 'stale_attempt'; message?: string; transitionError?: OnboardingTransitionResult };
 
 // ─── Nonce generation ───────────────────────────────────────────────────────
 //
@@ -286,9 +321,15 @@ export async function performSocialAuth(
     visual?: SignupVisualSnapshot;
   },
 ): Promise<SocialAuthFullResult> {
+  const gen = startNewAttempt();
+
   const credResult = provider === 'apple'
     ? await signInWithApple()
     : await signInWithGoogle();
+
+  if (!isAttemptCurrent(gen)) {
+    return { ok: false, reason: 'stale_attempt' };
+  }
 
   if (!credResult.ok) {
     return { ok: false, reason: credResult.reason, message: credResult.message };
@@ -308,6 +349,13 @@ export async function performSocialAuth(
 
   const sessionResult = await exchangeSocialCredential(credResult.credential);
 
+  if (!isAttemptCurrent(gen)) {
+    if (leaseId) {
+      forceReleaseTransitionLease();
+    }
+    return { ok: false, reason: 'stale_attempt' };
+  }
+
   if (!sessionResult.ok) {
     if (leaseId) {
       forceReleaseTransitionLease();
@@ -316,8 +364,89 @@ export async function performSocialAuth(
     return { ok: false, reason: sessionResult.reason, message: sessionResult.message };
   }
 
+  const userId = sessionResult.userId;
+
+  // ── Post-auth business state check ──────────────────────────────────
+  // Before running any onboarding finalization, check if the user already
+  // has a durable plan AND progress. This is the P0 safety guard: an
+  // existing user who signs in via social auth from signup-methods with a
+  // flowId must NEVER have their program overwritten.
+  //
+  // The check uses the canonical Supabase userId — never email, name,
+  // created_at, or SDK-supplied metadata.
+  //
+  // If the state check itself fails (network, Supabase down), we fail
+  // closed: no finalization, no overwrite, retry allowed.
+  if (flowId) {
+    let existingPlan: Awaited<ReturnType<typeof fetchPlan>>;
+    let existingProgress: Awaited<ReturnType<typeof fetchProgress>>;
+
+    try {
+      existingPlan = await fetchPlan(userId);
+    } catch {
+      if (leaseId) forceReleaseTransitionLease();
+      return { ok: false, reason: 'state_check_failed', message: 'Impossible de vérifier l\'existence d\'un programme. Réessaie.' };
+    }
+
+    if (!isAttemptCurrent(gen)) {
+      if (leaseId) forceReleaseTransitionLease();
+      return { ok: false, reason: 'stale_attempt' };
+    }
+
+    try {
+      existingProgress = await fetchProgress(userId);
+    } catch {
+      if (leaseId) forceReleaseTransitionLease();
+      return { ok: false, reason: 'state_check_failed', message: 'Impossible de vérifier ta progression. Réessaie.' };
+    }
+
+    if (!isAttemptCurrent(gen)) {
+      if (leaseId) forceReleaseTransitionLease();
+      return { ok: false, reason: 'stale_attempt' };
+    }
+
+    // ── Case 1: User already has a durable plan + progress ───────────
+    // Existing user — never finalize, never overwrite. Invalidate the
+    // stale pending payload for this exact attempt (flowId + owner),
+    // release the lease, and proceed to canonical authenticated launch.
+    if (existingPlan && existingProgress) {
+      if (leaseId) {
+        forceReleaseTransitionLease();
+        leaseId = null;
+      }
+      // Clear the stale pending payload — it belongs to this flowId and
+      // this userId. If it doesn't match (different owner or flowId),
+      // clearPendingOnboardingIfMatches returns 'superseded' and leaves
+      // it untouched.
+      await clearPendingOnboardingIfMatches(userId, flowId).catch(() => {});
+      clearSessionAuthFlowId();
+      return { ok: true, userId, skippedFinalization: true };
+    }
+
+    // ── Case 2: Partial/inconsistent state — fail closed ──────────────
+    // A plan with no progress, or progress with no plan, is an
+    // inconsistent state. Never repair silently during social auth —
+    // fail closed and let the user retry. The existing runFinalize
+    // repair logic handles this for email flows where the user is known
+    // to be new.
+    if (existingPlan || existingProgress) {
+      if (leaseId) {
+        forceReleaseTransitionLease();
+        leaseId = null;
+      }
+      return {
+        ok: false,
+        reason: 'state_check_failed',
+        message: 'Ton compte a un état incomplet. Contacte le support avant de continuer.',
+      };
+    }
+
+    // ── Case 3: No plan, no progress — proceed with finalization ─────
+    // The user is new (or has no program). Run the canonical onboarding
+    // transition pipeline.
+  }
+
   if (leaseId && flowId) {
-    const userId = sessionResult.userId;
     const sessionGen = sessionResult.session.access_token?.slice(-16) ?? `${Date.now()}-${userId.slice(-8)}`;
     setTransitionUserId(userId);
 
@@ -336,6 +465,10 @@ export async function performSocialAuth(
       },
     );
     leaseId = null;
+
+    if (!isAttemptCurrent(gen)) {
+      return { ok: false, reason: 'stale_attempt' };
+    }
 
     if (transitionResult.status === 'error') {
       return { ok: false, reason: 'unknown', transitionError: transitionResult };

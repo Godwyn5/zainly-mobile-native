@@ -83,7 +83,7 @@ export default function LoginMethodsScreen() {
       return;
     }
 
-    if (result.reason === 'cancelled') {
+    if (result.reason === 'cancelled' || result.reason === 'stale_attempt') {
       return;
     }
 
