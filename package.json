@@ -27,6 +27,7 @@
     "expo-asset": "~12.0.13",
     "expo-audio": "~1.1.1",
     "expo-constants": "~18.0.13",
+    "expo-crypto": "~15.0.9",
     "expo-dev-client": "~6.0.21",
     "expo-font": "~14.0.12",
     "expo-haptics": "~15.0.8",
@@ -58,7 +59,7 @@
     "preset": "jest-expo",
     "maxWorkers": 1,
     "transformIgnorePatterns": [
-      "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|react-native-url-polyfill|@supabase/supabase-js|@tanstack/react-query|zustand|@react-native-google-signin/google-signin|expo-apple-authentication)"
+      "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg|react-native-url-polyfill|@supabase/supabase-js|@tanstack/react-query|zustand|@react-native-google-signin/google-signin|expo-apple-authentication|expo-crypto)"
     ],
     "testPathIgnorePatterns": [
       "<rootDir>/node_modules/",

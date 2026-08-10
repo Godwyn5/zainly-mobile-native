@@ -64,6 +64,16 @@ jest.mock('expo-apple-authentication', () => ({
   AppleAuthenticationScope: { FULL_NAME: 0, EMAIL: 1 },
 }));
 
+// expo-crypto mock
+const mockDigestStringAsync = jest.fn();
+const mockGetRandomValues = jest.fn();
+jest.mock('expo-crypto', () => ({
+  digestStringAsync: (...args: unknown[]) => mockDigestStringAsync(...(args as [])),
+  getRandomValues: (...args: unknown[]) => mockGetRandomValues(...(args as [])),
+  CryptoDigestAlgorithm: { SHA256: 'SHA256' },
+  CryptoEncoding: { HEX: 'hex', BASE64: 'base64' },
+}));
+
 // Google mock
 const mockGoogleConfigure = jest.fn();
 const mockGoogleSignIn = jest.fn();
@@ -168,6 +178,12 @@ function makeSession(userId: string = 'user-uuid-123') {
 beforeEach(() => {
   jest.clearAllMocks();
   forceReleaseTransitionLease();
+  // Default crypto mock: return deterministic bytes and hash
+  mockGetRandomValues.mockImplementation((arr: Uint8Array) => {
+    for (let i = 0; i < arr.length; i++) arr[i] = i % 256;
+    return arr;
+  });
+  mockDigestStringAsync.mockResolvedValue('a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2');
 });
 
 // ── 1-6: Apple adapter ───────────────────────────────────────────────────────
@@ -183,6 +199,7 @@ describe('signInWithApple', () => {
     if (result.ok) {
       expect(result.credential.provider).toBe('apple');
       expect(result.credential.token).toBe('apple-id-token-abc');
+      // The credential stores the RAW nonce (sent to Supabase), not the hash
       expect(result.credential.nonce).toBeTruthy();
       expect(result.credential.nonce).toHaveLength(32);
       expect(result.credential.email).toBe('jean@apple.com');
@@ -225,17 +242,32 @@ describe('signInWithApple', () => {
     }
   });
 
-  test('5. passes nonce in signInAsync options', async () => {
+  test('5. passes SHA-256 hash of nonce to signInAsync, raw nonce to credential', async () => {
     mockAppleIsAvailableAsync.mockResolvedValue(true);
     mockAppleSignInAsync.mockResolvedValue(makeAppleCredential());
+    const expectedHash = 'fakedhashvalue';
+    mockDigestStringAsync.mockResolvedValueOnce(expectedHash);
 
-    await signInWithApple();
+    const result = await signInWithApple();
 
     expect(mockAppleSignInAsync).toHaveBeenCalledTimes(1);
     const options = mockAppleSignInAsync.mock.calls[0][0];
-    expect(options.nonce).toBeTruthy();
-    expect(options.nonce).toHaveLength(32);
+    // signInAsync receives the HASH, not the raw nonce
+    expect(options.nonce).toBe(expectedHash);
+    expect(options.nonce).not.toBe(result.ok ? result.credential.nonce : '');
     expect(options.requestedScopes).toEqual([0, 1]); // FULL_NAME, EMAIL
+    // The credential stores the RAW nonce for Supabase
+    if (result.ok) {
+      expect(result.credential.nonce).toBeTruthy();
+      expect(result.credential.nonce).toHaveLength(32);
+      expect(result.credential.nonce).not.toBe(expectedHash);
+    }
+    // Verify SHA-256 was called with the raw nonce
+    expect(mockDigestStringAsync).toHaveBeenCalledWith(
+      'SHA256',
+      expect.any(String),
+      { encoding: 'hex' },
+    );
   });
 
   test('6. returns fullName null when all name parts are null', async () => {

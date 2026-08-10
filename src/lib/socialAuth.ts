@@ -7,15 +7,16 @@
 //      then reuses the existing onboarding transition pipeline when flowId is present.
 //
 // Nonce contract:
-//   - Apple: a raw random nonce is generated, passed to signInAsync({ nonce }) AND
-//     to signInWithIdToken({ nonce }). Supabase hashes it server-side (SHA-256) and
-//     compares against the nonce_hash claim in Apple's JWT. The raw nonce is never
-//     sent to Apple — Apple embeds the hash in the token.
+//   - Apple: a raw random nonce is generated. SHA-256(rawNonce) as hex is passed
+//     to signInAsync({ nonce: hashedNonce }). The RAW nonce is passed to
+//     signInWithIdToken({ nonce: rawNonce }). Supabase hashes it server-side
+//     and compares to the `nonce` claim in Apple's JWT.
 //   - Google: the Original API does not support a nonce parameter. signInWithIdToken
 //     is called without nonce for Google.
 
 import { Platform } from 'react-native';
 import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Crypto from 'expo-crypto';
 import {
   GoogleSignin,
   isSuccessResponse,
@@ -62,24 +63,38 @@ export type SocialAuthFullResult =
   | { ok: false; reason: SocialAuthFailureReason | 'auth_error'; message?: string; transitionError?: OnboardingTransitionResult };
 
 // ─── Nonce generation ───────────────────────────────────────────────────────
+//
+// Apple nonce contract (verified from official sources):
+//   1. Generate a cryptographically secure raw nonce (32 chars).
+//   2. Compute SHA-256(rawNonce) as hex lowercase.
+//   3. Pass the HASH to signInAsync({ nonce: hashedNonce }) — Apple embeds it
+//      in the ID token's `nonce` claim.
+//   4. Pass the RAW nonce to supabase.auth.signInWithIdToken({ nonce: rawNonce })
+//      — Supabase computes SHA-256(rawNonce) and compares to the JWT claim.
+//
+// Sources:
+//   - Apple/Google Cloud: "request.nonce = sha256(nonce)" (hex)
+//   - Supabase Swift example: request.nonce = sha256(nonce), signInWithIdToken(nonce: rawNonce)
+//   - better-auth PR #8870: "client must SHA-256 hash the nonce before ASAuthorizationAppleIDRequest"
+//   - expo-apple-authentication Swift: request.nonce = options.nonce (no hashing by Expo)
 
-function generateNonce(length: number = 32): string {
+function generateRawNonce(length: number = 32): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-  let nonce = '';
   const bytes = new Uint8Array(length);
-  // Use crypto.getRandomValues if available (React Native hermes polyfill)
-  if (typeof globalThis !== 'undefined' && globalThis.crypto?.getRandomValues) {
-    globalThis.crypto.getRandomValues(bytes);
-    for (let i = 0; i < length; i++) {
-      nonce += chars[bytes[i] % chars.length];
-    }
-  } else {
-    // Fallback — less critical since Apple also provides replay protection
-    for (let i = 0; i < length; i++) {
-      nonce += chars[Math.floor(Math.random() * chars.length)];
-    }
+  Crypto.getRandomValues(bytes);
+  let nonce = '';
+  for (let i = 0; i < length; i++) {
+    nonce += chars[bytes[i] % chars.length];
   }
   return nonce;
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  return Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    input,
+    { encoding: Crypto.CryptoEncoding.HEX },
+  );
 }
 
 // ─── Apple adapter ──────────────────────────────────────────────────────────
@@ -91,14 +106,15 @@ export async function signInWithApple(): Promise<SocialAuthResult> {
       return { ok: false, reason: 'unavailable', message: "L'authentification Apple n'est pas disponible sur cet appareil." };
     }
 
-    const rawNonce = generateNonce();
+    const rawNonce = generateRawNonce();
+    const hashedNonce = await sha256Hex(rawNonce);
 
     const credential = await AppleAuthentication.signInAsync({
       requestedScopes: [
         AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
         AppleAuthentication.AppleAuthenticationScope.EMAIL,
       ],
-      nonce: rawNonce,
+      nonce: hashedNonce,
     });
 
     if (!credential.identityToken) {
