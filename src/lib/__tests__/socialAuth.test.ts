@@ -131,7 +131,7 @@ import {
   configureGoogleSignIn,
   signOutGoogle,
   invalidateAllSocialAuthAttempts,
-  waitForSocialAuthSessionMutation,
+  waitForSessionMutationQueue,
   type SocialAuthCredential,
 } from '../socialAuth';
 import { supabase } from '@/db/client';
@@ -673,13 +673,13 @@ describe('performSocialAuth — data safety & attempt guard', () => {
     // Logout invalidates first attempt
     invalidateAllSocialAuthAttempts();
 
-    // The exchange is still in-flight. waitForSocialAuthSessionMutation will
+    // The exchange is still in-flight. waitForSessionMutationQueue will
     // hang until the exchange resolves. Resolve it now to simulate the SDK
     // completing _saveSession.
     delayed1.resolve();
 
     // Wait for the old exchange + cleanup to complete
-    await waitForSocialAuthSessionMutation();
+    await waitForSessionMutationQueue();
 
     // The old attempt should have resolved as stale (with signOut local cleanup)
     const r1 = await p1;
@@ -719,9 +719,9 @@ describe('performSocialAuth — data safety & attempt guard', () => {
     // Logout
     invalidateAllSocialAuthAttempts();
 
-    // Resolve the delayed exchange so waitForSocialAuthSessionMutation can proceed
+    // Resolve the delayed exchange so waitForSessionMutationQueue can proceed
     delayed1.resolve();
-    await waitForSocialAuthSessionMutation();
+    await waitForSessionMutationQueue();
 
     const r1 = await p1;
     expect(r1.ok).toBe(false);
@@ -766,7 +766,7 @@ describe('performSocialAuth — data safety & attempt guard', () => {
     if (!r1.ok) expect(r1.reason).toBe('stale_attempt');
 
     // Wait for session mutation chain to clear
-    await waitForSocialAuthSessionMutation();
+    await waitForSessionMutationQueue();
 
     // Second attempt acquires a new lease
     mockExchangeSaveAndResolve('user-new-001');

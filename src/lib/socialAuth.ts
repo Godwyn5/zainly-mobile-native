@@ -45,7 +45,7 @@ import {
   clearSessionAuthFlowId,
 } from '@/lib/pendingOnboardingPlan';
 
-// ─── Attempt generation guard & session mutation serializer ────────────────
+// ─── Attempt generation guard & unified session mutation queue ──────────────
 //
 // Protects against OAuth races, double taps, and late callbacks after logout.
 // Each performSocialAuth call receives a unique generation number. After every
@@ -54,33 +54,31 @@ import {
 // result is silently discarded.
 //
 // invalidateAllSocialAuthAttempts() is called by useLogout to immediately
-// invalidate any in-flight attempt AND acquire the session mutation lock so
-// that any in-flight exchange completes before logout removes the session.
+// invalidate any in-flight attempt.
 //
-// Session mutation serializer:
-//   signInWithIdToken (called by exchangeSocialCredential) does NOT acquire
-//   the Supabase internal lock — it calls _saveSession + _notifyAllSubscribers
-//   directly. signOut DOES acquire the lock. Without serialization, a late
-//   _saveSession can install a session AFTER logout's _removeSession has
-//   already run, leaving a zombie session in AsyncStorage.
+// Unified session mutation queue:
+//   Both the social exchange (signInWithIdToken → _saveSession) and the
+//   logout (signOut → _removeSession) are enqueued in the SAME promise chain.
+//   This guarantees they cannot interleave — the Supabase SDK does not
+//   serialize these internally.
 //
-//   The serializer ensures that if an exchange is in-flight when logout
-//   starts, logout waits for the exchange to complete (including _saveSession),
-//   THEN removes the session. If the exchange resolves after logout detected
-//   a stale generation, the coordinator calls supabase.auth.signOut({ scope:
-//   'local' }) to remove the zombie session without revoking tokens globally.
+//   Order when logout fires during an in-flight exchange:
+//     1. logout calls invalidateAllSocialAuthAttempts() (immediate, sync)
+//     2. logout enqueues its signOut in the mutation queue
+//     3. the in-flight exchange is already in the queue and finishes first
+//     4. if the exchange installed a session after invalidation, the
+//        coordinator's stale-attempt cleanup (signOut scope:local) runs
+//        INSIDE the exchange's queue slot (before the next item)
+//     5. logout's signOut runs next, removing any remaining session
+//     6. a new social auth attempt can only enqueue after logout's signOut
+//     7. no old callback can subsequently remove the new session
 //
-//   scope: 'local' is used for zombie cleanup because the logout's global
-//   signOut may have already revoked the token server-side — a second global
-//   call would fail with 401 (handled gracefully by the SDK). 'local' only
-//   removes the session from storage and emits SIGNED_OUT, which is exactly
-//   the cleanup needed for a zombie session.
+//   A rejected mutation does not block subsequent mutations — the chain
+//   catches errors and continues.
 
 let _currentGeneration = 0;
 
-// Session mutation lock — serializes social exchange and logout.
-// Resolves to 'exchanged' if the exchange completed, or 'cancelled' if
-// logout was waiting and the exchange result was discarded.
+// The unified queue — both exchanges and logout signOut are serialized here.
 let _sessionMutationChain: Promise<unknown> = Promise.resolve();
 
 export function invalidateAllSocialAuthAttempts(): void {
@@ -96,21 +94,43 @@ function isAttemptCurrent(gen: number): boolean {
 }
 
 /**
- * Serializes an async operation (social exchange or logout) so that
- * _saveSession (inside signInWithIdToken) and _removeSession (inside signOut)
- * cannot interleave. The Supabase SDK does not serialize these internally.
+ * Enqueues an async session mutation (social exchange or logout signOut)
+ * in the unified chain.  Mutations execute sequentially — _saveSession
+ * and _removeSession can never interleave.  A rejected mutation does not
+ * block subsequent mutations.
  */
-function serializeSessionMutation<T>(fn: () => Promise<T>): Promise<T> {
+function enqueueSessionMutation<T>(fn: () => Promise<T>): Promise<T> {
   const next = _sessionMutationChain.then(fn, fn) as Promise<T>;
+  // Catch errors on the chain itself so a rejection doesn't break
+  // subsequent enqueued mutations.  The caller receives their own error
+  // via the returned `next` promise.
   _sessionMutationChain = next.then(() => undefined, () => undefined);
   return next;
 }
 
 /**
- * Waits for any in-flight session mutation (social exchange) to complete
- * before proceeding. Called by useLogout before supabase.auth.signOut().
+ * Enqueues the logout signOut in the unified session mutation queue.
+ * Called by useLogout AFTER invalidateAllSocialAuthAttempts().  The
+ * signOut runs after any in-flight exchange completes, ensuring no
+ * late _saveSession can reinstall a session after logout.
+ *
+ * The caller's signOut scope is preserved — useLogout passes its
+ * own signOut function, so the global/local scope decision stays there.
  */
-export async function waitForSocialAuthSessionMutation(): Promise<void> {
+export async function enqueueLogoutSessionMutation(
+  signOutFn: () => Promise<{ error: unknown } | void>,
+): Promise<void> {
+  await enqueueSessionMutation(async () => {
+    await signOutFn();
+  });
+}
+
+/**
+ * Waits for all currently-queued session mutations to complete.
+ * Used by tests to deterministically wait for in-flight exchanges
+ * before asserting on session state.
+ */
+export async function waitForSessionMutationQueue(): Promise<void> {
   await _sessionMutationChain.catch(() => {});
 }
 
@@ -312,7 +332,7 @@ export async function signInWithGoogle(): Promise<SocialAuthResult> {
 export async function exchangeSocialCredential(
   credential: SocialAuthCredential,
 ): Promise<SocialAuthSessionResult> {
-  return serializeSessionMutation(async () => {
+  return enqueueSessionMutation(async () => {
     try {
       const signInParams: {
         provider: 'apple' | 'google';
@@ -396,17 +416,19 @@ export async function performSocialAuth(
 
   if (!isAttemptCurrent(gen)) {
     // Stale attempt detected after exchange. The SDK may have already
-    // saved a session via _saveSession. Clean it up with scope: 'local'
-    // so we don't revoke tokens globally (the logout's global signOut
-    // may have already done that, or a new session may now be active).
+    // saved a session via _saveSession inside the exchange's queue slot.
+    // Clean it up with scope: 'local' so we don't revoke tokens globally.
+    // This cleanup is enqueued in the same queue so it runs BEFORE any
+    // pending logout signOut, ensuring the zombie is removed before
+    // logout's global signOut.
     if (leaseId) {
       releaseTransitionLease(leaseId);
     }
-    // Best-effort zombie session cleanup — the serializer ensures this
-    // runs after the exchange's _saveSession completed.
-    try {
-      await supabase.auth.signOut({ scope: 'local' });
-    } catch { /* best-effort */ }
+    await enqueueSessionMutation(async () => {
+      try {
+        await supabase.auth.signOut({ scope: 'local' });
+      } catch { /* best-effort zombie cleanup */ }
+    });
     return { ok: false, reason: 'stale_attempt' };
   }
 
@@ -444,7 +466,9 @@ export async function performSocialAuth(
 
     if (!isAttemptCurrent(gen)) {
       if (leaseId) releaseTransitionLease(leaseId);
-      try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* best-effort */ }
+      await enqueueSessionMutation(async () => {
+        try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* best-effort */ }
+      });
       return { ok: false, reason: 'stale_attempt' };
     }
 
@@ -457,7 +481,9 @@ export async function performSocialAuth(
 
     if (!isAttemptCurrent(gen)) {
       if (leaseId) releaseTransitionLease(leaseId);
-      try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* best-effort */ }
+      await enqueueSessionMutation(async () => {
+        try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* best-effort */ }
+      });
       return { ok: false, reason: 'stale_attempt' };
     }
 

@@ -16,7 +16,7 @@ import { clearNotificationData }       from '@/notifications/storage';
 import { revenueCatLogOut }            from '@/lib/revenueCat';
 import { clearAllPendingOnboardingData } from '@/lib/pendingOnboardingPlan';
 import { clearOnboardingDraft }           from '@/lib/onboardingDraft';
-import { signOutGoogle, invalidateAllSocialAuthAttempts, waitForSocialAuthSessionMutation } from '@/lib/socialAuth';
+import { signOutGoogle, invalidateAllSocialAuthAttempts, enqueueLogoutSessionMutation } from '@/lib/socialAuth';
 
 export function useLogout() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -34,24 +34,25 @@ export function useLogout() {
     //    arriving after logout must not exchange its token for a session.
     invalidateAllSocialAuthAttempts();
 
-    // 0a. Wait for any in-flight social exchange to complete before calling
-    //     signOut. The Supabase SDK does not serialize signInWithIdToken
-    //     (which calls _saveSession without the internal lock) with signOut
-    //     (which acquires the lock). Without this wait, a late _saveSession
-    //     could install a session AFTER signOut's _removeSession has run,
-    //     leaving a zombie session in AsyncStorage.
+    // 0a. Enqueue signOut in the unified session mutation queue.
+    //     Both social exchange (signInWithIdToken → _saveSession) and logout
+    //     (signOut → _removeSession) share the same queue, so they cannot
+    //     interleave.  If an exchange is in-flight, it finishes first (its
+    //     _saveSession completes), then logout's signOut removes the session.
+    //     If the exchange installed a zombie session after invalidation,
+    //     the coordinator's stale-attempt cleanup (signOut scope:local) runs
+    //     inside the exchange's queue slot — before this signOut.
     //
-    //     The exchange is wrapped in serializeSessionMutation, so this await
-    //     guarantees the exchange (including _saveSession) has completed
-    //     before signOut removes the session.
-    await waitForSocialAuthSessionMutation();
-
+    //     The signOut scope is preserved here (default global) — the caller
+    //     controls the scope by passing the function to enqueueLogoutSessionMutation.
     try {
       // 1. Sign out from Supabase (clears persisted session in AsyncStorage via the client).
       //    Best-effort: after account deletion the Auth user no longer exists server-side,
       //    so this call can fail — local cleanup below must still run regardless.
-      const { error } = await supabase.auth.signOut();
-      if (error && __DEV__) console.warn('[useLogout] signOut error (ignored, best-effort):', error.message);
+      await enqueueLogoutSessionMutation(async () => {
+        const { error } = await supabase.auth.signOut();
+        if (error && __DEV__) console.warn('[useLogout] signOut error (ignored, best-effort):', error.message);
+      });
 
       // 2. Best-effort RevenueCat identity reset — must never affect logout flow
       await revenueCatLogOut().catch(() => {/* non-fatal */});
