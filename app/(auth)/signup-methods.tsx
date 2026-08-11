@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Alert,
   Animated, Easing, StatusBar, ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -29,6 +30,7 @@ export default function SignupMethodsScreen() {
 
   const queryClient = useQueryClient();
   const [loading, setLoading] = useState<{ apple: boolean; google: boolean }>({ apple: false, google: false });
+  const socialLoading = loading.apple || loading.google;
   const [transitionError, setTransitionError] = useState<OnboardingTransitionResult | null>(null);
 
   const [fontsLoaded] = useFonts({
@@ -86,12 +88,28 @@ export default function SignupMethodsScreen() {
       return;
     }
 
+    if (result.reason === 'config_error') {
+      Alert.alert(
+        'Configuration manquante',
+        'La connexion avec ce fournisseur n\'est pas encore configurée. Contacte le support.',
+      );
+      return;
+    }
+
+    if (result.reason === 'unavailable') {
+      Alert.alert(
+        'Indisponible',
+        result.message ?? 'Ce fournisseur n\'est pas disponible sur cet appareil.',
+      );
+      return;
+    }
+
     if (result.transitionError && result.transitionError.status === 'error') {
       setTransitionError(result.transitionError);
       return;
     }
 
-    const message = result.message ?? 'Connexion impossible pour le moment.';
+    const message = result.message ?? 'Connexion impossible pour le moment. Réessaie.';
     Alert.alert('Erreur', message);
   }
 
@@ -180,29 +198,31 @@ export default function SignupMethodsScreen() {
           {/* Auth buttons */}
           <Animated.View style={[styles.buttonsBlock, { opacity: btnsO, transform: [{ translateY: btnsY }] }]}>
 
-            {/* Apple - Primary on iOS */}
-            <TouchableOpacity
-              style={[styles.authButton, styles.appleButton]}
-              onPress={handleApple}
-              activeOpacity={0.85}
-              disabled={loading.apple}
-            >
-              {loading.apple ? (
-                <ActivityIndicator color={BG} />
-              ) : (
-                <View style={styles.buttonContent}>
-                  <AppleIcon size={20} color={BG} />
-                  <Text style={styles.appleButtonText}>Continuer avec Apple</Text>
-                </View>
-              )}
-            </TouchableOpacity>
+            {/* Apple - Primary on iOS only */}
+            {Platform.OS === 'ios' && (
+              <TouchableOpacity
+                style={[styles.authButton, styles.appleButton]}
+                onPress={handleApple}
+                activeOpacity={0.85}
+                disabled={loading.apple || socialLoading}
+              >
+                {loading.apple ? (
+                  <ActivityIndicator color={BG} />
+                ) : (
+                  <View style={styles.buttonContent}>
+                    <AppleIcon size={20} color={BG} />
+                    <Text style={styles.appleButtonText}>Continuer avec Apple</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            )}
 
             {/* Google */}
             <TouchableOpacity
               style={[styles.authButton, styles.secondaryButton]}
               onPress={handleGoogle}
               activeOpacity={0.8}
-              disabled={loading.google}
+              disabled={loading.google || socialLoading}
             >
               {loading.google ? (
                 <ActivityIndicator color={GREEN} />
