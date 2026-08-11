@@ -331,6 +331,7 @@ export async function signInWithGoogle(): Promise<SocialAuthResult> {
 
 export async function exchangeSocialCredential(
   credential: SocialAuthCredential,
+  onExchangeComplete?: () => Promise<void>,
 ): Promise<SocialAuthSessionResult> {
   return enqueueSessionMutation(async () => {
     try {
@@ -355,6 +356,15 @@ export async function exchangeSocialCredential(
 
       if (!data.session) {
         return { ok: false, reason: 'auth_error', message: 'Aucune session retournée par Supabase.' };
+      }
+
+      // If the caller provided a stale-check callback, run it INSIDE
+      // this queue slot — before the slot ends and the next queued
+      // mutation (logout or a new exchange) starts.  This ensures
+      // that any zombie session cleanup (signOut scope:local) runs
+      // before logout's signOut, with no possibility of interleaving.
+      if (onExchangeComplete) {
+        await onExchangeComplete();
       }
 
       return {
@@ -412,23 +422,28 @@ export async function performSocialAuth(
     }
   }
 
-  const sessionResult = await exchangeSocialCredential(credResult.credential);
-
-  if (!isAttemptCurrent(gen)) {
-    // Stale attempt detected after exchange. The SDK may have already
-    // saved a session via _saveSession inside the exchange's queue slot.
-    // Clean it up with scope: 'local' so we don't revoke tokens globally.
-    // This cleanup is enqueued in the same queue so it runs BEFORE any
-    // pending logout signOut, ensuring the zombie is removed before
-    // logout's global signOut.
-    if (leaseId) {
-      releaseTransitionLease(leaseId);
-    }
-    await enqueueSessionMutation(async () => {
+  // The stale-check callback runs INSIDE the exchange's queue slot,
+  // after signInWithIdToken + _saveSession complete but BEFORE the
+  // slot ends.  This ensures zombie cleanup (signOut scope:local) runs
+  // before any subsequently-queued logout signOut or new exchange.
+  const onExchangeComplete = async () => {
+    if (!isAttemptCurrent(gen)) {
+      // Stale attempt: _saveSession already installed a session.
+      // Clean it up NOW, inside this queue slot, before the next
+      // queued mutation (logout signOut or B's exchange) starts.
       try {
         await supabase.auth.signOut({ scope: 'local' });
       } catch { /* best-effort zombie cleanup */ }
-    });
+    }
+  };
+
+  const sessionResult = await exchangeSocialCredential(credResult.credential, onExchangeComplete);
+
+  if (!isAttemptCurrent(gen)) {
+    // Stale attempt — cleanup already ran inside the exchange's queue slot.
+    if (leaseId) {
+      releaseTransitionLease(leaseId);
+    }
     return { ok: false, reason: 'stale_attempt' };
   }
 
@@ -466,9 +481,11 @@ export async function performSocialAuth(
 
     if (!isAttemptCurrent(gen)) {
       if (leaseId) releaseTransitionLease(leaseId);
-      await enqueueSessionMutation(async () => {
-        try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* best-effort */ }
-      });
+      // No signOut({scope:'local'}) here — the session was already
+      // installed inside the exchange's queue slot, and logout's signOut
+      // (already queued) will remove it.  Enqueueing a separate cleanup
+      // here could interleave with B's exchange and incorrectly remove
+      // B's session.
       return { ok: false, reason: 'stale_attempt' };
     }
 
@@ -481,9 +498,7 @@ export async function performSocialAuth(
 
     if (!isAttemptCurrent(gen)) {
       if (leaseId) releaseTransitionLease(leaseId);
-      await enqueueSessionMutation(async () => {
-        try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* best-effort */ }
-      });
+      // Same as above — no separate cleanup.  Logout's signOut handles it.
       return { ok: false, reason: 'stale_attempt' };
     }
 

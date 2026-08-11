@@ -50,35 +50,13 @@ const mockPlansTable = new Map<string, {
   surah_start: number; start_ayah: number; ayah_per_day: number;
 }>();
 
-// ── Mock Supabase progress table (declared early for supabase client mock) ──
+// ── Mock Supabase progress table ───────────────────────────────────────────
 const mockProgressTable = new Map<string, {
   id: string; user_id: string;
   current_surah: number; current_ayah: number; ayah_per_day: number;
   streak: number; total_memorized: number; last_session_date: string | null;
 }>();
 
-// ── Mock Supabase client (for orphan progress delete) ──────────────────────
-jest.mock('@/db/client', () => ({
-  supabase: {
-    from: jest.fn((table: string) => {
-      if (table === 'progress') {
-        return {
-          delete: jest.fn(() => ({
-            eq: jest.fn((_col: string, userId: string) => {
-              mockProgressTable.delete(userId);
-              return Promise.resolve({ error: null });
-            }),
-          })),
-        };
-      }
-      return {
-        delete: jest.fn(() => ({
-          eq: jest.fn(() => Promise.resolve({ error: null })),
-        })),
-      };
-    }),
-  },
-}));
 
 jest.mock('@/db/plans', () => ({
   upsertPlan: jest.fn(async (userId: string, payload: any) => {
@@ -261,31 +239,25 @@ describe('Plan-already-exists guard', () => {
     expect(mockProgressTable.get(USER_A)?.total_memorized).toBe(40);
   });
 
-  it('repairs a missing progress row when plan exists but progress does not (partial-write recovery)', async () => {
-    // Plan exists (e.g. a prior finalize whose upsertPlan succeeded but the
-    // progress write failed) — no progress row seeded.
+  it('plan-only (no progress) → inconsistent_state, no write, no repair', async () => {
+    // Plan exists but progress does not — this is a partial state that
+    // must NOT be repaired by the client. The RPC contract is authoritative.
     mockPlansTable.set(USER_A, { id: 'plan-A', user_id: USER_A, surah_start: 3, start_ayah: 5, ayah_per_day: 4 });
 
     const result = await finalizeOnboardingV2Plan(USER_A, '');
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.reason).toBe('plan_already_exists');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('persist_error');
     }
-    // The plan itself must never be recreated.
+    // No write must occur — neither upsertPlan, resetProgressForNewPlan, nor the RPC.
     expect(upsertPlan).not.toHaveBeenCalled();
-    // The repair must reconstruct progress from the PLAN's own canonical
-    // fields — never guessed, never from a draft/pending source.
-    expect(resetProgressForNewPlan).toHaveBeenCalledWith(USER_A, {
-      current_surah: 3,
-      current_ayah: 4, // start_ayah - 1
-      ayah_per_day: 4,
-    });
-    const repaired = mockProgressTable.get(USER_A);
-    expect(repaired).not.toBeUndefined();
-    expect(repaired?.current_surah).toBe(3);
-    expect(repaired?.current_ayah).toBe(4);
-    expect(repaired?.ayah_per_day).toBe(4);
+    expect(resetProgressForNewPlan).not.toHaveBeenCalled();
+    expect(finalizeOnboardingPlanRpc).not.toHaveBeenCalled();
+    // The plan row must be untouched.
+    expect(mockPlansTable.get(USER_A)?.surah_start).toBe(3);
+    // No progress row must have been created.
+    expect(mockProgressTable.has(USER_A)).toBe(false);
   });
 
   it('clears all pre-auth sources when plan already exists', async () => {
@@ -343,9 +315,9 @@ describe('Plan-already-exists guard', () => {
     expect(resetProgressForNewPlan).not.toHaveBeenCalled();
   });
 
-  it('resets an orphaned progress row when creating a brand-new plan (no plan, stale progress present)', async () => {
-    // Simulate a leftover progress row from an unrelated prior attempt —
-    // no plan exists for this user right now.
+  it('progress-only (no plan) → inconsistent_state, no write, no repair', async () => {
+    // Progress exists but plan does not — partial state, must NOT be
+    // repaired or deleted by the client. The RPC contract is authoritative.
     mockProgressTable.set(USER_A, {
       id: 'progress-orphan', user_id: USER_A,
       current_surah: 50, current_ayah: 12, ayah_per_day: 9,
@@ -355,15 +327,19 @@ describe('Plan-already-exists guard', () => {
 
     const result = await finalizeOnboardingV2Plan(USER_A, '');
 
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.reason).toBe('created');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('persist_error');
     }
-    // The orphan's streak/totals must NEVER carry over into the new plan.
-    const reset = mockProgressTable.get(USER_A);
-    expect(reset?.streak).toBe(0);
-    expect(reset?.total_memorized).toBe(0);
-    expect(reset?.current_surah).not.toBe(50);
+    // No write must occur — neither upsertPlan, resetProgressForNewPlan, nor the RPC.
+    expect(upsertPlan).not.toHaveBeenCalled();
+    expect(resetProgressForNewPlan).not.toHaveBeenCalled();
+    expect(finalizeOnboardingPlanRpc).not.toHaveBeenCalled();
+    // The orphan progress row must be untouched.
+    expect(mockProgressTable.get(USER_A)?.streak).toBe(30);
+    expect(mockProgressTable.get(USER_A)?.total_memorized).toBe(500);
+    // No plan row must have been created.
+    expect(mockPlansTable.has(USER_A)).toBe(false);
   });
 
   it('retry after RPC failure repairs on the next attempt (atomic — no partial state)', async () => {
@@ -414,12 +390,10 @@ describe('Plan-already-exists guard', () => {
 
     // The write succeeds, but the very next read used to CONFIRM the pair
     // fails — this must not clear the pending payload nor report success.
-    // Note: fetchProgress is called once for orphan cleanup (before the RPC,
-    // caught by try/catch) and once for the post-RPC confirm check. The
-    // throw must hit the confirm call, so we use mockRejectedValueOnce twice:
-    // the first is consumed (and caught) by the orphan cleanup, the second
-    // hits the confirm check.
-    (fetchProgress as jest.Mock).mockRejectedValueOnce(new Error('orphan check lag'));
+    // fetchProgress is called once for the state guard (before the RPC) and
+    // once for the post-RPC confirm check. The throw must hit the confirm
+    // call, so we use mockRejectedValueOnce for the second call.
+    (fetchProgress as jest.Mock).mockResolvedValueOnce(null); // state guard: no progress
     (fetchProgress as jest.Mock).mockRejectedValueOnce(new Error('replica lag'));
 
     const result = await finalizeOnboardingV2Plan(USER_A, '');

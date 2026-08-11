@@ -19,9 +19,8 @@
 
 import { computePlan, isPlanError } from '@/core/planEngine';
 import { fetchPlan } from '@/db/plans';
-import { fetchProgress, resetProgressForNewPlan } from '@/db/progress';
+import { fetchProgress } from '@/db/progress';
 import { finalizeOnboardingPlanRpc } from '@/db/finalizeOnboardingPlan';
-import { supabase } from '@/db/client';
 import { upsertProfileFirstName } from '@/db/profiles';
 import { readOnboardingDraft, clearOnboardingDraft } from './onboardingDraft';
 import {
@@ -156,62 +155,22 @@ async function runFinalize(userId: string, authFlowId: string): Promise<Finalize
     };
   }
 
-  if (existingPlan) {
-    let existingProgress: Awaited<ReturnType<typeof fetchProgress>>;
-    try {
-      existingProgress = await fetchProgress(userId);
-    } catch {
-      // Plan is confirmed present but progress can't be verified — never
-      // guess. Returning persist_error (instead of plan_already_exists)
-      // keeps any pending source alive for a retry that CAN confirm the
-      // pair, rather than reporting a false success.
-      return {
-        ok: false,
-        reason: 'persist_error',
-        message: 'Impossible de vérifier ta progression. Réessaie.',
-      };
-    }
+  // ── Fetch progress to determine the complete state ──
+  let existingProgress: Awaited<ReturnType<typeof fetchProgress>>;
+  try {
+    existingProgress = await fetchProgress(userId);
+  } catch {
+    return {
+      ok: false,
+      reason: 'persist_error',
+      message: 'Impossible de vérifier ta progression. Réessaie.',
+    };
+  }
 
-    if (!existingProgress) {
-      // Repair: a plan exists with no progress row — reconstruct the
-      // initial progress from the persisted plan's OWN canonical starting
-      // fields, never from the draft/pending source (which may be stale or
-      // belong to an unrelated attempt). This mapping is not a guess: it
-      // mirrors exactly how computePlan() derives progressPayload from
-      // planPayload in src/core/planEngine.ts —
-      //   current_surah = surah_start, current_ayah = start_ayah - 1,
-      //   ayah_per_day = ayah_per_day.
-      try {
-        await resetProgressForNewPlan(userId, {
-          current_surah: existingPlan.surah_start,
-          current_ayah:  existingPlan.start_ayah - 1,
-          ayah_per_day:  existingPlan.ayah_per_day,
-        });
-      } catch (err) {
-        return {
-          ok: false,
-          reason: 'persist_error',
-          message: err instanceof Error ? err.message : 'Erreur de réparation de la progression.',
-        };
-      }
-
-      // Confirm the pair is now complete before treating this as a durable
-      // success — a read failure here does not corrupt the just-repaired
-      // progress, it only defers clearing any pending source to a retry
-      // that can actually confirm the pair.
-      const confirmProgress = await fetchProgress(userId).catch(() => null);
-      if (!confirmProgress) {
-        return {
-          ok: false,
-          reason: 'persist_error',
-          message: 'Impossible de vérifier ta progression après réparation. Réessaie.',
-        };
-      }
-    }
-
-    // Plan + progress are both confirmed present (already, or just
-    // repaired above) — never recreate or reinitialize a complete,
-    // legitimate pair.
+  // ── Both exist → idempotent, no write ──
+  if (existingPlan && existingProgress) {
+    // Plan + progress are both confirmed present — never recreate or
+    // reinitialize a complete, legitimate pair.
     // Always clear the in-memory draft — it has no ownerUserId and cannot
     // belong to another account.
     await clearOnboardingDraft();
@@ -225,6 +184,19 @@ async function runFinalize(userId: string, authFlowId: string): Promise<Finalize
     // the retry source.
 
     return { ok: true, reason: 'plan_already_exists' };
+  }
+
+  // ── Exactly one exists → inconsistent state, no write, no repair ──
+  // The RPC contract is authoritative: plan-only or progress-only is
+  // an inconsistent state that must NOT be repaired by the client.
+  // This check runs BEFORE source resolution — no draft or pending
+  // payload is read if the state is inconsistent.
+  if (existingPlan || existingProgress) {
+    return {
+      ok: false,
+      reason: 'persist_error',
+      message: 'État incohérent détecté (plan ou progression manquant). Contacte le support.',
+    };
   }
 
   const draft = await readOnboardingDraft();
@@ -268,30 +240,6 @@ async function runFinalize(userId: string, authFlowId: string): Promise<Finalize
   const planResult = computePlan(validation.planInput);
   if (isPlanError(planResult)) {
     return { ok: false, reason: 'plan_error', message: planResult.error };
-  }
-
-  // ── Orphan progress cleanup ──────────────────────────────────────────
-  // If no plan exists but a stale progress row does (from a failed prior
-  // attempt or unrelated data), the RPC would return 'inconsistent_state'.
-  // Clean up the orphan before calling the RPC so the atomic creation can
-  // succeed.  This mirrors the old behavior where resetProgressForNewPlan
-  // would overwrite the orphan with fresh values.
-  if (!existingPlan) {
-    try {
-      const orphanProgress = await fetchProgress(userId);
-      if (orphanProgress) {
-        // Delete the orphan progress row — the RPC will create a fresh one
-        const { error: deleteError } = await supabase
-          .from('progress')
-          .delete()
-          .eq('user_id', userId);
-        if (deleteError) throw deleteError;
-      }
-    } catch {
-      // If we can't check/clean the orphan, proceed anyway — the RPC's
-      // inconsistent_state handling will catch it and return an error
-      // that the user can retry.
-    }
   }
 
   try {

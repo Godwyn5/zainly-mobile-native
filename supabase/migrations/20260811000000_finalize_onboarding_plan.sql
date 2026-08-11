@@ -10,7 +10,9 @@
 --   • Identity is obtained exclusively from auth.uid() (verified JWT).
 --     The client never passes user_id — it is injected server-side.
 --   • SECURITY DEFINER with explicit search_path = public.
---   • Only authenticated role can execute; anon is revoked.
+--   • REVOKE EXECUTE FROM PUBLIC and FROM anon (PUBLIC is broader than anon).
+--   • Only authenticated role can execute.
+--   • All table references are schema-qualified (public.plans, public.progress).
 --
 -- Concurrency:
 --   • pg_advisory_xact_lock per user serializes concurrent calls.
@@ -55,13 +57,14 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtext(v_user_id));
 
   -- ── Check existing state inside the lock ──
+  -- All table references are schema-qualified to prevent search_path hijacking.
   SELECT id INTO v_existing_plan_id
-  FROM plans
+  FROM public.plans
   WHERE user_id = v_user_id
   LIMIT 1;
 
   SELECT EXISTS(
-    SELECT 1 FROM progress WHERE user_id = v_user_id
+    SELECT 1 FROM public.progress WHERE user_id = v_user_id
   ) INTO v_existing_progress_exists;
 
   -- ── Both exist → idempotent, no write ──
@@ -78,7 +81,7 @@ BEGIN
   -- user_id is injected from auth.uid(), never from the client payload.
   -- jsonb_populate_record handles type coercion from JSONB to column types.
   -- Columns not listed (id, created_at) use their DB defaults.
-  INSERT INTO plans (
+  INSERT INTO public.plans (
     user_id, ayah_per_day, days_per_week, first_surah_name, surah_start,
     start_ayah, remaining_ayats, estimated_months, plan_mode, known_surahs,
     starting_surah, custom_surah_order, pace_type, pace_label,
@@ -90,11 +93,11 @@ BEGIN
     starting_surah, custom_surah_order, pace_type, pace_label,
     pedagogical_order_version, partial_known_surahs
   FROM jsonb_populate_record(
-    NULL::plans,
+    NULL::public.plans,
     p_plan || jsonb_build_object('user_id', v_user_id)
   );
 
-  INSERT INTO progress (
+  INSERT INTO public.progress (
     user_id, current_surah, current_ayah, ayah_per_day, streak,
     total_memorized, session_dates, last_session_date,
     last_session_difficulty, last_revision_scores, last_adaptation_date
@@ -104,7 +107,7 @@ BEGIN
     total_memorized, session_dates, last_session_date,
     last_session_difficulty, last_revision_scores, last_adaptation_date
   FROM jsonb_populate_record(
-    NULL::progress,
+    NULL::public.progress,
     p_progress || jsonb_build_object(
       'user_id', v_user_id,
       'streak', 0,
@@ -122,5 +125,8 @@ END;
 $$;
 
 -- ── Permissions ──
-GRANT EXECUTE ON FUNCTION public.finalize_onboarding_plan(jsonb, jsonb) TO authenticated;
+-- Revoke from PUBLIC first — PUBLIC is broader than anon and includes
+-- any role that might inherit execute by default.
+REVOKE EXECUTE ON FUNCTION public.finalize_onboarding_plan(jsonb, jsonb) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.finalize_onboarding_plan(jsonb, jsonb) FROM anon;
+GRANT EXECUTE ON FUNCTION public.finalize_onboarding_plan(jsonb, jsonb) TO authenticated;

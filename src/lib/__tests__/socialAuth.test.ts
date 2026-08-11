@@ -132,6 +132,7 @@ import {
   signOutGoogle,
   invalidateAllSocialAuthAttempts,
   waitForSessionMutationQueue,
+  enqueueLogoutSessionMutation,
   type SocialAuthCredential,
 } from '../socialAuth';
 import { supabase } from '@/db/client';
@@ -956,6 +957,116 @@ describe('performSocialAuth — data safety & attempt guard', () => {
     expect(loginContent).not.toContain('socialAuth');
     expect(signupContent).not.toContain('performSocialAuth');
     expect(loginContent).not.toContain('performSocialAuth');
+  });
+
+  // ── 14. Deterministic session ordering: exchange_A → save_A → cleanup_A → logout → exchange_B → save_B ──
+  test('14. exact queue order: exchange_A → save_A → cleanup_A → logout → exchange_B → save_B', async () => {
+    configureGoogleSignIn('test-web-client-id');
+    mockGoogleSignIn.mockResolvedValue(makeGoogleSuccessResponse());
+
+    // Use the SAME user.id for both sessions but different access tokens,
+    // so a simple user-id comparison cannot make the test pass artificially.
+    const USER_ID = 'user-same-id-014';
+    const TOKEN_A = 'token-A-014';
+    const TOKEN_B = 'token-B-014';
+
+    // Trace recorder
+    const trace: string[] = [];
+
+    // ── A's exchange: delayed, records save when it resolves ──
+    let resolveExchangeA!: (value: unknown) => void;
+    (supabase.auth.signInWithIdToken as jest.Mock).mockImplementationOnce(() => {
+      return new Promise(resolve => {
+        resolveExchangeA = resolve;
+      });
+    });
+
+    // ── A starts ──
+    const pA = performSocialAuth('google', queryClient, { flowId: 'flow-A-014' });
+
+    // Wait for A's exchange to start (signInWithIdToken called)
+    await new Promise(r => setTimeout(r, 50));
+
+    // ── Logout invalidates A and enqueues signOut ──
+    invalidateAllSocialAuthAttempts();
+    const logoutPromise = enqueueLogoutSessionMutation(async () => {
+      trace.push('logout');
+      await supabase.auth.signOut();
+    });
+
+    // ── Resolve A's exchange: _saveSession runs, then stale cleanup ──
+    // The onExchangeComplete callback checks isAttemptCurrent → false → signOut(local)
+    (supabase.auth.signOut as jest.Mock).mockImplementationOnce(async (opts?: { scope?: string }) => {
+      trace.push(`cleanup_A:${opts?.scope ?? 'global'}`);
+      mockSessionStorage = null;
+      mockAuthCallbacks.forEach(cb => cb('SIGNED_OUT', null));
+      return { error: null };
+    });
+
+    // Also mock signOut for logout (second call)
+    (supabase.auth.signOut as jest.Mock).mockImplementationOnce(async () => {
+      mockSessionStorage = null;
+      mockAuthCallbacks.forEach(cb => cb('SIGNED_OUT', null));
+      return { error: null };
+    });
+
+    // Resolve A's delayed exchange — this triggers save_A + cleanup_A inside the queue slot
+    const sessionA = makeSession(USER_ID);
+    (sessionA as any).access_token = TOKEN_A;
+    mockSessionStorage = { userId: sessionA.user.id, access_token: TOKEN_A };
+    mockAuthCallbacks.forEach(cb => cb('SIGNED_IN', sessionA));
+    trace.push('exchange_A');
+    trace.push('save_A');
+    resolveExchangeA({ data: { session: sessionA }, error: null });
+
+    // Wait for A to complete (releases lease) and logout to run
+    const rA = await pA;
+    await logoutPromise;
+
+    // ── B starts after A and logout complete ──
+    // B's exchange uses a different token but the SAME user.id
+    (supabase.auth.signInWithIdToken as jest.Mock).mockImplementationOnce(async () => {
+      trace.push('exchange_B');
+      const session = makeSession(USER_ID);
+      (session as any).access_token = TOKEN_B;
+      mockSessionStorage = { userId: session.user.id, access_token: TOKEN_B };
+      mockAuthCallbacks.forEach(cb => cb('SIGNED_IN', session));
+      trace.push('save_B');
+      return { data: { session }, error: null };
+    });
+
+    // Pre-populate cache for B's user so onboarding transition passes
+    queryClient.setQueryData(['plan', USER_ID], { id: 'plan-014' });
+    queryClient.setQueryData(['progress', USER_ID], { id: 'progress-014' });
+    queryClient.setQueryData(['pendingOnboarding', USER_ID], false);
+
+    const rB = await performSocialAuth('google', queryClient, { flowId: 'flow-B-014' });
+
+    // ── Assertions ──
+    // A must be stale
+    expect(rA.ok).toBe(false);
+    if (!rA.ok) expect(rA.reason).toBe('stale_attempt');
+
+    // B must succeed
+    expect(rB.ok).toBe(true);
+
+    // Final session must be B's (TOKEN_B), not A's (TOKEN_A)
+    expect(mockSessionStorage).not.toBeNull();
+    expect(mockSessionStorage?.access_token).toBe(TOKEN_B);
+
+    // ── Exact trace verification ──
+    // exchange_A and save_A happen when we resolve the delayed exchange.
+    // cleanup_A (signOut scope:local) runs inside A's queue slot via onExchangeComplete.
+    // logout runs next (enqueued by enqueueLogoutSessionMutation).
+    // exchange_B and save_B run last (after A and logout complete).
+    expect(trace).toEqual([
+      'exchange_A',
+      'save_A',
+      'cleanup_A:local',
+      'logout',
+      'exchange_B',
+      'save_B',
+    ]);
   });
 });
 
