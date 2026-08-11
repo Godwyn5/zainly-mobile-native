@@ -50,6 +50,36 @@ const mockPlansTable = new Map<string, {
   surah_start: number; start_ayah: number; ayah_per_day: number;
 }>();
 
+// ── Mock Supabase progress table (declared early for supabase client mock) ──
+const mockProgressTable = new Map<string, {
+  id: string; user_id: string;
+  current_surah: number; current_ayah: number; ayah_per_day: number;
+  streak: number; total_memorized: number; last_session_date: string | null;
+}>();
+
+// ── Mock Supabase client (for orphan progress delete) ──────────────────────
+jest.mock('@/db/client', () => ({
+  supabase: {
+    from: jest.fn((table: string) => {
+      if (table === 'progress') {
+        return {
+          delete: jest.fn(() => ({
+            eq: jest.fn((_col: string, userId: string) => {
+              mockProgressTable.delete(userId);
+              return Promise.resolve({ error: null });
+            }),
+          })),
+        };
+      }
+      return {
+        delete: jest.fn(() => ({
+          eq: jest.fn(() => Promise.resolve({ error: null })),
+        })),
+      };
+    }),
+  },
+}));
+
 jest.mock('@/db/plans', () => ({
   upsertPlan: jest.fn(async (userId: string, payload: any) => {
     mockPlansTable.set(userId, {
@@ -65,13 +95,6 @@ jest.mock('@/db/plans', () => ({
 }));
 
 // ── Mock Supabase progress table ───────────────────────────────────────────
-// Simulates the progress table: a Map<userId, progressRow>.
-const mockProgressTable = new Map<string, {
-  id: string; user_id: string;
-  current_surah: number; current_ayah: number; ayah_per_day: number;
-  streak: number; total_memorized: number; last_session_date: string | null;
-}>();
-
 jest.mock('@/db/progress', () => ({
   upsertProgress: jest.fn(async (_userId: string, _payload: unknown) => {}),
   fetchProgress: jest.fn(async (userId: string) => {
@@ -91,6 +114,45 @@ jest.mock('@/db/progress', () => ({
 // ── Mock profiles ──────────────────────────────────────────────────────────
 jest.mock('@/db/profiles', () => ({
   upsertProfileFirstName: jest.fn(async () => {}),
+}));
+
+// ── Mock finalizeOnboardingPlanRpc (atomic PostgreSQL RPC) ─────────────────
+// Simulates the server-side finalize_onboarding_plan function.
+// The RPC does not receive userId — it derives identity from auth.uid()
+// server-side.  In tests, we set mockAuthUid to simulate the authenticated
+// user.  The RPC mock writes to the same mockPlansTable/mockProgressTable
+// that fetchPlan/fetchProgress read from, so the confirm check in
+// onboardingFinalize.ts works correctly.
+let mockAuthUid = 'test-user';
+
+jest.mock('@/db/finalizeOnboardingPlan', () => ({
+  finalizeOnboardingPlanRpc: jest.fn(async (planPayload: any, progressPayload: any) => {
+    const userId = mockAuthUid;
+    const hasPlan = mockPlansTable.has(userId);
+    const hasProgress = mockProgressTable.has(userId);
+
+    if (hasPlan && hasProgress) {
+      return { ok: true, reason: 'already_finalized' };
+    }
+    if (hasPlan || hasProgress) {
+      return { ok: false, reason: 'inconsistent_state' };
+    }
+    // Simulate atomic insert of both rows in a single transaction
+    mockPlansTable.set(userId, {
+      id: `plan-${userId}`, user_id: userId,
+      surah_start: planPayload?.surah_start ?? 1,
+      start_ayah: planPayload?.start_ayah ?? 1,
+      ayah_per_day: planPayload?.ayah_per_day ?? 2,
+    });
+    mockProgressTable.set(userId, {
+      id: `progress-${userId}`, user_id: userId,
+      current_surah: progressPayload?.current_surah ?? 1,
+      current_ayah: progressPayload?.current_ayah ?? 0,
+      ayah_per_day: progressPayload?.ayah_per_day ?? 2,
+      streak: 0, total_memorized: 0, last_session_date: null,
+    });
+    return { ok: true, reason: 'created' };
+  }),
 }));
 
 // ── Mock notifications ─────────────────────────────────────────────────────
@@ -135,6 +197,7 @@ import {
 } from '../pendingOnboardingPlan';
 import { fetchPlan, upsertPlan } from '@/db/plans';
 import { fetchProgress, resetProgressForNewPlan } from '@/db/progress';
+import { finalizeOnboardingPlanRpc } from '@/db/finalizeOnboardingPlan';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const USER_A = 'user-aaa-111';
@@ -157,6 +220,7 @@ beforeEach(() => {
   // Reset all state
   mockPlansTable.clear();
   mockProgressTable.clear();
+  mockAuthUid = USER_A;
   (AsyncStorage.clear as jest.Mock)();
   clearOnboardingDraft();
   // Reset mock call tracking
@@ -164,6 +228,7 @@ beforeEach(() => {
   (upsertPlan as jest.Mock).mockClear();
   (fetchProgress as jest.Mock).mockClear();
   (resetProgressForNewPlan as jest.Mock).mockClear();
+  (finalizeOnboardingPlanRpc as jest.Mock).mockClear();
 });
 
 // ─── 1. Plan-already-exists guard ──────────────────────────────────────────
@@ -272,10 +337,10 @@ describe('Plan-already-exists guard', () => {
     if (result.ok) {
       expect(result.reason).toBe('created');
     }
-    expect(upsertPlan).toHaveBeenCalledWith(USER_A, expect.any(Object));
-    // Creation always uses resetProgressForNewPlan — never the
-    // preserve-on-update upsertProgress() (reserved for real sessions).
-    expect(resetProgressForNewPlan).toHaveBeenCalledWith(USER_A, expect.any(Object));
+    // Creation now uses the atomic RPC, not upsertPlan + resetProgressForNewPlan
+    expect(finalizeOnboardingPlanRpc).toHaveBeenCalledTimes(1);
+    expect(upsertPlan).not.toHaveBeenCalled();
+    expect(resetProgressForNewPlan).not.toHaveBeenCalled();
   });
 
   it('resets an orphaned progress row when creating a brand-new plan (no plan, stale progress present)', async () => {
@@ -301,34 +366,31 @@ describe('Plan-already-exists guard', () => {
     expect(reset?.current_surah).not.toBe(50);
   });
 
-  it('retry after upsertPlan succeeds but progress reset fails repairs on the next attempt', async () => {
+  it('retry after RPC failure repairs on the next attempt (atomic — no partial state)', async () => {
     await seedValidDraft();
-    (resetProgressForNewPlan as jest.Mock).mockRejectedValueOnce(new Error('network dropped'));
+    // Simulate the RPC failing (e.g. network error)
+    (finalizeOnboardingPlanRpc as jest.Mock).mockRejectedValueOnce(new Error('network dropped'));
 
     const result1 = await finalizeOnboardingV2Plan(USER_A, '');
     expect(result1.ok).toBe(false);
     if (!result1.ok) {
       expect(result1.reason).toBe('persist_error');
     }
-    // The plan write itself succeeded and must not be retried/duplicated.
-    expect(upsertPlan).toHaveBeenCalledTimes(1);
-    expect(mockPlansTable.has(USER_A)).toBe(true);
-    // Progress is still missing — the pending/draft source must survive
-    // for the retry below (not asserted directly here; draft persistence
-    // is exercised in "Draft isolation" — this test only proves the retry
-    // itself repairs the pair).
+    // The atomic RPC failed — neither plan nor progress should exist.
+    expect(mockPlansTable.has(USER_A)).toBe(false);
+    expect(mockProgressTable.has(USER_A)).toBe(false);
+    // The draft source must survive for retry (not cleared on failure)
+    expect(await readOnboardingDraft()).not.toBeNull();
 
-    // Retry — resetProgressForNewPlan now succeeds (mockRejectedValueOnce
-    // only fails the first call).
+    // Retry — RPC now succeeds (mockRejectedValueOnce only fails the first call).
     const result2 = await finalizeOnboardingV2Plan(USER_A, '');
     expect(result2.ok).toBe(true);
     if (result2.ok) {
-      // Plan already existed on this second attempt — goes through the
-      // repair branch, not a fresh 'created'.
-      expect(result2.reason).toBe('plan_already_exists');
+      expect(result2.reason).toBe('created');
     }
-    // upsertPlan is still only called once — never recreated.
-    expect(upsertPlan).toHaveBeenCalledTimes(1);
+    // RPC was called once (failed) + once (succeeded) = 2 total
+    expect(finalizeOnboardingPlanRpc).toHaveBeenCalledTimes(2);
+    expect(mockPlansTable.has(USER_A)).toBe(true);
     expect(mockProgressTable.get(USER_A)).not.toBeUndefined();
   });
 
@@ -352,15 +414,13 @@ describe('Plan-already-exists guard', () => {
 
     // The write succeeds, but the very next read used to CONFIRM the pair
     // fails — this must not clear the pending payload nor report success.
-    (fetchProgress as jest.Mock).mockImplementationOnce(async () => { throw new Error('replica lag'); });
-    // First implementation-once above is consumed by the internal
-    // confirmProgress check inside resetProgressForNewPlan's caller path;
-    // fetchProgress is also called once more for the initial existence
-    // check inside runFinalize's guard — but since no plan exists yet at
-    // that point, the guard branch that calls fetchProgress is skipped
-    // entirely (only called after fetchPlan finds a plan). So this
-    // mockImplementationOnce is guaranteed to hit the post-write
-    // confirmation call.
+    // Note: fetchProgress is called once for orphan cleanup (before the RPC,
+    // caught by try/catch) and once for the post-RPC confirm check. The
+    // throw must hit the confirm call, so we use mockRejectedValueOnce twice:
+    // the first is consumed (and caught) by the orphan cleanup, the second
+    // hits the confirm check.
+    (fetchProgress as jest.Mock).mockRejectedValueOnce(new Error('orphan check lag'));
+    (fetchProgress as jest.Mock).mockRejectedValueOnce(new Error('replica lag'));
 
     const result = await finalizeOnboardingV2Plan(USER_A, '');
 
@@ -408,6 +468,7 @@ describe('Draft isolation across auth boundaries', () => {
     await clearOnboardingDraft();
 
     // Account B tries to finalize — no draft, no pending → no_source
+    mockAuthUid = USER_B;
     const result = await finalizeOnboardingV2Plan(USER_B, '');
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -478,8 +539,8 @@ describe('Idempotence / double-trigger protection', () => {
     expect(result1.ok).toBe(true);
     expect(result2.ok).toBe(true);
 
-    // upsertPlan must have been called exactly once (deduplication)
-    expect(upsertPlan).toHaveBeenCalledTimes(1);
+    // RPC must have been called exactly once (deduplication via inFlight guard)
+    expect(finalizeOnboardingPlanRpc).toHaveBeenCalledTimes(1);
   });
 
   it('a second finalize after the first completes does not create a second plan (plan now exists)', async () => {
@@ -496,8 +557,8 @@ describe('Idempotence / double-trigger protection', () => {
       expect(result2.reason).toBe('plan_already_exists');
     }
 
-    // upsertPlan was called only once (by the first call)
-    expect(upsertPlan).toHaveBeenCalledTimes(1);
+    // RPC was called only once (by the first call)
+    expect(finalizeOnboardingPlanRpc).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -664,6 +725,7 @@ describe('Cross-account pending payload protection in plan_already_exists', () =
     await seedValidDraft();
 
     // USER_B finalizes — plan already exists for B
+    mockAuthUid = USER_B;
     const result = await finalizeOnboardingV2Plan(USER_B, '');
 
     expect(result.ok).toBe(true);
@@ -738,15 +800,8 @@ describe('Pending payload as transaction marker', () => {
     if (result2.ok) {
       expect(result2.reason).toBe('plan_already_exists');
     }
-    // upsertPlan was NOT called again
-    expect(upsertPlan).toHaveBeenCalledTimes(1);
-    // Progress was NOT reset again
-    const resetCalls = (resetProgressForNewPlan as jest.Mock).mock.calls.length;
-    // The first finalize created the plan and called resetProgressForNewPlan once.
-    // The retry goes through the plan_already_exists branch which does NOT call
-    // resetProgressForNewPlan (both plan and progress exist).
-    // So total resetProgressForNewPlan calls should still be 1.
-    expect(resetCalls).toBe(1);
+    // RPC was NOT called again (plan_already_exists short-circuits before RPC)
+    expect(finalizeOnboardingPlanRpc).toHaveBeenCalledTimes(1);
 
     // Step 6: handoff succeeds (simulated — in production handOffFinalizedProgram
     // would run here; we simulate by confirming the pair is in the mock tables)
@@ -929,11 +984,8 @@ describe('Pending payload as transaction marker', () => {
     if (result2.ok) {
       expect(result2.reason).toBe('plan_already_exists');
     }
-    // upsertPlan was NOT called again
-    expect(upsertPlan).toHaveBeenCalledTimes(1);
-    // Progress was NOT reset again
-    const resetCalls = (resetProgressForNewPlan as jest.Mock).mock.calls.length;
-    expect(resetCalls).toBe(1);
+    // RPC was NOT called again (plan_already_exists short-circuits before RPC)
+    expect(finalizeOnboardingPlanRpc).toHaveBeenCalledTimes(1);
 
     // Step 7: correct clear with matching flowId finally clears the pending
     const finalResult = await clearPendingOnboardingIfMatches(USER_A, saved.flowId);
@@ -1002,9 +1054,7 @@ describe('Pending payload as transaction marker', () => {
     if (result2.ok) {
       expect(result2.reason).toBe('plan_already_exists');
     }
-    expect(upsertPlan).toHaveBeenCalledTimes(1);
-    const resetCalls = (resetProgressForNewPlan as jest.Mock).mock.calls.length;
-    expect(resetCalls).toBe(1);
+    expect(finalizeOnboardingPlanRpc).toHaveBeenCalledTimes(1);
 
     // 8. A new idempotent handoff succeeds (simulated — pair is in mock tables)
 

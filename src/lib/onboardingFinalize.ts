@@ -18,8 +18,10 @@
 //      through onboarding-v2 (a direct signup/login).
 
 import { computePlan, isPlanError } from '@/core/planEngine';
-import { upsertPlan, fetchPlan } from '@/db/plans';
+import { fetchPlan } from '@/db/plans';
 import { fetchProgress, resetProgressForNewPlan } from '@/db/progress';
+import { finalizeOnboardingPlanRpc } from '@/db/finalizeOnboardingPlan';
+import { supabase } from '@/db/client';
 import { upsertProfileFirstName } from '@/db/profiles';
 import { readOnboardingDraft, clearOnboardingDraft } from './onboardingDraft';
 import {
@@ -268,15 +270,67 @@ async function runFinalize(userId: string, authFlowId: string): Promise<Finalize
     return { ok: false, reason: 'plan_error', message: planResult.error };
   }
 
+  // ── Orphan progress cleanup ──────────────────────────────────────────
+  // If no plan exists but a stale progress row does (from a failed prior
+  // attempt or unrelated data), the RPC would return 'inconsistent_state'.
+  // Clean up the orphan before calling the RPC so the atomic creation can
+  // succeed.  This mirrors the old behavior where resetProgressForNewPlan
+  // would overwrite the orphan with fresh values.
+  if (!existingPlan) {
+    try {
+      const orphanProgress = await fetchProgress(userId);
+      if (orphanProgress) {
+        // Delete the orphan progress row — the RPC will create a fresh one
+        const { error: deleteError } = await supabase
+          .from('progress')
+          .delete()
+          .eq('user_id', userId);
+        if (deleteError) throw deleteError;
+      }
+    } catch {
+      // If we can't check/clean the orphan, proceed anyway — the RPC's
+      // inconsistent_state handling will catch it and return an error
+      // that the user can retry.
+    }
+  }
+
   try {
-    await upsertPlan(userId, planResult.planPayload);
-    // A brand-new plan is being created for this user — any progress row
-    // found here necessarily predates it (this branch only runs when
-    // fetchPlan(userId) returned null above), so it can never be a
-    // legitimate continuation. Always reset to the new plan's own initial
-    // position rather than upsertProgress()'s preserve-on-update semantics
-    // (which exist for real session-completion callers, not onboarding).
-    await resetProgressForNewPlan(userId, planResult.progressPayload);
+    // ── Atomic plan + progress creation via PostgreSQL RPC ──
+    // The RPC (finalize_onboarding_plan) inserts both rows in a single
+    // transaction with a per-user advisory lock.  Identity is derived
+    // from auth.uid() inside the function — userId is never passed as
+    // a parameter.  This replaces the old two-step client-side approach
+    // (upsertPlan + resetProgressForNewPlan) that was vulnerable to
+    // TOCTOU races, partial state on failure, and silent overwrites.
+    //
+    // The RPC returns:
+    //   created            — both rows inserted (first caller wins)
+    //   already_finalized  — both rows already exist (idempotent retry)
+    //   inconsistent_state — exactly one row exists (no write)
+    //   not_authenticated  — no verified JWT
+    const rpcResult = await finalizeOnboardingPlanRpc(
+      planResult.planPayload,
+      planResult.progressPayload,
+    );
+
+    if (!rpcResult.ok) {
+      return {
+        ok: false,
+        reason: 'persist_error',
+        message: rpcResult.message ?? 'Erreur de sauvegarde du programme.',
+      };
+    }
+
+    if (rpcResult.reason === 'already_finalized') {
+      // A concurrent finalization won the race.  The plan + progress
+      // already exist — treat this as idempotent success, not an error.
+      // The source (draft/pending) is cleared below just like a normal
+      // creation, so a retry never re-finalizes.
+      await clearOnboardingDraft();
+      return { ok: true, reason: 'plan_already_exists' };
+    }
+
+    // rpcResult.reason === 'created' — both rows inserted atomically.
   } catch (err) {
     // Real Supabase failure — nothing is cleared, so the exact same source
     // (draft or pending payload) can be retried on the next login attempt.

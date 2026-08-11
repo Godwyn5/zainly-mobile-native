@@ -25,27 +25,37 @@ function localYesterdayStr(): string {
 }
 
 export async function upsertProgress(userId: string, payload: ProgressPayload): Promise<void> {
-  // Use atomic upsert with onConflict to prevent TOCTOU race between
-  // concurrent finalizations from different devices. Only send the fields
-  // that should change on every call — streak, total_memorized, and
-  // session_dates are NOT included so they are preserved on update and
-  // set by DB column defaults on insert.
-  //
-  // Note: This requires a unique constraint on user_id in the progress
-  // table. If the constraint doesn't exist, the upsert will fall back to
-  // a regular insert, which is the same behavior as before.
-  const { error } = await supabase
+  const { data: existing } = await supabase
     .from('progress')
-    .upsert(
-      {
-        user_id:         userId,
-        current_surah:   payload.current_surah,
-        current_ayah:    payload.current_ayah,
-        ayah_per_day:    payload.ayah_per_day,
-      },
-      { onConflict: 'user_id' },
-    );
-  if (error) throw error;
+    .select('id')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) {
+    // Preserve streak / total_memorized / session_dates — only update position + pace
+    const { error } = await supabase
+      .from('progress')
+      .update({
+        current_surah: payload.current_surah,
+        current_ayah:  payload.current_ayah,
+        ayah_per_day:  payload.ayah_per_day,
+      })
+      .eq('id', existing.id);
+    if (error) throw error;
+  } else {
+    const { error } = await supabase.from('progress').insert({
+      user_id:         userId,
+      current_surah:   payload.current_surah,
+      current_ayah:    payload.current_ayah,
+      ayah_per_day:    payload.ayah_per_day,
+      streak:          0,
+      total_memorized: 0,
+      session_dates:   [],
+    });
+    if (error) throw error;
+  }
 }
 
 // ─── resetProgressForNewPlan ──────────────────────────────────────────────
@@ -60,8 +70,15 @@ export async function upsertProgress(userId: string, payload: ProgressPayload): 
 // carrying its streak/totals forward would silently misrepresent a fresh
 // program as already in progress.
 export async function resetProgressForNewPlan(userId: string, payload: ProgressPayload): Promise<void> {
+  const { data: existing } = await supabase
+    .from('progress')
+    .select('id')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   const freshFields = {
-    user_id:                 userId,
     current_surah:           payload.current_surah,
     current_ayah:            payload.current_ayah,
     ayah_per_day:            payload.ayah_per_day,
@@ -74,10 +91,13 @@ export async function resetProgressForNewPlan(userId: string, payload: ProgressP
     last_adaptation_date:    null,
   };
 
-  const { error } = await supabase
-    .from('progress')
-    .upsert(freshFields, { onConflict: 'user_id' });
-  if (error) throw error;
+  if (existing) {
+    const { error } = await supabase.from('progress').update(freshFields).eq('id', existing.id);
+    if (error) throw error;
+  } else {
+    const { error } = await supabase.from('progress').insert({ user_id: userId, ...freshFields });
+    if (error) throw error;
+  }
 }
 
 export async function fetchProgress(userId: string) {
