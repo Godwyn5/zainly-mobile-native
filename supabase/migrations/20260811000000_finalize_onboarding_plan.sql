@@ -9,7 +9,7 @@
 -- Security:
 --   • Identity is obtained exclusively from auth.uid() (verified JWT).
 --     The client never passes user_id — it is injected server-side.
---   • SECURITY DEFINER with explicit search_path = public.
+--   • SECURITY DEFINER with empty search_path (all objects schema-qualified).
 --   • REVOKE EXECUTE FROM PUBLIC and FROM anon (PUBLIC is broader than anon).
 --   • Only authenticated role can execute.
 --   • All table references are schema-qualified (public.plans, public.progress).
@@ -39,7 +39,7 @@ CREATE OR REPLACE FUNCTION public.finalize_onboarding_plan(
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 DECLARE
   v_user_id text := auth.uid()::text;
