@@ -289,6 +289,8 @@ function revocationMessageForUser(reason: RevocationErrorCode): string {
     case 'apple_state_mismatch':
     case 'apple_user_mismatch':
       return 'La réponse Apple ne correspond pas à la requête. Réessaie.';
+    case 'identity_invalid':
+      return 'Les identités liées à ton compte sont invalides. Contacte le support.';
     case 'network':
       return 'Vérifie ta connexion internet puis réessaie.';
     case 'unknown_provider':
@@ -304,14 +306,22 @@ function deletionErrorMessage(error?: string): string {
       return 'Ta session a expiré. Reconnecte-toi puis réessaie.';
     case 'network':
       return 'Vérifie ta connexion internet puis réessaie.';
+    case 'invalid_body':
+      return 'Les données envoyées sont invalides. Réessaie.';
+    case 'unknown_provider':
+      return 'Un fournisseur d\'authentification non pris en charge est lié à ton compte. Contacte le support.';
     case 'apple_code_missing':
       return 'Le code d\'autorisation Apple est manquant. Réessaie.';
     case 'apple_exchange_failed':
       return 'L\'échange du code Apple a échoué. Réessaie.';
     case 'apple_identity_mismatch':
       return 'L\'identité Apple ne correspond pas au compte lié. Contacte le support.';
+    case 'apple_validation_failed':
+      return 'La validation du jeton Apple a échoué. Réessaie.';
     case 'apple_revoke_failed':
       return 'La révocation Apple a échoué. Réessaie dans un instant.';
+    case 'internal_error':
+      return 'Une erreur interne est survenue. Réessaie dans un instant.';
     default:
       return 'Impossible de supprimer ton compte pour le moment. Réessaie dans un instant.';
   }

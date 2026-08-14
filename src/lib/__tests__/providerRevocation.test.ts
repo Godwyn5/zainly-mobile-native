@@ -2,15 +2,16 @@
 
 // ─── providerRevocation.test.ts ──────────────────────────────────────────────
 // Behavioral tests for provider revocation during account deletion.
-// Tests cover: identity detection, Google re-auth + revoke, Apple proof
-// collection, state/user verification, cancellation, mismatch, network errors,
-// multi-provider ordering, and email-only unchanged path.
+// Covers: identity detection (fail-closed), Google re-auth + revoke with
+// separated error phases, Apple refreshAsync proof collection, state/user
+// verification, cancellation, mismatch, network errors, multi-provider
+// ordering, email-only path, retry saga, and signOutGoogle vs revokeAccess.
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 let mockUser: {
   id: string;
-  identities: { provider: string; identity_id: string }[] | null;
+  identities: { id: string; user_id: string; provider: string; identity_id: string }[] | null;
 } | null = null;
 
 jest.mock('@/db/client', () => ({
@@ -21,14 +22,18 @@ jest.mock('@/db/client', () => ({
         error: null,
       })),
     },
+    functions: {
+      invoke: jest.fn(),
+    },
   },
 }));
 
-// Apple mock
-const mockAppleSignInAsync = jest.fn();
+// Apple mock — refreshAsync replaces signInAsync
+const mockAppleRefreshAsync = jest.fn();
 const mockAppleIsAvailableAsync = jest.fn();
 jest.mock('expo-apple-authentication', () => ({
-  signInAsync: (...args: unknown[]) => mockAppleSignInAsync(...(args as [])),
+  refreshAsync: (...args: unknown[]) => mockAppleRefreshAsync(...(args as [])),
+  signInAsync: jest.fn(),
   isAvailableAsync: (...args: unknown[]) => mockAppleIsAvailableAsync(...(args as [])),
   AppleAuthenticationScope: { FULL_NAME: 0, EMAIL: 1 },
 }));
@@ -46,10 +51,12 @@ jest.mock('expo-crypto', () => ({
 const mockGoogleSignIn = jest.fn();
 const mockGoogleRevokeAccess = jest.fn(async () => null);
 const mockGoogleHasPlayServices = jest.fn(async () => true);
+const mockGoogleSignOut = jest.fn(async () => null);
 jest.mock('@react-native-google-signin/google-signin', () => ({
   GoogleSignin: {
     signIn: (...args: unknown[]) => mockGoogleSignIn(...(args as [])),
     revokeAccess: (...args: unknown[]) => mockGoogleRevokeAccess(...(args as [])),
+    signOut: (...args: unknown[]) => mockGoogleSignOut(...(args as [])),
     hasPlayServices: (...args: unknown[]) => mockGoogleHasPlayServices(...(args as [])),
   },
   isSuccessResponse: (response: { type: string }) => response.type === 'success',
@@ -79,10 +86,15 @@ import {
   obtainAppleRevocationProof,
   prepareRevocationProofs,
 } from '../providerRevocation';
+/* eslint-enable import/first */
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function setMockUser(identities: { provider: string; identity_id: string }[] | null) {
+function makeIdentity(provider: string, identity_id: string) {
+  return { id: `id-${identity_id}`, user_id: 'user-123', provider, identity_id };
+}
+
+function setMockUser(identities: ReturnType<typeof makeIdentity>[] | null) {
   mockUser = { id: 'user-123', identities };
 }
 
@@ -125,7 +137,6 @@ beforeEach(() => {
   mockAppleIsAvailableAsync.mockResolvedValue(true);
   mockGoogleHasPlayServices.mockResolvedValue(true);
   mockGoogleRevokeAccess.mockResolvedValue(null);
-  // Default: getRandomValues returns predictable bytes for state generation
   mockGetRandomValues.mockImplementation((arr: Uint8Array) => {
     for (let i = 0; i < arr.length; i++) arr[i] = i % 256;
   });
@@ -134,54 +145,99 @@ beforeEach(() => {
 // ── detectSocialIdentities ───────────────────────────────────────────────────
 
 describe('detectSocialIdentities', () => {
-  test('1. email-only account returns empty array', () => {
-    expect(detectSocialIdentities([{ provider: 'email', identity_id: 'email-123' }])).toEqual([]);
+  test('email-only account returns ok with empty identities', () => {
+    const result = detectSocialIdentities([makeIdentity('email', 'email-123')]);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.identities).toEqual([]);
   });
 
-  test('2. Google identity detected', () => {
-    const result = detectSocialIdentities([{ provider: 'google', identity_id: 'google-123' }]);
-    expect(result).toEqual([{ provider: 'google', identityId: 'google-123' }]);
+  test('Google identity detected', () => {
+    const result = detectSocialIdentities([makeIdentity('google', 'google-123')]);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.identities).toEqual([{ provider: 'google', identityId: 'google-123' }]);
   });
 
-  test('3. Apple identity detected', () => {
-    const result = detectSocialIdentities([{ provider: 'apple', identity_id: 'apple-123' }]);
-    expect(result).toEqual([{ provider: 'apple', identityId: 'apple-123' }]);
+  test('Apple identity detected', () => {
+    const result = detectSocialIdentities([makeIdentity('apple', 'apple-123')]);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.identities).toEqual([{ provider: 'apple', identityId: 'apple-123' }]);
   });
 
-  test('4. multiple identities detected', () => {
+  test('Google + Apple detected together', () => {
     const result = detectSocialIdentities([
-      { provider: 'email', identity_id: 'email-1' },
-      { provider: 'google', identity_id: 'google-1' },
-      { provider: 'apple', identity_id: 'apple-1' },
+      makeIdentity('email', 'email-1'),
+      makeIdentity('google', 'google-1'),
+      makeIdentity('apple', 'apple-1'),
     ]);
-    expect(result).toEqual([
-      { provider: 'google', identityId: 'google-1' },
-      { provider: 'apple', identityId: 'apple-1' },
-    ]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.identities).toEqual([
+        { provider: 'google', identityId: 'google-1' },
+        { provider: 'apple', identityId: 'apple-1' },
+      ]);
+    }
   });
 
-  test('5. unknown provider ignored (not treated as social)', () => {
-    const result = detectSocialIdentities([{ provider: 'github', identity_id: 'gh-1' }]);
-    expect(result).toEqual([]);
+  test('unknown provider returns fail-closed unknown_provider', () => {
+    const result = detectSocialIdentities([makeIdentity('github', 'gh-1')]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('unknown_provider');
   });
 
-  test('null/undefined identities returns empty array', () => {
-    expect(detectSocialIdentities(null)).toEqual([]);
-    expect(detectSocialIdentities(undefined)).toEqual([]);
+  test('null identities returns identity_invalid', () => {
+    const result = detectSocialIdentities(null);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('identity_invalid');
+  });
+
+  test('undefined identities returns identity_invalid', () => {
+    const result = detectSocialIdentities(undefined);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('identity_invalid');
+  });
+
+  test('empty array returns identity_invalid', () => {
+    const result = detectSocialIdentities([]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('identity_invalid');
+  });
+
+  test('malformed identity (missing provider) returns identity_invalid', () => {
+    const result = detectSocialIdentities([{ identity_id: 'x' } as unknown as ReturnType<typeof makeIdentity>]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('identity_invalid');
+  });
+
+  test('malformed identity (missing identity_id) returns identity_invalid', () => {
+    const result = detectSocialIdentities([{ provider: 'google' } as unknown as ReturnType<typeof makeIdentity>]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('identity_invalid');
+  });
+
+  test('Google with empty identity_id returns identity_invalid', () => {
+    const result = detectSocialIdentities([makeIdentity('google', '')]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('identity_invalid');
+  });
+
+  test('Apple with empty identity_id returns identity_invalid', () => {
+    const result = detectSocialIdentities([makeIdentity('apple', '')]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('identity_invalid');
   });
 });
 
 // ── revokeGoogleAccess ───────────────────────────────────────────────────────
 
 describe('revokeGoogleAccess', () => {
-  test('6. matching Google account: re-auth + revoke succeeds', async () => {
+  test('matching Google account: re-auth + revoke succeeds', async () => {
     mockGoogleSignIn.mockResolvedValue(googleSuccessResponse('google-123'));
     const result = await revokeGoogleAccess('google-123');
     expect(result.ok).toBe(true);
     expect(mockGoogleRevokeAccess).toHaveBeenCalledTimes(1);
   });
 
-  test('7. wrong Google account: no revoke, no deletion', async () => {
+  test('wrong Google account: provider_mismatch, no revoke', async () => {
     mockGoogleSignIn.mockResolvedValue(googleSuccessResponse('wrong-google-id'));
     const result = await revokeGoogleAccess('google-123');
     expect(result.ok).toBe(false);
@@ -189,7 +245,7 @@ describe('revokeGoogleAccess', () => {
     expect(mockGoogleRevokeAccess).not.toHaveBeenCalled();
   });
 
-  test('8. Google cancellation: no revoke, no deletion', async () => {
+  test('Google cancellation (response): provider_reauth_cancelled, no revoke', async () => {
     mockGoogleSignIn.mockResolvedValue(googleCancelledResponse());
     const result = await revokeGoogleAccess('google-123');
     expect(result.ok).toBe(false);
@@ -197,7 +253,31 @@ describe('revokeGoogleAccess', () => {
     expect(mockGoogleRevokeAccess).not.toHaveBeenCalled();
   });
 
-  test('9. revokeAccess failure: no deletion proceeds', async () => {
+  test('Google auth failure (error code): google_reauth_failed, no revoke', async () => {
+    mockGoogleSignIn.mockRejectedValue({ code: 'SIGN_IN_REQUIRED', message: 'sign in required' });
+    const result = await revokeGoogleAccess('google-123');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('google_reauth_failed');
+    expect(mockGoogleRevokeAccess).not.toHaveBeenCalled();
+  });
+
+  test('Google cancellation (error code): provider_reauth_cancelled, no revoke', async () => {
+    mockGoogleSignIn.mockRejectedValue({ code: 'SIGN_IN_CANCELLED', message: 'cancelled' });
+    const result = await revokeGoogleAccess('google-123');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('provider_reauth_cancelled');
+    expect(mockGoogleRevokeAccess).not.toHaveBeenCalled();
+  });
+
+  test('Play Services not available: provider_unavailable, no revoke', async () => {
+    mockGoogleSignIn.mockRejectedValue({ code: 'PLAY_SERVICES_NOT_AVAILABLE', message: 'no play services' });
+    const result = await revokeGoogleAccess('google-123');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('provider_unavailable');
+    expect(mockGoogleRevokeAccess).not.toHaveBeenCalled();
+  });
+
+  test('revokeAccess failure: google_revoke_failed (distinct from auth failure)', async () => {
     mockGoogleSignIn.mockResolvedValue(googleSuccessResponse('google-123'));
     mockGoogleRevokeAccess.mockRejectedValue(new Error('revoke failed'));
     const result = await revokeGoogleAccess('google-123');
@@ -205,38 +285,53 @@ describe('revokeGoogleAccess', () => {
     if (!result.ok) expect(result.reason).toBe('google_revoke_failed');
   });
 
-  test('Google cancellation via error code: provider_reauth_cancelled', async () => {
-    mockGoogleSignIn.mockRejectedValue({ code: 'SIGN_IN_CANCELLED', message: 'cancelled' });
+  test('revokeAccess failure with error code: google_revoke_failed', async () => {
+    mockGoogleSignIn.mockResolvedValue(googleSuccessResponse('google-123'));
+    mockGoogleRevokeAccess.mockRejectedValue({ code: 'UNKNOWN', message: 'revoke error' });
     const result = await revokeGoogleAccess('google-123');
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('provider_reauth_cancelled');
+    if (!result.ok) expect(result.reason).toBe('google_revoke_failed');
   });
 
-  test('Play Services not available: provider_unavailable', async () => {
-    mockGoogleSignIn.mockRejectedValue({ code: 'PLAY_SERVICES_NOT_AVAILABLE', message: 'no play services' });
+  test('Google auth non-success response: google_reauth_failed, no revoke', async () => {
+    mockGoogleSignIn.mockResolvedValue({ type: 'error' });
     const result = await revokeGoogleAccess('google-123');
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('provider_unavailable');
+    if (!result.ok) expect(result.reason).toBe('google_reauth_failed');
+    expect(mockGoogleRevokeAccess).not.toHaveBeenCalled();
+  });
+
+  test('Google auth returns no user ID: google_reauth_failed', async () => {
+    mockGoogleSignIn.mockResolvedValue({
+      type: 'success',
+      data: { user: { id: '', name: '', email: '', photo: null, familyName: null, givenName: null }, scopes: [], idToken: '', serverAuthCode: null },
+    });
+    const result = await revokeGoogleAccess('google-123');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('google_reauth_failed');
+    expect(mockGoogleRevokeAccess).not.toHaveBeenCalled();
   });
 });
 
-// ── obtainAppleRevocationProof ───────────────────────────────────────────────
+// ── obtainAppleRevocationProof (refreshAsync) ────────────────────────────────
 
 describe('obtainAppleRevocationProof', () => {
-  test('11. matching user + valid state + code: success', async () => {
-    // The state is generated internally; we need to capture it from signInAsync call
-    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
+  test('matching user + valid state + code: success', async () => {
+    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
       return appleCredential({ user: 'apple-user-123', state: opts.state, authorizationCode: 'fresh-code' });
     });
     const result = await obtainAppleRevocationProof('apple-user-123');
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.authorizationCode).toBe('fresh-code');
-    }
+    if (result.ok) expect(result.authorizationCode).toBe('fresh-code');
+    // Verify refreshAsync was called with user and state
+    expect(mockAppleRefreshAsync).toHaveBeenCalledWith({
+      user: 'apple-user-123',
+      state: expect.any(String),
+    });
   });
 
-  test('12. wrong Apple user: apple_user_mismatch', async () => {
-    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
+  test('wrong Apple user: apple_user_mismatch', async () => {
+    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
       return appleCredential({ user: 'wrong-apple-user', state: opts.state, authorizationCode: 'code' });
     });
     const result = await obtainAppleRevocationProof('apple-user-123');
@@ -244,8 +339,8 @@ describe('obtainAppleRevocationProof', () => {
     if (!result.ok) expect(result.reason).toBe('apple_user_mismatch');
   });
 
-  test('13. wrong state: apple_state_mismatch', async () => {
-    mockAppleSignInAsync.mockResolvedValue(
+  test('wrong state: apple_state_mismatch', async () => {
+    mockAppleRefreshAsync.mockResolvedValue(
       appleCredential({ user: 'apple-user-123', state: 'wrong-state', authorizationCode: 'code' }),
     );
     const result = await obtainAppleRevocationProof('apple-user-123');
@@ -253,8 +348,8 @@ describe('obtainAppleRevocationProof', () => {
     if (!result.ok) expect(result.reason).toBe('apple_state_mismatch');
   });
 
-  test('14. null authorizationCode: apple_code_missing', async () => {
-    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
+  test('null authorizationCode: apple_code_missing', async () => {
+    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
       return appleCredential({ user: 'apple-user-123', state: opts.state, authorizationCode: null });
     });
     const result = await obtainAppleRevocationProof('apple-user-123');
@@ -262,15 +357,24 @@ describe('obtainAppleRevocationProof', () => {
     if (!result.ok) expect(result.reason).toBe('apple_code_missing');
   });
 
-  test('15. Apple cancellation: provider_reauth_cancelled', async () => {
-    mockAppleSignInAsync.mockRejectedValue({ code: 'ERR_REQUEST_CANCELED' });
+  test('empty authorizationCode: apple_code_missing', async () => {
+    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
+      return appleCredential({ user: 'apple-user-123', state: opts.state, authorizationCode: '' });
+    });
+    const result = await obtainAppleRevocationProof('apple-user-123');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('apple_code_missing');
+  });
+
+  test('Apple cancellation: provider_reauth_cancelled, no mutation', async () => {
+    mockAppleRefreshAsync.mockRejectedValue({ code: 'ERR_REQUEST_CANCELED' });
     const result = await obtainAppleRevocationProof('apple-user-123');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('provider_reauth_cancelled');
   });
 
-  test('16. network error: network reason', async () => {
-    mockAppleSignInAsync.mockRejectedValue(new Error('Network error'));
+  test('network error: network reason', async () => {
+    mockAppleRefreshAsync.mockRejectedValue(new Error('Network error'));
     const result = await obtainAppleRevocationProof('apple-user-123');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('network');
@@ -282,30 +386,40 @@ describe('obtainAppleRevocationProof', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('provider_unavailable');
   });
+
+  test('refreshAsync called with user and state', async () => {
+    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
+      return appleCredential({ user: 'apple-user-123', state: opts.state, authorizationCode: 'code' });
+    });
+    await obtainAppleRevocationProof('apple-user-123');
+    expect(mockAppleRefreshAsync).toHaveBeenCalledTimes(1);
+    const callArg = mockAppleRefreshAsync.mock.calls[0][0];
+    expect(callArg.user).toBe('apple-user-123');
+    expect(typeof callArg.state).toBe('string');
+    expect(callArg.state.length).toBeGreaterThan(0);
+  });
 });
 
 // ── prepareRevocationProofs (full orchestration) ────────────────────────────
 
 describe('prepareRevocationProofs', () => {
-  test('1. email-only account: no revocation needed, empty proof', async () => {
-    setMockUser([{ provider: 'email', identity_id: 'email-1' }]);
+  test('email-only account: no revocation needed, empty proof', async () => {
+    setMockUser([makeIdentity('email', 'email-1')]);
     const result = await prepareRevocationProofs();
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.proof.appleAuthorizationCode).toBeUndefined();
-    }
+    if (result.ok) expect(result.proof.appleAuthorizationCode).toBeUndefined();
     expect(mockGoogleSignIn).not.toHaveBeenCalled();
-    expect(mockAppleSignInAsync).not.toHaveBeenCalled();
+    expect(mockAppleRefreshAsync).not.toHaveBeenCalled();
   });
 
-  test('17. Google + Apple: deterministic order (Apple proof first, then Google revoke)', async () => {
+  test('Google + Apple: deterministic order (Apple proof first, then Google revoke)', async () => {
     setMockUser([
-      { provider: 'google', identity_id: 'google-123' },
-      { provider: 'apple', identity_id: 'apple-123' },
+      makeIdentity('google', 'google-123'),
+      makeIdentity('apple', 'apple-123'),
     ]);
 
     const callOrder: string[] = [];
-    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
+    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
       callOrder.push('apple');
       return appleCredential({ user: 'apple-123', state: opts.state, authorizationCode: 'apple-code' });
     });
@@ -320,39 +434,33 @@ describe('prepareRevocationProofs', () => {
   });
 
   test('Google only: revoke succeeds, no Apple proof', async () => {
-    setMockUser([{ provider: 'google', identity_id: 'google-123' }]);
+    setMockUser([makeIdentity('google', 'google-123')]);
     mockGoogleSignIn.mockResolvedValue(googleSuccessResponse('google-123'));
     const result = await prepareRevocationProofs();
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.proof.appleAuthorizationCode).toBeUndefined();
-    }
+    if (result.ok) expect(result.proof.appleAuthorizationCode).toBeUndefined();
     expect(mockGoogleRevokeAccess).toHaveBeenCalledTimes(1);
   });
 
   test('Apple only: proof collected, no Google revoke', async () => {
-    setMockUser([{ provider: 'apple', identity_id: 'apple-123' }]);
-    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
+    setMockUser([makeIdentity('apple', 'apple-123')]);
+    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
       return appleCredential({ user: 'apple-123', state: opts.state, authorizationCode: 'apple-code' });
     });
     const result = await prepareRevocationProofs();
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.proof.appleAuthorizationCode).toBe('apple-code');
-    }
+    if (result.ok) expect(result.proof.appleAuthorizationCode).toBe('apple-code');
     expect(mockGoogleRevokeAccess).not.toHaveBeenCalled();
   });
 
-  test('Google mismatch: no deletion, no Apple proof collected after', async () => {
+  test('Google mismatch: no deletion, Apple proof collected before mismatch', async () => {
     setMockUser([
-      { provider: 'apple', identity_id: 'apple-123' },
-      { provider: 'google', identity_id: 'google-123' },
+      makeIdentity('apple', 'apple-123'),
+      makeIdentity('google', 'google-123'),
     ]);
-    // Apple succeeds first
-    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
+    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
       return appleCredential({ user: 'apple-123', state: opts.state, authorizationCode: 'apple-code' });
     });
-    // Google mismatch
     mockGoogleSignIn.mockResolvedValue(googleSuccessResponse('wrong-google'));
 
     const result = await prepareRevocationProofs();
@@ -361,8 +469,8 @@ describe('prepareRevocationProofs', () => {
   });
 
   test('Apple cancellation: no Google revoke, no deletion', async () => {
-    setMockUser([{ provider: 'apple', identity_id: 'apple-123' }]);
-    mockAppleSignInAsync.mockRejectedValue({ code: 'ERR_REQUEST_CANCELED' });
+    setMockUser([makeIdentity('apple', 'apple-123')]);
+    mockAppleRefreshAsync.mockRejectedValue({ code: 'ERR_REQUEST_CANCELED' });
     const result = await prepareRevocationProofs();
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('provider_reauth_cancelled');
@@ -371,10 +479,10 @@ describe('prepareRevocationProofs', () => {
 
   test('Google revoke fails after Apple proof: no deletion', async () => {
     setMockUser([
-      { provider: 'apple', identity_id: 'apple-123' },
-      { provider: 'google', identity_id: 'google-123' },
+      makeIdentity('apple', 'apple-123'),
+      makeIdentity('google', 'google-123'),
     ]);
-    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
+    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
       return appleCredential({ user: 'apple-123', state: opts.state, authorizationCode: 'apple-code' });
     });
     mockGoogleSignIn.mockResolvedValue(googleSuccessResponse('google-123'));
@@ -394,13 +502,69 @@ describe('prepareRevocationProofs', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('unknown');
   });
+
+  test('identities null: identity_invalid', async () => {
+    setMockUser(null);
+    const result = await prepareRevocationProofs();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('identity_invalid');
+  });
+
+  test('identities empty: identity_invalid', async () => {
+    setMockUser([]);
+    const result = await prepareRevocationProofs();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('identity_invalid');
+  });
+
+  test('unknown provider: unknown_provider', async () => {
+    setMockUser([makeIdentity('github', 'gh-1')]);
+    const result = await prepareRevocationProofs();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('unknown_provider');
+  });
+
+  test('Google auth failure distinct from revoke failure', async () => {
+    setMockUser([makeIdentity('google', 'google-123')]);
+    mockGoogleSignIn.mockRejectedValue(new Error('auth failed'));
+    const result = await prepareRevocationProofs();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('google_reauth_failed');
+    expect(mockGoogleRevokeAccess).not.toHaveBeenCalled();
+  });
 });
 
-// ── signOutGoogle vs revokeAccess separation ─────────────────────────────────
+// ── Retry saga: Google revoke succeeds, then Edge fails, then retry ─────────
 
-describe('10. simple logout uses signOut, not revokeAccess', () => {
-  test('signOutGoogle in socialAuth.ts does not call revokeAccess', () => {
-    // Inspect the source to verify signOutGoogle only calls signOut, not revokeAccess
+describe('retry saga: Google revoke + Edge failure + retry', () => {
+  test('first attempt: Google revokes, then a new auth+revoke on retry', async () => {
+    setMockUser([makeIdentity('google', 'google-123')]);
+
+    // First attempt: Google auth + revoke succeed
+    mockGoogleSignIn.mockResolvedValueOnce(googleSuccessResponse('google-123'));
+    mockGoogleRevokeAccess.mockResolvedValueOnce(null);
+
+    const first = await prepareRevocationProofs();
+    expect(first.ok).toBe(true);
+
+    // Simulate Edge Function failure (caller would retry)
+    // Second attempt: new Google auth + new revoke
+    mockGoogleSignIn.mockResolvedValueOnce(googleSuccessResponse('google-123'));
+    mockGoogleRevokeAccess.mockResolvedValueOnce(null);
+
+    const second = await prepareRevocationProofs();
+    expect(second.ok).toBe(true);
+
+    // Verify two separate auth + revoke cycles
+    expect(mockGoogleSignIn).toHaveBeenCalledTimes(2);
+    expect(mockGoogleRevokeAccess).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── signOutGoogle calls signOut, never revokeAccess ─────────────────────────
+
+describe('signOutGoogle calls signOut, never revokeAccess', () => {
+  test('signOutGoogle in socialAuth.ts calls GoogleSignin.signOut, not revokeAccess', () => {
     /* eslint-disable @typescript-eslint/no-require-imports */
     const fs = require('fs') as typeof import('fs');
     const path = require('path') as typeof import('path');
@@ -410,7 +574,6 @@ describe('10. simple logout uses signOut, not revokeAccess', () => {
       'utf-8',
     );
 
-    // Find the signOutGoogle function body
     const match = socialAuthSource.match(/export async function signOutGoogle[\s\S]*?^}/m);
     expect(match).not.toBeNull();
     if (match) {
@@ -430,7 +593,6 @@ describe('10. simple logout uses signOut, not revokeAccess', () => {
       'utf-8',
     );
 
-    // Find the revokeGoogleAccess function body
     const match = revocationSource.match(/export async function revokeGoogleAccess[\s\S]*?^}/m);
     expect(match).not.toBeNull();
     if (match) {

@@ -64,7 +64,8 @@
     "testPathIgnorePatterns": [
       "<rootDir>/node_modules/",
       "<rootDir>/app/",
-      "<rootDir>/web-legal/"
+      "<rootDir>/web-legal/",
+      "<rootDir>/supabase/functions/.*\\.test\\.ts$"
     ]
   },
   "private": true

@@ -51,15 +51,14 @@ export async function requestAccountDeletion(
 export type DeleteAccountErrorCode =
   | 'unauthorized'
   | 'network'
-  | 'function_failed'
-  | 'provider_reauth_cancelled'
-  | 'provider_unavailable'
-  | 'provider_mismatch'
-  | 'google_revoke_failed'
+  | 'invalid_body'
+  | 'unknown_provider'
   | 'apple_code_missing'
   | 'apple_exchange_failed'
   | 'apple_identity_mismatch'
+  | 'apple_validation_failed'
   | 'apple_revoke_failed'
+  | 'internal_error'
   | 'unknown';
 
 export interface DeleteAccountResult {
@@ -84,37 +83,66 @@ export async function deleteAccountSelfService(
 
     const { data, error } = await supabase.functions.invoke<DeleteAccountFunctionResponse>(
       'delete-account',
-      { method: 'POST', body: JSON.stringify(body) }
+      { method: 'POST', body }
     );
 
     if (error) {
       if (error instanceof FunctionsHttpError) {
         let status: number | undefined;
-        let body: { error?: string; step?: string } | undefined;
+        let errorBody: { error?: string; step?: string } | undefined;
         try {
           status = error.context?.status;
-          body = await error.context?.json();
+          errorBody = await error.context?.json();
         } catch {
-          // Response body wasn't JSON — ignore, fall back to error.message below.
+          // Response body wasn't JSON — fall back to generic error.
         }
         if (status === 401) {
-          return { ok: false, error: 'unauthorized', message: body?.error ?? 'Session invalide.' };
+          return { ok: false, error: 'unauthorized' };
         }
-        return { ok: false, error: 'function_failed', message: body?.error ?? error.message, step: body?.step };
+        // Allowlist of server error codes — unknown values become 'unknown'
+        const serverCode = errorBody?.error;
+        const allowedCodes = new Set<DeleteAccountErrorCode>([
+          'invalid_body',
+          'unknown_provider',
+          'apple_code_missing',
+          'apple_exchange_failed',
+          'apple_identity_mismatch',
+          'apple_validation_failed',
+          'apple_revoke_failed',
+          'internal_error',
+        ]);
+        if (serverCode && allowedCodes.has(serverCode as DeleteAccountErrorCode)) {
+          return { ok: false, error: serverCode as DeleteAccountErrorCode, step: errorBody?.step };
+        }
+        return { ok: false, error: 'unknown' };
       }
       if (error instanceof FunctionsFetchError || error instanceof FunctionsRelayError) {
-        return { ok: false, error: 'network', message: error.message };
+        return { ok: false, error: 'network' };
       }
-      return { ok: false, error: 'unknown', message: error.message };
+      return { ok: false, error: 'unknown' };
     }
 
     if (!data || data.ok !== true) {
       const failed = data as { ok: false; error: string; step?: string } | null;
-      return { ok: false, error: 'function_failed', message: failed?.error, step: failed?.step };
+      const serverCode = failed?.error;
+      const allowedCodes = new Set<DeleteAccountErrorCode>([
+        'invalid_body',
+        'unknown_provider',
+        'apple_code_missing',
+        'apple_exchange_failed',
+        'apple_identity_mismatch',
+        'apple_validation_failed',
+        'apple_revoke_failed',
+        'internal_error',
+      ]);
+      if (serverCode && allowedCodes.has(serverCode as DeleteAccountErrorCode)) {
+        return { ok: false, error: serverCode as DeleteAccountErrorCode, step: failed?.step };
+      }
+      return { ok: false, error: 'unknown' };
     }
 
     return { ok: true };
-  } catch (err) {
-    return { ok: false, error: 'unknown', message: err instanceof Error ? err.message : String(err) };
+  } catch {
+    return { ok: false, error: 'unknown' };
   }
 }

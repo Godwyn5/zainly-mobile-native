@@ -1,15 +1,14 @@
 // ─── Provider revocation for account deletion ──────────────────────────────
 //
-// Distinct from signOutGoogle() (logout). This module handles irreversible
-// revocation of OAuth provider access ONLY during account deletion.
+// Distinct from signOutGoogle() (logout). This module handles revocation
+// of OAuth provider access ONLY during account deletion.
 //
-// Google: GoogleSignin.revokeAccess() after re-authentication + identity match.
-// Apple: signInAsync with state + user verification to obtain a fresh
-//   authorizationCode, transmitted to the Edge Function for server-side
-//   revocation.
+// Google: GoogleSignin.signIn() re-auth → stable ID comparison → revokeAccess().
+// Apple: refreshAsync() with user + state → authorizationCode → Edge Function
+//   performs server-side token exchange and revocation.
 //
 // Identities are determined from Supabase canonical user.identities, never
-// from email or name.
+// from email or name. Unknown providers cause a closed failure.
 
 import { Platform } from 'react-native';
 import * as AppleAuthentication from 'expo-apple-authentication';
@@ -22,6 +21,7 @@ import {
   statusCodes,
   type SignInResponse,
 } from '@react-native-google-signin/google-signin';
+import type { UserIdentity } from '@supabase/supabase-js';
 import { supabase } from '@/db/client';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -33,12 +33,13 @@ export type RevocationErrorCode =
   | 'provider_unavailable'
   | 'provider_mismatch'
   | 'google_revoke_failed'
+  | 'google_reauth_failed'
   | 'apple_code_missing'
   | 'apple_state_mismatch'
   | 'apple_user_mismatch'
   | 'apple_reauth_failed'
-  | 'google_reauth_failed'
   | 'unknown_provider'
+  | 'identity_invalid'
   | 'network'
   | 'unknown';
 
@@ -57,70 +58,124 @@ export interface DetectedIdentity {
   identityId: string;
 }
 
+export type IdentityDetectionResult =
+  | { ok: true; identities: DetectedIdentity[] }
+  | { ok: false; reason: RevocationErrorCode; message?: string };
+
+const ALLOWED_PROVIDERS = new Set(['email', 'google', 'apple']);
+const SOCIAL_PROVIDERS = new Set(['google', 'apple']);
+
+/**
+ * Runtime validation of a single UserIdentity-like object.
+ * Accesses only typed fields required by the revocation workflow.
+ * Does not propagate the upstream `any` from identity_data.
+ */
+function isValidIdentityEntry(
+  entry: unknown,
+): entry is { provider: string; identity_id: string } {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const obj = entry as Record<string, unknown>;
+  return (
+    typeof obj.provider === 'string' && obj.provider.length > 0 &&
+    typeof obj.identity_id === 'string' && obj.identity_id.length > 0
+  );
+}
+
 /**
  * Detects linked social providers from Supabase canonical user.identities.
- * Returns an array of detected social identities (google, apple).
- * Email-only accounts return an empty array.
- * Unknown providers are ignored (not treated as social).
+ *
+ * Returns:
+ * - { ok: true, identities: [] } for email-only accounts
+ * - { ok: true, identities: [...] } for accounts with Google/Apple
+ * - { ok: false, reason: 'unknown_provider' } if any provider is not email/google/apple
+ * - { ok: false, reason: 'identity_invalid' } if identities is missing/null/empty/malformed
+ *   or if a Google/Apple identity has an empty identity_id
+ *
+ * Never compares emails. Never uses client-supplied identifiers as canonical.
  */
 export function detectSocialIdentities(
-  identities: { provider: string; identity_id: string }[] | undefined | null,
-): DetectedIdentity[] {
-  if (!identities || !Array.isArray(identities)) return [];
+  identities: UserIdentity[] | undefined | null,
+): IdentityDetectionResult {
+  if (!identities || !Array.isArray(identities) || identities.length === 0) {
+    return {
+      ok: false,
+      reason: 'identity_invalid',
+      message: 'Aucune identité trouvée pour ce compte.',
+    };
+  }
 
   const result: DetectedIdentity[] = [];
-  for (const id of identities) {
-    if (id.provider === 'google' || id.provider === 'apple') {
-      result.push({ provider: id.provider, identityId: id.identity_id });
+
+  for (const entry of identities) {
+    if (!isValidIdentityEntry(entry)) {
+      return {
+        ok: false,
+        reason: 'identity_invalid',
+        message: 'Une identité est mal formée.',
+      };
     }
+
+    const provider = entry.provider;
+
+    if (!ALLOWED_PROVIDERS.has(provider)) {
+      return {
+        ok: false,
+        reason: 'unknown_provider',
+        message: `Fournisseur non pris en charge: ${provider}.`,
+      };
+    }
+
+    if (SOCIAL_PROVIDERS.has(provider)) {
+      if (!entry.identity_id || entry.identity_id.length === 0) {
+        return {
+          ok: false,
+          reason: 'identity_invalid',
+          message: `Identifiant de fournisseur manquant pour ${provider}.`,
+        };
+      }
+      result.push({
+        provider: provider as LinkedProvider,
+        identityId: entry.identity_id,
+      });
+    }
+    // email provider: no revocation needed, skip
   }
-  return result;
+
+  return { ok: true, identities: result };
 }
 
 // ─── Google revocation ──────────────────────────────────────────────────────
+
+export type GoogleRevocationResult =
+  | { ok: true }
+  | { ok: false; reason: RevocationErrorCode; message?: string };
 
 /**
  * Re-authenticates with Google to prove the user owns the Google identity
  * linked to this Supabase account, then revokes access.
  *
- * Steps:
- * 1. signIn() — fresh Google credential
- * 2. Compare Google user.id to the Supabase identity's identity_id
- * 3. If match → revokeAccess()
- * 4. If mismatch → fail closed, no revocation, no deletion
+ * Phases and their errors:
+ * - Authentication failure or cancellation → google_reauth_failed or provider_reauth_cancelled
+ * - Wrong stable ID → provider_mismatch
+ * - revokeAccess() failure → google_revoke_failed
+ *
+ * Retry contract:
+ * 1. A first revocation may succeed.
+ * 2. The Edge Function may then fail.
+ * 3. A retry requests a new Google authentication.
+ * 4. A new authorization can then be revoked before retrying deletion.
  */
 export async function revokeGoogleAccess(
   expectedGoogleIdentityId: string,
-): Promise<{ ok: true } | { ok: false; reason: RevocationErrorCode; message?: string }> {
+): Promise<GoogleRevocationResult> {
+  // Phase 1: Re-authentication
+  let response: SignInResponse;
   try {
     if (Platform.OS === 'android') {
       await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: false });
     }
 
-    const response: SignInResponse = await GoogleSignin.signIn();
-
-    if (isCancelledResponse(response)) {
-      return { ok: false, reason: 'provider_reauth_cancelled' };
-    }
-
-    if (!isSuccessResponse(response)) {
-      return { ok: false, reason: 'google_reauth_failed', message: 'Réponse Google inattendue.' };
-    }
-
-    const googleUserId = response.data.user.id;
-    if (!googleUserId) {
-      return { ok: false, reason: 'google_reauth_failed', message: 'Google n\'a pas retourné d\'identifiant utilisateur.' };
-    }
-
-    // Compare stable Google user ID to Supabase identity_id.
-    // NEVER compare emails.
-    if (googleUserId !== expectedGoogleIdentityId) {
-      return { ok: false, reason: 'provider_mismatch', message: 'Le compte Google sélectionné ne correspond pas au compte lié.' };
-    }
-
-    await GoogleSignin.revokeAccess();
-
-    return { ok: true };
+    response = await GoogleSignin.signIn();
   } catch (err: unknown) {
     if (isErrorWithCode(err)) {
       if (err.code === statusCodes.SIGN_IN_CANCELLED) {
@@ -129,16 +184,48 @@ export async function revokeGoogleAccess(
       if (err.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
         return { ok: false, reason: 'provider_unavailable', message: 'Google Play Services n\'est pas disponible.' };
       }
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes('Network') || message.includes('network')) {
+      return { ok: false, reason: 'network', message };
+    }
+    return { ok: false, reason: 'google_reauth_failed', message };
+  }
+
+  if (isCancelledResponse(response)) {
+    return { ok: false, reason: 'provider_reauth_cancelled' };
+  }
+
+  if (!isSuccessResponse(response)) {
+    return { ok: false, reason: 'google_reauth_failed', message: 'Réponse Google inattendue.' };
+  }
+
+  const googleUserId = response.data.user.id;
+  if (!googleUserId) {
+    return { ok: false, reason: 'google_reauth_failed', message: 'Google n\'a pas retourné d\'identifiant utilisateur.' };
+  }
+
+  // Phase 2: Identity verification — compare stable Google user ID to Supabase identity_id.
+  // NEVER compare emails.
+  if (googleUserId !== expectedGoogleIdentityId) {
+    return { ok: false, reason: 'provider_mismatch', message: 'Le compte Google sélectionné ne correspond pas au compte lié.' };
+  }
+
+  // Phase 3: Revocation
+  try {
+    await GoogleSignin.revokeAccess();
+  } catch (err: unknown) {
+    if (isErrorWithCode(err)) {
       return { ok: false, reason: 'google_revoke_failed', message: err.message };
     }
     const message = err instanceof Error ? err.message : String(err);
     if (message.includes('Network') || message.includes('network')) {
       return { ok: false, reason: 'network', message };
     }
-    // If we got here, the error occurred after signIn succeeded (during revokeAccess)
-    // or during signIn with a non-standard error. Either way, it's a Google failure.
     return { ok: false, reason: 'google_revoke_failed', message };
   }
+
+  return { ok: true };
 }
 
 // ─── Apple revocation proof ─────────────────────────────────────────────────
@@ -157,16 +244,20 @@ function generateStateToken(length: number = 32): string {
 /**
  * Obtains a fresh Apple authorizationCode for server-side revocation.
  *
- * Uses signInAsync (not refreshAsync) because:
- * - refreshAsync requires the stable Apple `user` identifier, which Supabase
- *   stores in identity_data but may not always expose reliably.
- * - signInAsync is the canonical re-authentication flow recommended by Apple
- *   for account deletion, producing a fresh authorizationCode each time.
- * - The state token prevents CSRF; credential.user is verified against the
- *   expected Apple identity.
+ * Uses refreshAsync (not signInAsync) because:
+ * - The stable Apple user identifier is available from Supabase identity_id.
+ * - refreshAsync presents a native confirmation using the known user.
+ * - It returns a fresh AppleAuthenticationCredential with authorizationCode.
  *
- * The authorizationCode is returned in memory only — never persisted to
- * AsyncStorage, SecureStore, React Query, Zustand, or logs.
+ * Controls:
+ * - state: cryptographically random, exact equality on return.
+ * - credential.user: exact equality with Supabase Apple identity_id.
+ * - authorizationCode: non-empty string.
+ * - Code kept in memory only — never persisted to AsyncStorage, SecureStore,
+ *   React Query, Zustand, or logs.
+ * - Cancellation produces no mutation.
+ *
+ * NOT marked as functional before testing on a physical iPhone.
  */
 export async function obtainAppleRevocationProof(
   expectedAppleUserId: string,
@@ -182,8 +273,8 @@ export async function obtainAppleRevocationProof(
 
     const state = generateStateToken();
 
-    const credential = await AppleAuthentication.signInAsync({
-      requestedScopes: [],
+    const credential = await AppleAuthentication.refreshAsync({
+      user: expectedAppleUserId,
       state,
     });
 
@@ -197,7 +288,7 @@ export async function obtainAppleRevocationProof(
       return { ok: false, reason: 'apple_user_mismatch', message: 'Le compte Apple sélectionné ne correspond pas au compte lié.' };
     }
 
-    if (!credential.authorizationCode) {
+    if (!credential.authorizationCode || credential.authorizationCode.length === 0) {
       return { ok: false, reason: 'apple_code_missing', message: 'Apple n\'a pas retourné de code d\'autorisation.' };
     }
 
@@ -220,17 +311,17 @@ export async function obtainAppleRevocationProof(
 /**
  * Orchestrates provider revocation proofs before account deletion.
  *
- * Order:
+ * Ordered saga (not atomic, recoverable by retry):
  * 1. Fetch fresh Supabase user
- * 2. Detect social identities
- * 3. If Apple linked → obtain Apple authorizationCode
+ * 2. Detect social identities (fail-closed)
+ * 3. If Apple linked → obtain Apple authorizationCode via refreshAsync
  * 4. If Google linked → re-authenticate + revokeAccess
  * 5. Return proof (appleAuthorizationCode) for the Edge Function
  *
  * If any step fails, returns an error — no deletion should proceed.
  * If Google revocation succeeds but the Edge Function later fails, a retry
- * can re-authenticate Google again (revokeAccess is idempotent — revoking
- * an already-revoked token is a no-op).
+ * requests a new Google authentication and revokes the new authorization
+ * before retrying deletion.
  */
 export async function prepareRevocationProofs(): Promise<RevocationPreparationResult> {
   try {
@@ -240,12 +331,16 @@ export async function prepareRevocationProofs(): Promise<RevocationPreparationRe
       return { ok: false, reason: 'unknown', message: 'Impossible de vérifier ta session.' };
     }
 
-    // 2. Detect social identities from canonical user.identities
-    const socialIdentities = detectSocialIdentities(
-      user.identities as { provider: string; identity_id: string }[] | undefined,
+    // 2. Detect social identities from canonical user.identities (fail-closed)
+    const detection = detectSocialIdentities(
+      user.identities as UserIdentity[] | undefined,
     );
 
-    if (socialIdentities.length === 0) {
+    if (!detection.ok) {
+      return { ok: false, reason: detection.reason, message: detection.message };
+    }
+
+    if (detection.identities.length === 0) {
       // Email-only account — no revocation needed
       return { ok: true, proof: {} };
     }
@@ -253,7 +348,7 @@ export async function prepareRevocationProofs(): Promise<RevocationPreparationRe
     const proof: RevocationProof = {};
 
     // 3. Apple first (reversible proof collection before irreversible revocation)
-    const appleIdentity = socialIdentities.find((i) => i.provider === 'apple');
+    const appleIdentity = detection.identities.find((i) => i.provider === 'apple');
     if (appleIdentity) {
       const appleResult = await obtainAppleRevocationProof(appleIdentity.identityId);
       if (!appleResult.ok) {
@@ -263,7 +358,7 @@ export async function prepareRevocationProofs(): Promise<RevocationPreparationRe
     }
 
     // 4. Google revocation (irreversible)
-    const googleIdentity = socialIdentities.find((i) => i.provider === 'google');
+    const googleIdentity = detection.identities.find((i) => i.provider === 'google');
     if (googleIdentity) {
       const googleResult = await revokeGoogleAccess(googleIdentity.identityId);
       if (!googleResult.ok) {
