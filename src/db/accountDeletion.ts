@@ -48,7 +48,19 @@ export async function requestAccountDeletion(
 // JWT is attached automatically by supabase.functions.invoke — never pass a
 // userId from the client; the function derives it server-side from the JWT.
 
-export type DeleteAccountErrorCode = 'unauthorized' | 'network' | 'function_failed' | 'unknown';
+export type DeleteAccountErrorCode =
+  | 'unauthorized'
+  | 'network'
+  | 'function_failed'
+  | 'provider_reauth_cancelled'
+  | 'provider_unavailable'
+  | 'provider_mismatch'
+  | 'google_revoke_failed'
+  | 'apple_code_missing'
+  | 'apple_exchange_failed'
+  | 'apple_identity_mismatch'
+  | 'apple_revoke_failed'
+  | 'unknown';
 
 export interface DeleteAccountResult {
   ok: boolean;
@@ -61,11 +73,18 @@ type DeleteAccountFunctionResponse =
   | { ok: true }
   | { ok: false; error: string; step?: string };
 
-export async function deleteAccountSelfService(): Promise<DeleteAccountResult> {
+export async function deleteAccountSelfService(
+  appleAuthorizationCode?: string,
+): Promise<DeleteAccountResult> {
   try {
+    const body: Record<string, unknown> = {};
+    if (appleAuthorizationCode) {
+      body.appleAuthorizationCode = appleAuthorizationCode;
+    }
+
     const { data, error } = await supabase.functions.invoke<DeleteAccountFunctionResponse>(
       'delete-account',
-      { method: 'POST' }
+      { method: 'POST', body: JSON.stringify(body) }
     );
 
     if (error) {

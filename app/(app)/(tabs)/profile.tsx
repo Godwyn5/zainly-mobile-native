@@ -10,6 +10,7 @@ import { useLogout } from '@/hooks/useLogout';
 import { useRestorePurchases } from '@/hooks/useRestorePurchases';
 import { manageSubscription } from '@/lib/manageSubscription';
 import { deleteAccountSelfService } from '@/db/accountDeletion';
+import { prepareRevocationProofs, type RevocationErrorCode } from '@/lib/providerRevocation';
 import { useNotificationSettings } from '@/hooks/useNotificationSettings';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
@@ -269,6 +270,53 @@ function SettingsCard({ anim }: { anim: Animated.Value }) {
   );
 }
 
+// ─── Revocation error messages ──────────────────────────────────────────────
+
+function revocationMessageForUser(reason: RevocationErrorCode): string {
+  switch (reason) {
+    case 'provider_reauth_cancelled':
+      return 'La confirmation a été annulée. Ton compte n\'a pas été supprimé.';
+    case 'provider_unavailable':
+      return 'Le service de confirmation n\'est pas disponible sur cet appareil.';
+    case 'provider_mismatch':
+      return 'Le compte sélectionné ne correspond pas au compte lié à Zainly. Ta session Google ou Apple est requise.';
+    case 'google_revoke_failed':
+      return 'La révocation Google a échoué. Réessaie dans un instant.';
+    case 'apple_code_missing':
+      return 'Apple n\'a pas fourni de code d\'autorisation. Réessaie.';
+    case 'apple_reauth_failed':
+      return 'La confirmation Apple a échoué. Réessaie.';
+    case 'apple_state_mismatch':
+    case 'apple_user_mismatch':
+      return 'La réponse Apple ne correspond pas à la requête. Réessaie.';
+    case 'network':
+      return 'Vérifie ta connexion internet puis réessaie.';
+    case 'unknown_provider':
+      return 'Un fournisseur d\'authentification inconnu est lié à ton compte. Contacte le support.';
+    default:
+      return 'Impossible de préparer la suppression pour le moment. Réessaie dans un instant.';
+  }
+}
+
+function deletionErrorMessage(error?: string): string {
+  switch (error) {
+    case 'unauthorized':
+      return 'Ta session a expiré. Reconnecte-toi puis réessaie.';
+    case 'network':
+      return 'Vérifie ta connexion internet puis réessaie.';
+    case 'apple_code_missing':
+      return 'Le code d\'autorisation Apple est manquant. Réessaie.';
+    case 'apple_exchange_failed':
+      return 'L\'échange du code Apple a échoué. Réessaie.';
+    case 'apple_identity_mismatch':
+      return 'L\'identité Apple ne correspond pas au compte lié. Contacte le support.';
+    case 'apple_revoke_failed':
+      return 'La révocation Apple a échoué. Réessaie dans un instant.';
+    default:
+      return 'Impossible de supprimer ton compte pour le moment. Réessaie dans un instant.';
+  }
+}
+
 // ─── ProfileScreen ──────────────────────────────────────────────────────────
 
 export default function ProfileScreen() {
@@ -323,7 +371,24 @@ export default function ProfileScreen() {
     isDeletingRef.current = true;
     setIsDeletingAccount(true);
 
-    const result = await deleteAccountSelfService();
+    // 1. Collect revocation proofs (Google revokeAccess, Apple authorizationCode)
+    //    This step may show native provider UI for re-authentication.
+    //    If the user cancels or a mismatch is detected, no deletion proceeds.
+    const revocationResult = await prepareRevocationProofs();
+
+    if (!revocationResult.ok) {
+      isDeletingRef.current = false;
+      setIsDeletingAccount(false);
+
+      const message = revocationMessageForUser(revocationResult.reason);
+      Alert.alert('Suppression impossible', message);
+      return;
+    }
+
+    // 2. Call the Edge Function with the Apple authorizationCode (if any)
+    const result = await deleteAccountSelfService(
+      revocationResult.proof.appleAuthorizationCode,
+    );
 
     if (result.ok) {
       await AsyncStorage.setItem('account_deleted_success', 'true').catch(() => {});
@@ -334,13 +399,7 @@ export default function ProfileScreen() {
     isDeletingRef.current = false;
     setIsDeletingAccount(false);
 
-    const message =
-      result.error === 'unauthorized'
-        ? 'Ta session a expiré. Reconnecte-toi puis réessaie.'
-        : result.error === 'network'
-          ? 'Vérifie ta connexion internet puis réessaie.'
-          : 'Impossible de supprimer ton compte pour le moment. Réessaie dans un instant.';
-
+    const message = deletionErrorMessage(result.error);
     Alert.alert('Suppression impossible', message);
   }
 
