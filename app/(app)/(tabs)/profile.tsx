@@ -308,6 +308,8 @@ function deletionErrorMessage(error?: string): string {
       return 'Vérifie ta connexion internet puis réessaie.';
     case 'invalid_body':
       return 'Les données envoyées sont invalides. Réessaie.';
+    case 'identity_invalid':
+      return 'Les identités liées à ton compte sont invalides. Contacte le support.';
     case 'unknown_provider':
       return 'Un fournisseur d\'authentification non pris en charge est lié à ton compte. Contacte le support.';
     case 'apple_code_missing':

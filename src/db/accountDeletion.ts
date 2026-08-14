@@ -52,6 +52,7 @@ export type DeleteAccountErrorCode =
   | 'unauthorized'
   | 'network'
   | 'invalid_body'
+  | 'identity_invalid'
   | 'unknown_provider'
   | 'apple_code_missing'
   | 'apple_exchange_failed'
@@ -65,12 +66,11 @@ export interface DeleteAccountResult {
   ok: boolean;
   error?: DeleteAccountErrorCode;
   message?: string;
-  step?: string;
 }
 
 type DeleteAccountFunctionResponse =
   | { ok: true }
-  | { ok: false; error: string; step?: string };
+  | { ok: false; error: string };
 
 export async function deleteAccountSelfService(
   appleAuthorizationCode?: string,
@@ -89,7 +89,7 @@ export async function deleteAccountSelfService(
     if (error) {
       if (error instanceof FunctionsHttpError) {
         let status: number | undefined;
-        let errorBody: { error?: string; step?: string } | undefined;
+        let errorBody: { error?: string } | undefined;
         try {
           status = error.context?.status;
           errorBody = await error.context?.json();
@@ -103,6 +103,7 @@ export async function deleteAccountSelfService(
         const serverCode = errorBody?.error;
         const allowedCodes = new Set<DeleteAccountErrorCode>([
           'invalid_body',
+          'identity_invalid',
           'unknown_provider',
           'apple_code_missing',
           'apple_exchange_failed',
@@ -112,7 +113,7 @@ export async function deleteAccountSelfService(
           'internal_error',
         ]);
         if (serverCode && allowedCodes.has(serverCode as DeleteAccountErrorCode)) {
-          return { ok: false, error: serverCode as DeleteAccountErrorCode, step: errorBody?.step };
+          return { ok: false, error: serverCode as DeleteAccountErrorCode };
         }
         return { ok: false, error: 'unknown' };
       }
@@ -123,10 +124,11 @@ export async function deleteAccountSelfService(
     }
 
     if (!data || data.ok !== true) {
-      const failed = data as { ok: false; error: string; step?: string } | null;
+      const failed = data as { ok: false; error: string } | null;
       const serverCode = failed?.error;
       const allowedCodes = new Set<DeleteAccountErrorCode>([
         'invalid_body',
+        'identity_invalid',
         'unknown_provider',
         'apple_code_missing',
         'apple_exchange_failed',
@@ -136,7 +138,7 @@ export async function deleteAccountSelfService(
         'internal_error',
       ]);
       if (serverCode && allowedCodes.has(serverCode as DeleteAccountErrorCode)) {
-        return { ok: false, error: serverCode as DeleteAccountErrorCode, step: failed?.step };
+        return { ok: false, error: serverCode as DeleteAccountErrorCode };
       }
       return { ok: false, error: 'unknown' };
     }

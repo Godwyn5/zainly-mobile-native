@@ -17,7 +17,7 @@ import { assertEquals, assert, fail } from 'https://deno.land/std@0.224.0/assert
 import {
   handleDeleteAccount,
   validateBody,
-  detectAppleIdentity,
+  analyzeAuthIdentities,
   type HandlerDeps,
 } from './handler.ts';
 
@@ -82,9 +82,16 @@ interface MockFetchConfig {
   tokenContentType?: string;
 }
 
+interface FetchCallRecord {
+  url: string;
+  method: string;
+}
+
 function createMockFetch(config: MockFetchConfig): typeof fetch {
-  return ((input: URL | string, _init?: RequestInit): Promise<Response> => {
+  const calls: FetchCallRecord[] = [];
+  const fn = ((input: URL | string, _init?: RequestInit): Promise<Response> => {
     const url = typeof input === 'string' ? input : input.toString();
+    calls.push({ url, method: _init?.method ?? 'GET' });
 
     if (url === APPLE_TOKEN_URL) {
       const status = config.tokenStatus ?? 200;
@@ -107,13 +114,17 @@ function createMockFetch(config: MockFetchConfig): typeof fetch {
 
     return Promise.resolve(new Response('not found', { status: 404 }));
   }) as typeof fetch;
+  (fn as unknown as { _calls: FetchCallRecord[] })._calls = calls;
+  return fn;
 }
 
 // ─── Mock Supabase client ───────────────────────────────────────────────────
 
 interface MockSupabaseConfig {
   userId?: string;
-  identities?: unknown[];
+  // identities is intentionally `unknown` to support null, undefined, primitives, etc.
+  // Do NOT default to [] — that would erase the exact cases we need to test.
+  identities?: unknown;
   deleteUserError?: { status: number; message: string } | null;
   deleteErrors?: Record<string, { error: unknown } | null>;
 }
@@ -158,13 +169,14 @@ function createMockCallerClient(config: MockSupabaseConfig): unknown {
         if (!config.userId) {
           return Promise.resolve({ data: { user: null }, error: { message: 'invalid' } });
         }
+        // Pass identities through as-is — do NOT default with ?? []
+        const user: Record<string, unknown> = { id: config.userId };
+        if ('identities' in config) {
+          user.identities = config.identities;
+        }
+        // If identities key is not in config, user.identities will be undefined
         return Promise.resolve({
-          data: {
-            user: {
-              id: config.userId,
-              identities: config.identities ?? [],
-            },
-          },
+          data: { user },
           error: null,
         });
       },
@@ -176,20 +188,23 @@ function createMockCallerClient(config: MockSupabaseConfig): unknown {
 // Admin client is cached so tests can inspect _deleteCalls and _userDeleted.
 function createMockCreateClient(callerConfig: MockSupabaseConfig, adminConfig: MockSupabaseConfig): (url: string, key: string) => unknown {
   const cachedAdmin = createMockAdminClient(adminConfig);
-  return (_url: string, key: string) => {
+  const createClientFn = (_url: string, key: string) => {
     // Admin client uses service role key
     if (key === 'service-role-key') {
       return cachedAdmin;
     }
     return createMockCallerClient(callerConfig);
   };
+  (createClientFn as unknown as { _adminClient: unknown })._adminClient = cachedAdmin;
+  return createClientFn;
 }
 
 // ─── Build test deps ────────────────────────────────────────────────────────
 
 interface BuildTestResult {
   deps: HandlerDeps;
-  adminClient: ReturnType<typeof createMockAdminClient>;
+  adminClient: unknown;
+  fetchFn: typeof fetch;
 }
 
 interface AdminClientInspect {
@@ -199,6 +214,10 @@ interface AdminClientInspect {
 
 function inspectAdminClient(client: unknown): AdminClientInspect {
   return client as unknown as AdminClientInspect;
+}
+
+function inspectFetch(fn: typeof fetch): { _calls: FetchCallRecord[] } {
+  return { _calls: (fn as unknown as { _calls: FetchCallRecord[] })._calls ?? [] };
 }
 
 function buildTestDeps(
@@ -214,17 +233,18 @@ function buildTestDeps(
 ): BuildTestResult {
   const mockCreateClient = createMockCreateClient(callerConfig, adminConfig);
   const adminClient = mockCreateClient('', 'service-role-key');
+  const fetchFn = createMockFetch(fetchConfig);
   const deps: HandlerDeps = {
     supabaseUrl: 'http://localhost',
     supabaseAnonKey: 'anon-key',
     supabaseServiceRoleKey: 'service-role-key',
     appleConfig,
-    fetchFn: createMockFetch(fetchConfig),
+    fetchFn,
     createCallerClient: mockCreateClient as unknown as HandlerDeps['createCallerClient'],
     createAdminClient: mockCreateClient as unknown as HandlerDeps['createAdminClient'],
     verifyJwt: testVerifyJwt,
   };
-  return { deps, adminClient };
+  return { deps, adminClient, fetchFn };
 }
 
 // ─── Test JWT verifier using local JWKS ─────────────────────────────────────
@@ -319,48 +339,156 @@ Deno.test('validateBody: oversized appleAuthorizationCode rejected', () => {
   if (!result.ok) assertEquals(result.error, 'invalid_body');
 });
 
-// ─── detectAppleIdentity tests ──────────────────────────────────────────────
+// ─── analyzeAuthIdentities unit tests ───────────────────────────────────────
 
-Deno.test('detectAppleIdentity: empty array', () => {
-  const result = detectAppleIdentity([]);
-  assertEquals(result.hasApple, false);
-  assertEquals(result.appleSub, null);
-  assertEquals(result.hasUnknownProvider, false);
+Deno.test('analyzeAuthIdentities: identities absent (undefined) → identity_invalid', () => {
+  const result = analyzeAuthIdentities(undefined);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
 });
 
-Deno.test('detectAppleIdentity: email only', () => {
-  const result = detectAppleIdentity([{ provider: 'email', identity_id: 'e1' }]);
-  assertEquals(result.hasApple, false);
-  assertEquals(result.hasUnknownProvider, false);
+Deno.test('analyzeAuthIdentities: identities null → identity_invalid', () => {
+  const result = analyzeAuthIdentities(null);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
 });
 
-Deno.test('detectAppleIdentity: apple present', () => {
-  const result = detectAppleIdentity([{ provider: 'apple', identity_id: 'apple-sub-123' }]);
-  assertEquals(result.hasApple, true);
-  assertEquals(result.appleSub, 'apple-sub-123');
+Deno.test('analyzeAuthIdentities: empty array → identity_invalid', () => {
+  const result = analyzeAuthIdentities([]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
 });
 
-Deno.test('detectAppleIdentity: google only', () => {
-  const result = detectAppleIdentity([{ provider: 'google', identity_id: 'g1' }]);
-  assertEquals(result.hasApple, false);
-  assertEquals(result.hasUnknownProvider, false);
+Deno.test('analyzeAuthIdentities: primitive (number) → identity_invalid', () => {
+  const result = analyzeAuthIdentities(42);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
 });
 
-Deno.test('detectAppleIdentity: unknown provider detected', () => {
-  const result = detectAppleIdentity([{ provider: 'github', identity_id: 'gh1' }]);
-  assertEquals(result.hasUnknownProvider, true);
+Deno.test('analyzeAuthIdentities: primitive (string) → identity_invalid', () => {
+  const result = analyzeAuthIdentities('hello');
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
 });
 
-Deno.test('detectAppleIdentity: apple with empty identity_id', () => {
-  const result = detectAppleIdentity([{ provider: 'apple', identity_id: '' }]);
-  assertEquals(result.hasApple, true);
-  assertEquals(result.appleSub, null);
+Deno.test('analyzeAuthIdentities: entry null → identity_invalid', () => {
+  const result = analyzeAuthIdentities([null]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
 });
 
-Deno.test('detectAppleIdentity: null input', () => {
-  const result = detectAppleIdentity(null);
-  assertEquals(result.hasApple, false);
-  assertEquals(result.hasUnknownProvider, false);
+Deno.test('analyzeAuthIdentities: entry primitive (number) → identity_invalid', () => {
+  const result = analyzeAuthIdentities([42]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
+});
+
+Deno.test('analyzeAuthIdentities: entry primitive (string) → identity_invalid', () => {
+  const result = analyzeAuthIdentities(['hello']);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
+});
+
+Deno.test('analyzeAuthIdentities: provider absent → identity_invalid', () => {
+  const result = analyzeAuthIdentities([{ identity_id: 'x' }]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
+});
+
+Deno.test('analyzeAuthIdentities: provider empty string → identity_invalid', () => {
+  const result = analyzeAuthIdentities([{ provider: '', identity_id: 'x' }]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
+});
+
+Deno.test('analyzeAuthIdentities: provider non-string (number) → identity_invalid', () => {
+  const result = analyzeAuthIdentities([{ provider: 123, identity_id: 'x' }]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
+});
+
+Deno.test('analyzeAuthIdentities: identity_id absent → identity_invalid', () => {
+  const result = analyzeAuthIdentities([{ provider: 'google' }]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
+});
+
+Deno.test('analyzeAuthIdentities: identity_id empty string → identity_invalid', () => {
+  const result = analyzeAuthIdentities([{ provider: 'google', identity_id: '' }]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
+});
+
+Deno.test('analyzeAuthIdentities: identity_id non-string (number) → identity_invalid', () => {
+  const result = analyzeAuthIdentities([{ provider: 'google', identity_id: 123 }]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
+});
+
+Deno.test('analyzeAuthIdentities: unknown provider → unknown_provider', () => {
+  const result = analyzeAuthIdentities([{ provider: 'github', identity_id: 'gh1' }]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'unknown_provider');
+});
+
+Deno.test('analyzeAuthIdentities: duplicate Google → identity_invalid', () => {
+  const result = analyzeAuthIdentities([
+    { provider: 'google', identity_id: 'g1' },
+    { provider: 'google', identity_id: 'g2' },
+  ]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
+});
+
+Deno.test('analyzeAuthIdentities: duplicate Apple → identity_invalid', () => {
+  const result = analyzeAuthIdentities([
+    { provider: 'apple', identity_id: 'a1' },
+    { provider: 'apple', identity_id: 'a2' },
+  ]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
+});
+
+Deno.test('analyzeAuthIdentities: email only → ok, no apple, no google', () => {
+  const result = analyzeAuthIdentities([{ provider: 'email', identity_id: 'e1' }]);
+  assertEquals(result.ok, true);
+  if (result.ok) {
+    assertEquals(result.hasApple, false);
+    assertEquals(result.hasGoogle, false);
+    assertEquals(result.appleSub, null);
+  }
+});
+
+Deno.test('analyzeAuthIdentities: Google only → ok, hasGoogle, no apple', () => {
+  const result = analyzeAuthIdentities([{ provider: 'google', identity_id: 'g1' }]);
+  assertEquals(result.ok, true);
+  if (result.ok) {
+    assertEquals(result.hasGoogle, true);
+    assertEquals(result.hasApple, false);
+  }
+});
+
+Deno.test('analyzeAuthIdentities: Apple only → ok, hasApple, appleSub set', () => {
+  const result = analyzeAuthIdentities([{ provider: 'apple', identity_id: 'apple-sub-123' }]);
+  assertEquals(result.ok, true);
+  if (result.ok) {
+    assertEquals(result.hasApple, true);
+    assertEquals(result.appleSub, 'apple-sub-123');
+    assertEquals(result.hasGoogle, false);
+  }
+});
+
+Deno.test('analyzeAuthIdentities: Google + Apple → ok, both recognized', () => {
+  const result = analyzeAuthIdentities([
+    { provider: 'google', identity_id: 'g1' },
+    { provider: 'apple', identity_id: 'a1' },
+  ]);
+  assertEquals(result.ok, true);
+  if (result.ok) {
+    assertEquals(result.hasGoogle, true);
+    assertEquals(result.hasApple, true);
+    assertEquals(result.appleSub, 'a1');
+  }
 });
 
 // ─── Handler integration tests ──────────────────────────────────────────────
@@ -386,11 +514,12 @@ Deno.test({
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
     });
-    const { deps, adminClient: _adminClient } = buildTestDeps({}, {}, {});
+    const { deps } = buildTestDeps({}, {}, {});
     const resp = await handleDeleteAccount(req, deps);
     assertEquals(resp.status, 401);
     const body = await resp.json();
     assertEquals(body.error, 'unauthorized');
+    assert(!('step' in body), 'response must not contain step');
   },
 });
 
@@ -407,11 +536,12 @@ Deno.test({
       },
       body: 'not json{',
     });
-    const { deps, adminClient: _adminClient } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] }, {}, {});
+    const { deps } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] }, {}, {});
     const resp = await handleDeleteAccount(req, deps);
     assertEquals(resp.status, 400);
     const body = await resp.json();
     assertEquals(body.error, 'invalid_body');
+    assert(!('step' in body), 'response must not contain step');
   },
 });
 
@@ -421,7 +551,7 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     const req = makeRequest('null');
-    const { deps, adminClient: _adminClient } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] }, {}, {});
+    const { deps } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] }, {}, {});
     const resp = await handleDeleteAccount(req, deps);
     assertEquals(resp.status, 400);
     const body = await resp.json();
@@ -435,7 +565,7 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     const req = makeRequest('[1,2,3]');
-    const { deps, adminClient: _adminClient } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] }, {}, {});
+    const { deps } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] }, {}, {});
     const resp = await handleDeleteAccount(req, deps);
     assertEquals(resp.status, 400);
     const body = await resp.json();
@@ -449,7 +579,7 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     const req = makeRequest({ foo: 'bar' });
-    const { deps, adminClient: _adminClient } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] }, {}, {});
+    const { deps } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] }, {}, {});
     const resp = await handleDeleteAccount(req, deps);
     assertEquals(resp.status, 400);
     const body = await resp.json();
@@ -463,7 +593,7 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     const req = makeRequest({ appleAuthorizationCode: 123 });
-    const { deps, adminClient: _adminClient } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'apple', identity_id: 'a1' }] }, {}, {});
+    const { deps } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'apple', identity_id: 'a1' }] }, {}, {});
     const resp = await handleDeleteAccount(req, deps);
     assertEquals(resp.status, 400);
     const body = await resp.json();
@@ -471,19 +601,275 @@ Deno.test({
   },
 });
 
+// ─── Handler: identity validation stops before any deletion ─────────────────
+
+async function assertNoSideEffects(
+  resp: Response,
+  expectedStatus: number,
+  expectedError: string,
+  adminClient: unknown,
+  fetchFn: typeof fetch,
+) {
+  assertEquals(resp.status, expectedStatus);
+  const body = await resp.json();
+  assertEquals(body.error, expectedError);
+  assert(!('step' in body), 'response must not contain step');
+  // No admin client operations
+  const admin = inspectAdminClient(adminClient);
+  assertEquals(admin._deleteCalls.length, 0, 'table deletion must not occur');
+  assertEquals(admin._userDeleted(), false, 'auth user deletion must not occur');
+  // No Apple API calls
+  const fetchInspect = inspectFetch(fetchFn);
+  assertEquals(fetchInspect._calls.length, 0, 'no Apple API calls must occur');
+}
+
 Deno.test({
-  name: 'handler: unknown provider returns 400 unknown_provider',
+  name: 'handler: identities absent (undefined) → 400 identity_invalid, no side effects',
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
     const req = makeRequest({});
-    const { deps, adminClient: _adminClient } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'github', identity_id: 'gh1' }] }, {}, {});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1' }, // no identities key → undefined
+      {},
+      {},
+    );
     const resp = await handleDeleteAccount(req, deps);
-    assertEquals(resp.status, 400);
-    const body = await resp.json();
-    assertEquals(body.error, 'unknown_provider');
+    await assertNoSideEffects(resp, 400, 'identity_invalid', adminClient, fetchFn);
   },
 });
+
+Deno.test({
+  name: 'handler: identities null → 400 identity_invalid, no side effects',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1', identities: null },
+      {},
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    await assertNoSideEffects(resp, 400, 'identity_invalid', adminClient, fetchFn);
+  },
+});
+
+Deno.test({
+  name: 'handler: identities empty array → 400 identity_invalid, no side effects',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1', identities: [] },
+      {},
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    await assertNoSideEffects(resp, 400, 'identity_invalid', adminClient, fetchFn);
+  },
+});
+
+Deno.test({
+  name: 'handler: identities primitive (number) → 400 identity_invalid, no side effects',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1', identities: 42 },
+      {},
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    await assertNoSideEffects(resp, 400, 'identity_invalid', adminClient, fetchFn);
+  },
+});
+
+Deno.test({
+  name: 'handler: entry null → 400 identity_invalid, no side effects',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1', identities: [null] },
+      {},
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    await assertNoSideEffects(resp, 400, 'identity_invalid', adminClient, fetchFn);
+  },
+});
+
+Deno.test({
+  name: 'handler: entry primitive → 400 identity_invalid, no side effects',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1', identities: ['hello'] },
+      {},
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    await assertNoSideEffects(resp, 400, 'identity_invalid', adminClient, fetchFn);
+  },
+});
+
+Deno.test({
+  name: 'handler: provider absent → 400 identity_invalid, no side effects',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1', identities: [{ identity_id: 'x' }] },
+      {},
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    await assertNoSideEffects(resp, 400, 'identity_invalid', adminClient, fetchFn);
+  },
+});
+
+Deno.test({
+  name: 'handler: provider empty → 400 identity_invalid, no side effects',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1', identities: [{ provider: '', identity_id: 'x' }] },
+      {},
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    await assertNoSideEffects(resp, 400, 'identity_invalid', adminClient, fetchFn);
+  },
+});
+
+Deno.test({
+  name: 'handler: provider non-string → 400 identity_invalid, no side effects',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1', identities: [{ provider: 123, identity_id: 'x' }] },
+      {},
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    await assertNoSideEffects(resp, 400, 'identity_invalid', adminClient, fetchFn);
+  },
+});
+
+Deno.test({
+  name: 'handler: identity_id absent → 400 identity_invalid, no side effects',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1', identities: [{ provider: 'google' }] },
+      {},
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    await assertNoSideEffects(resp, 400, 'identity_invalid', adminClient, fetchFn);
+  },
+});
+
+Deno.test({
+  name: 'handler: identity_id empty → 400 identity_invalid, no side effects',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1', identities: [{ provider: 'google', identity_id: '' }] },
+      {},
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    await assertNoSideEffects(resp, 400, 'identity_invalid', adminClient, fetchFn);
+  },
+});
+
+Deno.test({
+  name: 'handler: identity_id non-string → 400 identity_invalid, no side effects',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1', identities: [{ provider: 'google', identity_id: 123 }] },
+      {},
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    await assertNoSideEffects(resp, 400, 'identity_invalid', adminClient, fetchFn);
+  },
+});
+
+Deno.test({
+  name: 'handler: unknown provider → 400 unknown_provider, no side effects',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1', identities: [{ provider: 'github', identity_id: 'gh1' }] },
+      {},
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    await assertNoSideEffects(resp, 400, 'unknown_provider', adminClient, fetchFn);
+  },
+});
+
+Deno.test({
+  name: 'handler: duplicate Google → 400 identity_invalid, no side effects',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1', identities: [
+        { provider: 'google', identity_id: 'g1' },
+        { provider: 'google', identity_id: 'g2' },
+      ] },
+      {},
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    await assertNoSideEffects(resp, 400, 'identity_invalid', adminClient, fetchFn);
+  },
+});
+
+Deno.test({
+  name: 'handler: duplicate Apple → 400 identity_invalid, no side effects',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1', identities: [
+        { provider: 'apple', identity_id: 'a1' },
+        { provider: 'apple', identity_id: 'a2' },
+      ] },
+      {},
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    await assertNoSideEffects(resp, 400, 'identity_invalid', adminClient, fetchFn);
+  },
+});
+
+// ─── Handler: valid identity scenarios ──────────────────────────────────────
 
 Deno.test({
   name: 'handler: email-only account no Apple code required, deletion succeeds',
@@ -492,8 +878,28 @@ Deno.test({
   async fn() {
     const req = makeRequest({});
     const adminConfig: MockSupabaseConfig = { deleteUserError: null };
-    const { deps, adminClient: _adminClient } = buildTestDeps(
+    const { deps } = buildTestDeps(
       { userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] },
+      adminConfig,
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    assertEquals(resp.status, 200);
+    const body = await resp.json();
+    assertEquals(body.ok, true);
+    assert(!('step' in body), 'response must not contain step');
+  },
+});
+
+Deno.test({
+  name: 'handler: Google-only account, deletion succeeds',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const adminConfig: MockSupabaseConfig = { deleteUserError: null };
+    const { deps } = buildTestDeps(
+      { userId: 'u1', identities: [{ provider: 'google', identity_id: 'g1' }] },
       adminConfig,
       {},
     );
@@ -510,7 +916,7 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     const req = makeRequest({});
-    const { deps, adminClient: _adminClient } = buildTestDeps(
+    const { deps, adminClient, fetchFn } = buildTestDeps(
       { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
       {},
       {},
@@ -519,6 +925,13 @@ Deno.test({
     assertEquals(resp.status, 400);
     const body = await resp.json();
     assertEquals(body.error, 'apple_code_missing');
+    assert(!('step' in body), 'response must not contain step');
+    // No deletion or Apple API calls
+    const admin = inspectAdminClient(adminClient);
+    assertEquals(admin._deleteCalls.length, 0);
+    assertEquals(admin._userDeleted(), false);
+    const fetchInspect = inspectFetch(fetchFn);
+    assertEquals(fetchInspect._calls.length, 0);
   },
 });
 
@@ -527,20 +940,17 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
-    const _idToken = await signTestJwt({ sub: 'apple-sub' }, 'TESTKEY');
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
-    const { deps, adminClient: _adminClient } = buildTestDeps(
+    const { deps } = buildTestDeps(
       { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
       {},
       { tokenStatus: 400 },
     );
-    // Override verifyJwt in deps — but we can't easily do that with buildTestDeps.
-    // The handler uses the module-level verifyAppleIdToken, so this test will
-    // fail at exchange before reaching JWT verification.
     const resp = await handleDeleteAccount(req, deps);
     assertEquals(resp.status, 502);
     const body = await resp.json();
     assertEquals(body.error, 'apple_exchange_failed');
+    assert(!('step' in body), 'response must not contain step');
   },
 });
 
@@ -550,7 +960,7 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
-    const { deps, adminClient: _adminClient } = buildTestDeps(
+    const { deps } = buildTestDeps(
       { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
       {},
       { tokenResponse: 'not-json', tokenContentType: 'text/plain' },
@@ -568,7 +978,7 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
-    const { deps, adminClient: _adminClient } = buildTestDeps(
+    const { deps } = buildTestDeps(
       { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
       {},
       { tokenResponse: { refresh_token: 'rt' } },
@@ -587,7 +997,7 @@ Deno.test({
   async fn() {
     const idToken = await signTestJwt({ sub: 'apple-sub' }, 'TESTKEY');
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
-    const { deps, adminClient: _adminClient } = buildTestDeps(
+    const { deps } = buildTestDeps(
       { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
       {},
       { tokenResponse: { id_token: idToken } },
@@ -615,7 +1025,7 @@ Deno.test({
       .sign(otherKey);
 
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
-    const { deps, adminClient: _adminClient } = buildTestDeps(
+    const { deps } = buildTestDeps(
       { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
       {},
       { tokenResponse: { id_token: badToken, refresh_token: 'rt' } },
@@ -641,7 +1051,7 @@ Deno.test({
       .sign(testPrivateKey);
 
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
-    const { deps, adminClient: _adminClient } = buildTestDeps(
+    const { deps } = buildTestDeps(
       { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
       {},
       { tokenResponse: { id_token: badToken, refresh_token: 'rt' } },
@@ -667,7 +1077,7 @@ Deno.test({
       .sign(testPrivateKey);
 
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
-    const { deps, adminClient: _adminClient } = buildTestDeps(
+    const { deps } = buildTestDeps(
       { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
       {},
       { tokenResponse: { id_token: badToken, refresh_token: 'rt' } },
@@ -693,7 +1103,7 @@ Deno.test({
       .sign(testPrivateKey);
 
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
-    const { deps, adminClient: _adminClient } = buildTestDeps(
+    const { deps } = buildTestDeps(
       { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
       {},
       { tokenResponse: { id_token: expiredToken, refresh_token: 'rt' } },
@@ -712,7 +1122,7 @@ Deno.test({
   async fn() {
     const idToken = await signTestJwt({ sub: 'wrong-sub' }, 'TESTKEY');
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
-    const { deps, adminClient: _adminClient } = buildTestDeps(
+    const { deps } = buildTestDeps(
       { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
       {},
       { tokenResponse: { id_token: idToken, refresh_token: 'rt' } },
@@ -721,6 +1131,7 @@ Deno.test({
     assertEquals(resp.status, 403);
     const body = await resp.json();
     assertEquals(body.error, 'apple_identity_mismatch');
+    assert(!('step' in body), 'response must not contain step');
   },
 });
 
@@ -731,7 +1142,7 @@ Deno.test({
   async fn() {
     const idToken = await signTestJwt({ sub: 'apple-sub' }, 'TESTKEY');
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
-    const { deps, adminClient: _adminClient } = buildTestDeps(
+    const { deps } = buildTestDeps(
       { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
       {},
       { tokenResponse: { id_token: idToken, refresh_token: 'rt' }, revokeStatus: 500 },
@@ -823,7 +1234,7 @@ Deno.test({
     const adminConfig: MockSupabaseConfig = {
       deleteUserError: { status: 404, message: 'User not found' },
     };
-    const { deps, adminClient: _adminClient } = buildTestDeps(
+    const { deps } = buildTestDeps(
       { userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] },
       adminConfig,
       {},
@@ -836,13 +1247,12 @@ Deno.test({
 });
 
 Deno.test({
-  name: 'handler: no sensitive values in error responses',
+  name: 'handler: no sensitive values or internal steps in error responses',
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
-    const _idToken = await signTestJwt({ sub: 'apple-sub' }, 'TESTKEY');
     const req = makeRequest({ appleAuthorizationCode: 'secret-auth-code' });
-    const { deps, adminClient: _adminClient } = buildTestDeps(
+    const { deps } = buildTestDeps(
       { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
       {},
       { tokenStatus: 400 },
@@ -853,6 +1263,35 @@ Deno.test({
     assert(!bodyText.includes('secret-auth-code'), 'authorization code leaked in response');
     assert(!bodyText.includes('service-role-key'), 'service role key leaked');
     assert(!bodyText.includes('private'), 'private key leaked');
+    // No internal step names in response
+    assert(!bodyText.includes('"step"'), 'step field leaked in response');
+    assert(!bodyText.includes('apple_env'), 'internal step name leaked');
+    assert(!bodyText.includes('apple_unexpected'), 'internal step name leaked');
+    assert(!bodyText.includes('auth_delete_user'), 'internal step name leaked');
+    assert(!bodyText.includes('apple_client_secret_failed'), 'internal step name leaked');
+    assert(!bodyText.includes('review_items'), 'table name leaked');
+    assert(!bodyText.includes('profiles'), 'table name leaked');
+  },
+});
+
+Deno.test({
+  name: 'handler: no step field in any error response',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    // Test multiple error paths and verify none contain step
+    const testCases = [
+      { req: makeRequest({}), caller: { userId: 'u1', identities: null }, expectedError: 'identity_invalid' },
+      { req: makeRequest({}), caller: { userId: 'u1', identities: [{ provider: 'github', identity_id: 'g1' }] }, expectedError: 'unknown_provider' },
+      { req: makeRequest({}), caller: { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'a1' }] }, expectedError: 'apple_code_missing' },
+    ];
+
+    for (const tc of testCases) {
+      const { deps } = buildTestDeps(tc.caller, {}, {});
+      const resp = await handleDeleteAccount(tc.req, deps);
+      const body = await resp.json();
+      assert(!('step' in body), `response for ${tc.expectedError} must not contain step`);
+    }
   },
 });
 

@@ -58,6 +58,7 @@ jest.mock('@react-native-google-signin/google-signin', () => ({
     revokeAccess: (...args: unknown[]) => mockGoogleRevokeAccess(...(args as [])),
     signOut: (...args: unknown[]) => mockGoogleSignOut(...(args as [])),
     hasPlayServices: (...args: unknown[]) => mockGoogleHasPlayServices(...(args as [])),
+    configure: jest.fn(),
   },
   isSuccessResponse: (response: { type: string }) => response.type === 'success',
   isCancelledResponse: (response: { type: string }) => response.type === 'cancelled',
@@ -75,6 +76,34 @@ jest.mock('@react-native-google-signin/google-signin', () => ({
 // React Native Platform mock
 jest.mock('react-native', () => ({
   Platform: { OS: 'ios' },
+}));
+
+// Mock socialAuth.ts dependencies (needed for signOutGoogle behavioral tests)
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  default: {
+    getItem: jest.fn(async () => null),
+    setItem: jest.fn(async () => undefined),
+    removeItem: jest.fn(async () => undefined),
+    getAllKeys: jest.fn(async () => []),
+    multiGet: jest.fn(async () => []),
+    multiSet: jest.fn(async () => undefined),
+    multiRemove: jest.fn(async () => undefined),
+    clear: jest.fn(async () => undefined),
+  },
+}));
+jest.mock('@/lib/onboardingTransition', () => ({
+  beginOnboardingTransition: jest.fn(),
+  setTransitionUserId: jest.fn(),
+  runOnboardingTransition: jest.fn(),
+}));
+jest.mock('@/lib/transitionLease', () => ({
+  releaseTransitionLease: jest.fn(),
+}));
+jest.mock('@/db/plans', () => ({
+  fetchPlan: jest.fn(),
+}));
+jest.mock('@/db/progress', () => ({
+  fetchProgress: jest.fn(),
 }));
 
 // ── Imports (after mocks) ────────────────────────────────────────────────────
@@ -561,44 +590,59 @@ describe('retry saga: Google revoke + Edge failure + retry', () => {
   });
 });
 
-// ── signOutGoogle calls signOut, never revokeAccess ─────────────────────────
+// ── signOutGoogle calls signOut, never revokeAccess (behavioral) ────────────
 
 describe('signOutGoogle calls signOut, never revokeAccess', () => {
-  test('signOutGoogle in socialAuth.ts calls GoogleSignin.signOut, not revokeAccess', () => {
+  test('signOutGoogle calls GoogleSignin.signOut exactly once', async () => {
     /* eslint-disable @typescript-eslint/no-require-imports */
-    const fs = require('fs') as typeof import('fs');
-    const path = require('path') as typeof import('path');
+    const { signOutGoogle, configureGoogleSignIn } = require('../socialAuth') as typeof import('../socialAuth');
     /* eslint-enable @typescript-eslint/no-require-imports */
-    const socialAuthSource = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/lib/socialAuth.ts'),
-      'utf-8',
-    );
 
-    const match = socialAuthSource.match(/export async function signOutGoogle[\s\S]*?^}/m);
-    expect(match).not.toBeNull();
-    if (match) {
-      const fnBody = match[0];
-      expect(fnBody).toContain('GoogleSignin.signOut');
-      expect(fnBody).not.toContain('revokeAccess');
-    }
+    configureGoogleSignIn('test-web-client-id');
+    await signOutGoogle();
+
+    expect(mockGoogleSignOut).toHaveBeenCalledTimes(1);
+    expect(mockGoogleRevokeAccess).not.toHaveBeenCalled();
   });
 
-  test('revokeGoogleAccess in providerRevocation.ts calls revokeAccess, not signOut', () => {
+  test('signOutGoogle does not call revokeAccess even if signOut throws', async () => {
     /* eslint-disable @typescript-eslint/no-require-imports */
-    const fs = require('fs') as typeof import('fs');
-    const path = require('path') as typeof import('path');
+    const { signOutGoogle, configureGoogleSignIn } = require('../socialAuth') as typeof import('../socialAuth');
     /* eslint-enable @typescript-eslint/no-require-imports */
-    const revocationSource = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/lib/providerRevocation.ts'),
-      'utf-8',
-    );
 
-    const match = revocationSource.match(/export async function revokeGoogleAccess[\s\S]*?^}/m);
-    expect(match).not.toBeNull();
-    if (match) {
-      const fnBody = match[0];
-      expect(fnBody).toContain('GoogleSignin.revokeAccess');
-      expect(fnBody).not.toContain('GoogleSignin.signOut');
-    }
+    configureGoogleSignIn('test-web-client-id');
+    mockGoogleSignOut.mockRejectedValueOnce(new Error('signout failed'));
+
+    // signOutGoogle swallows errors (best-effort)
+    await signOutGoogle();
+
+    expect(mockGoogleSignOut).toHaveBeenCalledTimes(1);
+    expect(mockGoogleRevokeAccess).not.toHaveBeenCalled();
+  });
+});
+
+// ── revokeGoogleAccess calls revokeAccess, never signOut (behavioral) ───────
+
+describe('revokeGoogleAccess calls revokeAccess, never signOut', () => {
+  test('revokeGoogleAccess success: calls revokeAccess, never signOut', async () => {
+    mockGoogleSignIn.mockResolvedValue(googleSuccessResponse('google-123'));
+
+    const result = await revokeGoogleAccess('google-123');
+
+    expect(result.ok).toBe(true);
+    expect(mockGoogleRevokeAccess).toHaveBeenCalledTimes(1);
+    expect(mockGoogleSignOut).not.toHaveBeenCalled();
+  });
+
+  test('revokeGoogleAccess failure: does not call signOut on revoke error', async () => {
+    mockGoogleSignIn.mockResolvedValue(googleSuccessResponse('google-123'));
+    mockGoogleRevokeAccess.mockRejectedValue(new Error('revoke failed'));
+
+    const result = await revokeGoogleAccess('google-123');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('google_revoke_failed');
+    expect(mockGoogleRevokeAccess).toHaveBeenCalledTimes(1);
+    expect(mockGoogleSignOut).not.toHaveBeenCalled();
   });
 });

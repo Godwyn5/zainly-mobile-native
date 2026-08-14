@@ -29,14 +29,14 @@ export interface HandlerDeps {
 
 export interface HandlerResult {
   status: number;
-  body: { ok: boolean; error?: string; step?: string };
+  body: { ok: boolean; error?: string };
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const ALLOWED_PROVIDERS = new Set(['email', 'google', 'apple']);
 const MAX_BODY_SIZE = 16 * 1024; // 16 KB
-const MAX_APPLE_CODE_LENGTH = 8192; // generous: Apple codes are short-lived and ~1-2 KB max
+const MAX_APPLE_CODE_LENGTH = 8192; // Defensive upper bound for request validation.
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -54,7 +54,7 @@ const USER_DATA_DELETIONS = [
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function json(body: { ok: boolean; error?: string; step?: string }, status: number): Response {
+function json(body: { ok: boolean; error?: string }, status: number): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
@@ -64,7 +64,7 @@ function json(body: { ok: boolean; error?: string; step?: string }, status: numb
 function internalError(step: string): Response {
   // Never log token values, secrets, or authorization codes
   console.error(`[delete-account] step=${step}`);
-  return json({ ok: false, error: 'internal_error', step }, 500);
+  return json({ ok: false, error: 'internal_error' }, 500);
 }
 
 // ─── Body validation ────────────────────────────────────────────────────────
@@ -97,40 +97,63 @@ export function validateBody(raw: unknown): { ok: true; code?: string } | { ok: 
   return { ok: true };
 }
 
-// ─── Identity detection (Edge Function side) ───────────────────────────────
+// ─── Identity analysis (Edge Function side) ────────────────────────────────
 
-interface EdgeIdentity {
-  provider: string;
-  identity_id: string;
-}
+export type IdentityAnalysisResult =
+  | { ok: true; hasApple: boolean; appleSub: string | null; hasGoogle: boolean }
+  | { ok: false; error: 'identity_invalid' | 'unknown_provider' };
 
-export function detectAppleIdentity(
-  identities: unknown,
-): { hasApple: boolean; appleSub: string | null; hasUnknownProvider: boolean } {
+export function analyzeAuthIdentities(identities: unknown): IdentityAnalysisResult {
   if (!Array.isArray(identities) || identities.length === 0) {
-    return { hasApple: false, appleSub: null, hasUnknownProvider: false };
+    return { ok: false, error: 'identity_invalid' };
   }
 
   let hasApple = false;
   let appleSub: string | null = null;
-  let hasUnknownProvider = false;
+  let hasGoogle = false;
+  let googleCount = 0;
+  let appleCount = 0;
 
   for (const entry of identities) {
-    if (typeof entry !== 'object' || entry === null) continue;
-    const e = entry as EdgeIdentity;
+    if (typeof entry !== 'object' || entry === null) {
+      return { ok: false, error: 'identity_invalid' };
+    }
+
+    const e = entry as Record<string, unknown>;
     const provider = e.provider;
 
+    if (typeof provider !== 'string' || provider.length === 0) {
+      return { ok: false, error: 'identity_invalid' };
+    }
+
+    const identityId = e.identity_id;
+    if (typeof identityId !== 'string' || identityId.length === 0) {
+      return { ok: false, error: 'identity_invalid' };
+    }
+
     if (!ALLOWED_PROVIDERS.has(provider)) {
-      hasUnknownProvider = true;
+      return { ok: false, error: 'unknown_provider' };
+    }
+
+    if (provider === 'google') {
+      googleCount++;
+      if (googleCount > 1) {
+        return { ok: false, error: 'identity_invalid' };
+      }
+      hasGoogle = true;
     }
 
     if (provider === 'apple') {
+      appleCount++;
+      if (appleCount > 1) {
+        return { ok: false, error: 'identity_invalid' };
+      }
       hasApple = true;
-      appleSub = typeof e.identity_id === 'string' && e.identity_id.length > 0 ? e.identity_id : null;
+      appleSub = identityId;
     }
   }
 
-  return { hasApple, appleSub, hasUnknownProvider };
+  return { ok: true, hasApple, appleSub, hasGoogle };
 }
 
 // ─── JWT verification (production implementation) ───────────────────────────
@@ -165,21 +188,21 @@ export async function handleDeleteAccount(
     }
 
     if (req.method !== 'POST') {
-      return json({ ok: false, error: 'method_not_allowed', step: 'method' }, 405);
+      return json({ ok: false, error: 'method_not_allowed' }, 405);
     }
 
     // ── 1. Extract + verify the caller's JWT ──
     const authHeader = req.headers.get('Authorization') ?? '';
     const jwt = authHeader.replace(/^Bearer\s+/i, '').trim();
     if (!jwt) {
-      return json({ ok: false, error: 'unauthorized', step: 'auth' }, 401);
+      return json({ ok: false, error: 'unauthorized' }, 401);
     }
 
     const callerClient = deps.createCallerClient(deps.supabaseUrl, deps.supabaseAnonKey);
     const { data: userData, error: userError } = await callerClient.auth.getUser(jwt);
 
     if (userError || !userData?.user) {
-      return json({ ok: false, error: 'unauthorized', step: 'auth' }, 401);
+      return json({ ok: false, error: 'unauthorized' }, 401);
     }
 
     const userId = userData.user.id;
@@ -187,36 +210,36 @@ export async function handleDeleteAccount(
     // ── 2. Parse + validate request body ──
     const text = await req.text();
     if (text.length > MAX_BODY_SIZE) {
-      return json({ ok: false, error: 'invalid_body', step: 'body' }, 400);
+      return json({ ok: false, error: 'invalid_body' }, 400);
     }
 
     let parsed: unknown;
     try {
       parsed = text ? JSON.parse(text) : {};
     } catch {
-      return json({ ok: false, error: 'invalid_body', step: 'body' }, 400);
+      return json({ ok: false, error: 'invalid_body' }, 400);
     }
 
     const bodyValidation = validateBody(parsed);
     if (!bodyValidation.ok) {
-      return json({ ok: false, error: bodyValidation.error, step: 'body' }, 400);
+      return json({ ok: false, error: bodyValidation.error }, 400);
     }
 
-    // ── 3. Check identities for Apple + unknown providers ──
-    const { hasApple, appleSub, hasUnknownProvider } = detectAppleIdentity(userData.user.identities);
+    // ── 3. Analyze identities (fail-closed) ──
+    const identityResult = analyzeAuthIdentities(userData.user.identities);
 
-    if (hasUnknownProvider) {
-      return json({ ok: false, error: 'unknown_provider', step: 'identity' }, 400);
+    if (!identityResult.ok) {
+      return json({ ok: false, error: identityResult.error }, 400);
     }
 
-    if (hasApple) {
+    if (identityResult.hasApple) {
       // Apple identity linked — require authorizationCode
       if (!bodyValidation.ok || !bodyValidation.code) {
-        return json({ ok: false, error: 'apple_code_missing', step: 'apple_code' }, 400);
+        return json({ ok: false, error: 'apple_code_missing' }, 400);
       }
 
-      if (!appleSub) {
-        return json({ ok: false, error: 'apple_identity_mismatch', step: 'apple_identity' }, 400);
+      if (!identityResult.appleSub) {
+        return json({ ok: false, error: 'apple_identity_mismatch' }, 400);
       }
 
       if (!deps.appleConfig) {
@@ -227,7 +250,7 @@ export async function handleDeleteAccount(
       try {
         await performAppleRevocation(
           bodyValidation.code,
-          appleSub,
+          identityResult.appleSub,
           deps.appleConfig,
           {
             fetchFn: deps.fetchFn,
@@ -248,7 +271,7 @@ export async function handleDeleteAccount(
             apple_env_missing: { error: 'internal_error', status: 500 },
           };
           const mapped = errorMap[err.code] ?? { error: 'internal_error', status: 500 };
-          return json({ ok: false, error: mapped.error, step: err.code }, mapped.status);
+          return json({ ok: false, error: mapped.error }, mapped.status);
         }
         return internalError('apple_unexpected');
       }
