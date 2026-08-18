@@ -35,6 +35,7 @@ export type RevocationErrorCode =
   | 'google_revoke_failed'
   | 'google_reauth_failed'
   | 'apple_code_missing'
+  | 'apple_state_missing'
   | 'apple_state_mismatch'
   | 'apple_user_mismatch'
   | 'apple_reauth_failed'
@@ -279,9 +280,14 @@ export async function obtainAppleRevocationProof(
       state,
     });
 
-    // Verify state matches (CSRF protection) — fail-closed on null or mismatch
+    // Verify state is present (CSRF protection) — fail-closed on null/undefined/non-string
+    if (credential.state === null || credential.state === undefined || typeof credential.state !== 'string') {
+      return { ok: false, reason: 'apple_state_missing', message: 'Diagnostic Apple : état absent.' };
+    }
+
+    // Verify state matches (CSRF protection) — fail-closed on mismatch
     if (credential.state !== state) {
-      return { ok: false, reason: 'apple_state_mismatch', message: 'La réponse Apple ne correspond pas à la requête.' };
+      return { ok: false, reason: 'apple_state_mismatch', message: 'Diagnostic Apple : état différent.' };
     }
 
     // Verify Apple user matches the Supabase-linked Apple identity

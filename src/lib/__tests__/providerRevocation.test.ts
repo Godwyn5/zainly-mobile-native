@@ -368,13 +368,31 @@ describe('obtainAppleRevocationProof', () => {
     expect(result.ok).toBe(true);
   });
 
-  test('state null: apple_state_mismatch (fail-closed)', async () => {
+  test('state null: apple_state_missing (fail-closed)', async () => {
     mockAppleSignInAsync.mockResolvedValue(
       appleCredential({ user: 'apple-user-123', state: null, authorizationCode: 'code' }),
     );
     const result = await obtainAppleRevocationProof('apple-user-123');
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('apple_state_mismatch');
+    if (!result.ok) expect(result.reason).toBe('apple_state_missing');
+  });
+
+  test('state undefined: apple_state_missing (fail-closed)', async () => {
+    mockAppleSignInAsync.mockResolvedValue(
+      appleCredential({ user: 'apple-user-123', state: undefined, authorizationCode: 'code' }),
+    );
+    const result = await obtainAppleRevocationProof('apple-user-123');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('apple_state_missing');
+  });
+
+  test('state non-string (number): apple_state_missing (fail-closed)', async () => {
+    mockAppleSignInAsync.mockResolvedValue(
+      appleCredential({ user: 'apple-user-123', state: 123 as unknown as string, authorizationCode: 'code' }),
+    );
+    const result = await obtainAppleRevocationProof('apple-user-123');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('apple_state_missing');
   });
 
   test('state different: apple_state_mismatch', async () => {

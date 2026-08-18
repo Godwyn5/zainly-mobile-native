@@ -286,9 +286,12 @@ function revocationMessageForUser(reason: RevocationErrorCode): string {
       return 'Apple n\'a pas fourni de code d\'autorisation. Réessaie.';
     case 'apple_reauth_failed':
       return 'La confirmation Apple a échoué. Réessaie.';
+    case 'apple_state_missing':
+      return 'Diagnostic Apple : état absent.';
     case 'apple_state_mismatch':
+      return 'Diagnostic Apple : état différent.';
     case 'apple_user_mismatch':
-      return 'La réponse Apple ne correspond pas à la requête. Réessaie.';
+      return 'Le compte Apple sélectionné ne correspond pas au compte lié.';
     case 'identity_invalid':
       return 'Les identités liées à ton compte sont invalides. Contacte le support.';
     case 'network':
