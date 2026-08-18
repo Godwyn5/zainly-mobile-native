@@ -431,7 +431,7 @@ describe('exchangeSocialCredential', () => {
     });
   });
 
-  test('14. returns auth_error when Supabase returns an error', async () => {
+  test('14. returns auth_error with clean French message when Supabase rejects', async () => {
     (supabase.auth.signInWithIdToken as jest.Mock).mockResolvedValue({
       data: { session: null },
       error: { message: 'Invalid token' },
@@ -449,8 +449,59 @@ describe('exchangeSocialCredential', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.reason).toBe('auth_error');
-      expect(result.message).toBe('Invalid token');
+      expect(result.message).toBe('La connexion a échoué. Vérifie ta connexion réseau et réessaie.');
     }
+  });
+
+  test('14b. Google exchange: signInWithIdToken called with provider + token, NO nonce property', async () => {
+    const session = makeSession('supabase-user-google');
+    (supabase.auth.signInWithIdToken as jest.Mock).mockResolvedValue({
+      data: { session },
+      error: null,
+    });
+
+    const credential: SocialAuthCredential = {
+      provider: 'google',
+      token: 'google-id-token',
+      email: 'test@gmail.com',
+      fullName: 'Test User',
+    };
+
+    const result = await exchangeSocialCredential(credential);
+
+    expect(result.ok).toBe(true);
+    expect(supabase.auth.signInWithIdToken).toHaveBeenCalledWith({
+      provider: 'google',
+      token: 'google-id-token',
+    });
+    // Verify nonce is not present in the call arguments
+    const callArgs = (supabase.auth.signInWithIdToken as jest.Mock).mock.calls[0][0];
+    expect(callArgs).not.toHaveProperty('nonce');
+  });
+
+  test('14c. Apple exchange: signInWithIdToken called with provider + token + nonce', async () => {
+    const session = makeSession('supabase-user-apple');
+    (supabase.auth.signInWithIdToken as jest.Mock).mockResolvedValue({
+      data: { session },
+      error: null,
+    });
+
+    const credential: SocialAuthCredential = {
+      provider: 'apple',
+      token: 'apple-id-token',
+      nonce: 'raw-nonce-abc',
+      email: 'test@apple.com',
+      fullName: 'Test User',
+    };
+
+    const result = await exchangeSocialCredential(credential);
+
+    expect(result.ok).toBe(true);
+    expect(supabase.auth.signInWithIdToken).toHaveBeenCalledWith({
+      provider: 'apple',
+      token: 'apple-id-token',
+      nonce: 'raw-nonce-abc',
+    });
   });
 });
 

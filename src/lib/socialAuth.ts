@@ -335,6 +335,11 @@ export async function exchangeSocialCredential(
 ): Promise<SocialAuthSessionResult> {
   return enqueueSessionMutation(async () => {
     try {
+      // Apple: nonce is required (raw nonce, Supabase hashes server-side).
+      // Google: nonce must NOT be included — GoogleSignin.signIn() does not
+      // produce a nonce in the ID token, and Supabase rejects mismatched
+      // nonce presence with "Passed nonce and nonce in id_token should either
+      // both exist or not."
       const signInParams: {
         provider: 'apple' | 'google';
         token: string;
@@ -344,14 +349,14 @@ export async function exchangeSocialCredential(
         token: credential.token,
       };
 
-      if (credential.nonce) {
+      if (credential.provider === 'apple' && credential.nonce) {
         signInParams.nonce = credential.nonce;
       }
 
       const { data, error } = await supabase.auth.signInWithIdToken(signInParams);
 
       if (error) {
-        return { ok: false, reason: 'auth_error', message: error.message };
+        return { ok: false, reason: 'auth_error', message: 'La connexion a échoué. Vérifie ta connexion réseau et réessaie.' };
       }
 
       if (!data.session) {
