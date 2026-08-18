@@ -4,7 +4,7 @@
 // of OAuth provider access ONLY during account deletion.
 //
 // Google: GoogleSignin.signIn() re-auth → stable ID comparison → revokeAccess().
-// Apple: refreshAsync() with user + state → authorizationCode → Edge Function
+// Apple: signInAsync() with state → authorizationCode → Edge Function
 //   performs server-side token exchange and revocation.
 //
 // Identities are determined from Supabase canonical user.identities, never
@@ -244,9 +244,11 @@ function generateStateToken(length: number = 32): string {
 /**
  * Obtains a fresh Apple authorizationCode for server-side revocation.
  *
- * Uses refreshAsync (not signInAsync) because:
- * - The stable Apple user identifier is available from Supabase identity_id.
- * - refreshAsync presents a native confirmation using the known user.
+ * Uses signInAsync (not refreshAsync) because:
+ * - signInAsync with operation LOGIN reliably echoes the state parameter
+ *   in the credential response, unlike refreshAsync which may return null.
+ * - The stable Apple user identifier from Supabase identity_id is verified
+ *   post-response against credential.user.
  * - It returns a fresh AppleAuthenticationCredential with authorizationCode.
  *
  * Controls:
@@ -273,12 +275,11 @@ export async function obtainAppleRevocationProof(
 
     const state = generateStateToken();
 
-    const credential = await AppleAuthentication.refreshAsync({
-      user: expectedAppleUserId,
+    const credential = await AppleAuthentication.signInAsync({
       state,
     });
 
-    // Verify state matches (CSRF protection)
+    // Verify state matches (CSRF protection) — fail-closed on null or mismatch
     if (credential.state !== state) {
       return { ok: false, reason: 'apple_state_mismatch', message: 'La réponse Apple ne correspond pas à la requête.' };
     }
@@ -314,7 +315,7 @@ export async function obtainAppleRevocationProof(
  * Ordered saga (not atomic, recoverable by retry):
  * 1. Fetch fresh Supabase user
  * 2. Detect social identities (fail-closed)
- * 3. If Apple linked → obtain Apple authorizationCode via refreshAsync
+ * 3. If Apple linked → obtain Apple authorizationCode via signInAsync
  * 4. If Google linked → re-authenticate + revokeAccess
  * 5. Return proof (appleAuthorizationCode) for the Edge Function
  *

@@ -3,7 +3,7 @@
 // ─── providerRevocation.test.ts ──────────────────────────────────────────────
 // Behavioral tests for provider revocation during account deletion.
 // Covers: identity detection (fail-closed), Google re-auth + revoke with
-// separated error phases, Apple refreshAsync proof collection, state/user
+// separated error phases, Apple signInAsync proof collection, state/user
 // verification, cancellation, mismatch, network errors, multi-provider
 // ordering, email-only path, retry saga, and signOutGoogle vs revokeAccess.
 
@@ -28,12 +28,13 @@ jest.mock('@/db/client', () => ({
   },
 }));
 
-// Apple mock — refreshAsync replaces signInAsync
+// Apple mock — signInAsync is used for revocation proof, refreshAsync must never be called
+const mockAppleSignInAsync = jest.fn();
 const mockAppleRefreshAsync = jest.fn();
 const mockAppleIsAvailableAsync = jest.fn();
 jest.mock('expo-apple-authentication', () => ({
+  signInAsync: (...args: unknown[]) => mockAppleSignInAsync(...(args as [])),
   refreshAsync: (...args: unknown[]) => mockAppleRefreshAsync(...(args as [])),
-  signInAsync: jest.fn(),
   isAvailableAsync: (...args: unknown[]) => mockAppleIsAvailableAsync(...(args as [])),
   AppleAuthenticationScope: { FULL_NAME: 0, EMAIL: 1 },
 }));
@@ -169,6 +170,7 @@ beforeEach(() => {
   mockGetRandomValues.mockImplementation((arr: Uint8Array) => {
     for (let i = 0; i < arr.length; i++) arr[i] = i % 256;
   });
+  mockAppleRefreshAsync.mockClear();
 });
 
 // ── detectSocialIdentities ───────────────────────────────────────────────────
@@ -342,34 +344,41 @@ describe('revokeGoogleAccess', () => {
   });
 });
 
-// ── obtainAppleRevocationProof (refreshAsync) ────────────────────────────────
+// ── obtainAppleRevocationProof (signInAsync) ────────────────────────────────
 
 describe('obtainAppleRevocationProof', () => {
-  test('matching user + valid state + code: success', async () => {
-    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
+  test('signInAsync receives state: success with matching user + exact state + code', async () => {
+    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
       return appleCredential({ user: 'apple-user-123', state: opts.state, authorizationCode: 'fresh-code' });
     });
     const result = await obtainAppleRevocationProof('apple-user-123');
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.authorizationCode).toBe('fresh-code');
-    // Verify refreshAsync was called with user and state
-    expect(mockAppleRefreshAsync).toHaveBeenCalledWith({
-      user: 'apple-user-123',
+    // Verify signInAsync was called with state (no user param)
+    expect(mockAppleSignInAsync).toHaveBeenCalledWith({
       state: expect.any(String),
     });
   });
 
-  test('wrong Apple user: apple_user_mismatch', async () => {
-    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
-      return appleCredential({ user: 'wrong-apple-user', state: opts.state, authorizationCode: 'code' });
+  test('state exact match: success', async () => {
+    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
+      return appleCredential({ user: 'apple-user-123', state: opts.state, authorizationCode: 'code' });
     });
     const result = await obtainAppleRevocationProof('apple-user-123');
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('apple_user_mismatch');
+    expect(result.ok).toBe(true);
   });
 
-  test('wrong state: apple_state_mismatch', async () => {
-    mockAppleRefreshAsync.mockResolvedValue(
+  test('state null: apple_state_mismatch (fail-closed)', async () => {
+    mockAppleSignInAsync.mockResolvedValue(
+      appleCredential({ user: 'apple-user-123', state: null, authorizationCode: 'code' }),
+    );
+    const result = await obtainAppleRevocationProof('apple-user-123');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('apple_state_mismatch');
+  });
+
+  test('state different: apple_state_mismatch', async () => {
+    mockAppleSignInAsync.mockResolvedValue(
       appleCredential({ user: 'apple-user-123', state: 'wrong-state', authorizationCode: 'code' }),
     );
     const result = await obtainAppleRevocationProof('apple-user-123');
@@ -377,8 +386,17 @@ describe('obtainAppleRevocationProof', () => {
     if (!result.ok) expect(result.reason).toBe('apple_state_mismatch');
   });
 
+  test('wrong Apple user: apple_user_mismatch', async () => {
+    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
+      return appleCredential({ user: 'wrong-apple-user', state: opts.state, authorizationCode: 'code' });
+    });
+    const result = await obtainAppleRevocationProof('apple-user-123');
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('apple_user_mismatch');
+  });
+
   test('null authorizationCode: apple_code_missing', async () => {
-    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
+    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
       return appleCredential({ user: 'apple-user-123', state: opts.state, authorizationCode: null });
     });
     const result = await obtainAppleRevocationProof('apple-user-123');
@@ -387,7 +405,7 @@ describe('obtainAppleRevocationProof', () => {
   });
 
   test('empty authorizationCode: apple_code_missing', async () => {
-    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
+    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
       return appleCredential({ user: 'apple-user-123', state: opts.state, authorizationCode: '' });
     });
     const result = await obtainAppleRevocationProof('apple-user-123');
@@ -396,14 +414,14 @@ describe('obtainAppleRevocationProof', () => {
   });
 
   test('Apple cancellation: provider_reauth_cancelled, no mutation', async () => {
-    mockAppleRefreshAsync.mockRejectedValue({ code: 'ERR_REQUEST_CANCELED' });
+    mockAppleSignInAsync.mockRejectedValue({ code: 'ERR_REQUEST_CANCELED' });
     const result = await obtainAppleRevocationProof('apple-user-123');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('provider_reauth_cancelled');
   });
 
   test('network error: network reason', async () => {
-    mockAppleRefreshAsync.mockRejectedValue(new Error('Network error'));
+    mockAppleSignInAsync.mockRejectedValue(new Error('Network error'));
     const result = await obtainAppleRevocationProof('apple-user-123');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('network');
@@ -416,14 +434,22 @@ describe('obtainAppleRevocationProof', () => {
     if (!result.ok) expect(result.reason).toBe('provider_unavailable');
   });
 
-  test('refreshAsync called with user and state', async () => {
-    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
+  test('refreshAsync is never called', async () => {
+    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
       return appleCredential({ user: 'apple-user-123', state: opts.state, authorizationCode: 'code' });
     });
     await obtainAppleRevocationProof('apple-user-123');
-    expect(mockAppleRefreshAsync).toHaveBeenCalledTimes(1);
-    const callArg = mockAppleRefreshAsync.mock.calls[0][0];
-    expect(callArg.user).toBe('apple-user-123');
+    expect(mockAppleRefreshAsync).not.toHaveBeenCalled();
+  });
+
+  test('signInAsync called with state only (no user param)', async () => {
+    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
+      return appleCredential({ user: 'apple-user-123', state: opts.state, authorizationCode: 'code' });
+    });
+    await obtainAppleRevocationProof('apple-user-123');
+    expect(mockAppleSignInAsync).toHaveBeenCalledTimes(1);
+    const callArg = mockAppleSignInAsync.mock.calls[0][0];
+    expect(callArg).not.toHaveProperty('user');
     expect(typeof callArg.state).toBe('string');
     expect(callArg.state.length).toBeGreaterThan(0);
   });
@@ -438,7 +464,7 @@ describe('prepareRevocationProofs', () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.proof.appleAuthorizationCode).toBeUndefined();
     expect(mockGoogleSignIn).not.toHaveBeenCalled();
-    expect(mockAppleRefreshAsync).not.toHaveBeenCalled();
+    expect(mockAppleSignInAsync).not.toHaveBeenCalled();
   });
 
   test('Google + Apple: deterministic order (Apple proof first, then Google revoke)', async () => {
@@ -448,7 +474,7 @@ describe('prepareRevocationProofs', () => {
     ]);
 
     const callOrder: string[] = [];
-    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
+    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
       callOrder.push('apple');
       return appleCredential({ user: 'apple-123', state: opts.state, authorizationCode: 'apple-code' });
     });
@@ -473,7 +499,7 @@ describe('prepareRevocationProofs', () => {
 
   test('Apple only: proof collected, no Google revoke', async () => {
     setMockUser([makeIdentity('apple', 'apple-123')]);
-    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
+    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
       return appleCredential({ user: 'apple-123', state: opts.state, authorizationCode: 'apple-code' });
     });
     const result = await prepareRevocationProofs();
@@ -487,7 +513,7 @@ describe('prepareRevocationProofs', () => {
       makeIdentity('apple', 'apple-123'),
       makeIdentity('google', 'google-123'),
     ]);
-    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
+    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
       return appleCredential({ user: 'apple-123', state: opts.state, authorizationCode: 'apple-code' });
     });
     mockGoogleSignIn.mockResolvedValue(googleSuccessResponse('wrong-google'));
@@ -499,7 +525,7 @@ describe('prepareRevocationProofs', () => {
 
   test('Apple cancellation: no Google revoke, no deletion', async () => {
     setMockUser([makeIdentity('apple', 'apple-123')]);
-    mockAppleRefreshAsync.mockRejectedValue({ code: 'ERR_REQUEST_CANCELED' });
+    mockAppleSignInAsync.mockRejectedValue({ code: 'ERR_REQUEST_CANCELED' });
     const result = await prepareRevocationProofs();
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('provider_reauth_cancelled');
@@ -511,7 +537,7 @@ describe('prepareRevocationProofs', () => {
       makeIdentity('apple', 'apple-123'),
       makeIdentity('google', 'google-123'),
     ]);
-    mockAppleRefreshAsync.mockImplementation(async (opts: { state: string }) => {
+    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
       return appleCredential({ user: 'apple-123', state: opts.state, authorizationCode: 'apple-code' });
     });
     mockGoogleSignIn.mockResolvedValue(googleSuccessResponse('google-123'));
