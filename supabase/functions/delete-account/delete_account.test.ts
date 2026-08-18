@@ -21,6 +21,8 @@ import {
   type HandlerDeps,
 } from './handler.ts';
 
+import { serveDeleteAccount } from './index.ts';
+
 import {
   performAppleRevocation,
   AppleRevocationException,
@@ -1394,5 +1396,44 @@ Deno.test({
     assertEquals(payload.iss, 'TESTTEAM');
     assertEquals(payload.sub, TEST_AUDIENCE);
     assertEquals(payload.aud, APPLE_ISSUER);
+  },
+});
+
+// ─── serveDeleteAccount: missing env vars ───────────────────────────────────
+
+Deno.test({
+  name: 'serveDeleteAccount: missing SUPABASE_URL returns 500 internal_error without step',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    // Save and clear required env vars
+    const savedUrl = Deno.env.get('SUPABASE_URL');
+    const savedAnon = Deno.env.get('SUPABASE_ANON_KEY');
+    const savedService = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    Deno.env.delete('SUPABASE_URL');
+    Deno.env.delete('SUPABASE_ANON_KEY');
+    Deno.env.delete('SUPABASE_SERVICE_ROLE_KEY');
+
+    try {
+      const req = new Request('http://localhost/delete-account', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer test-jwt',
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      });
+      const resp = await serveDeleteAccount(req);
+      assertEquals(resp.status, 500);
+      const body = await resp.json();
+      assertEquals(body.ok, false);
+      assertEquals(body.error, 'internal_error');
+      assert(!('step' in body), 'response must not contain step');
+    } finally {
+      // Restore env vars
+      if (savedUrl) Deno.env.set('SUPABASE_URL', savedUrl);
+      if (savedAnon) Deno.env.set('SUPABASE_ANON_KEY', savedAnon);
+      if (savedService) Deno.env.set('SUPABASE_SERVICE_ROLE_KEY', savedService);
+    }
   },
 });

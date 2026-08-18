@@ -4,40 +4,43 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.105.3';
 import { handleDeleteAccount, verifyAppleIdToken, type HandlerDeps } from './handler.ts';
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
-const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY');
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+export function serveDeleteAccount(req: Request): Promise<Response> {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+  const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
-const APPLE_TEAM_ID = Deno.env.get('APPLE_TEAM_ID');
-const APPLE_KEY_ID = Deno.env.get('APPLE_KEY_ID');
-const APPLE_PRIVATE_KEY = Deno.env.get('APPLE_PRIVATE_KEY');
-const APPLE_CLIENT_ID = Deno.env.get('APPLE_CLIENT_ID');
-
-const appleConfig =
-  APPLE_TEAM_ID && APPLE_KEY_ID && APPLE_PRIVATE_KEY && APPLE_CLIENT_ID
-    ? {
-        teamId: APPLE_TEAM_ID,
-        keyId: APPLE_KEY_ID,
-        privateKeyPem: APPLE_PRIVATE_KEY,
-        clientId: APPLE_CLIENT_ID,
-      }
-    : null;
-
-Deno.serve((req: Request) => {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !SUPABASE_SERVICE_ROLE_KEY) {
-    return new Response(
-      JSON.stringify({ ok: false, error: 'internal_error', step: 'env' }),
-      {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      },
+  if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
+    console.error('[delete-account] missing required env vars');
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({ ok: false, error: 'internal_error' }),
+        {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
     );
   }
 
+  const appleTeamId = Deno.env.get('APPLE_TEAM_ID');
+  const appleKeyId = Deno.env.get('APPLE_KEY_ID');
+  const applePrivateKey = Deno.env.get('APPLE_PRIVATE_KEY');
+  const appleClientId = Deno.env.get('APPLE_CLIENT_ID');
+
+  const appleConfig =
+    appleTeamId && appleKeyId && applePrivateKey && appleClientId
+      ? {
+          teamId: appleTeamId,
+          keyId: appleKeyId,
+          privateKeyPem: applePrivateKey,
+          clientId: appleClientId,
+        }
+      : null;
+
   const deps: HandlerDeps = {
-    supabaseUrl: SUPABASE_URL,
-    supabaseAnonKey: SUPABASE_ANON_KEY,
-    supabaseServiceRoleKey: SUPABASE_SERVICE_ROLE_KEY,
+    supabaseUrl,
+    supabaseAnonKey,
+    supabaseServiceRoleKey,
     appleConfig,
     fetchFn: globalThis.fetch,
     createCallerClient: (url: string, key: string) => createClient(url, key),
@@ -49,4 +52,6 @@ Deno.serve((req: Request) => {
   };
 
   return handleDeleteAccount(req, deps);
-});
+}
+
+Deno.serve((req: Request) => serveDeleteAccount(req));
