@@ -126,6 +126,14 @@ export function analyzeAuthIdentities(identities: unknown): IdentityAnalysisResu
       return { ok: false, error: 'identity_invalid' };
     }
 
+    // identity.id is the provider-side identifier (Apple sub, Google sub).
+    // identity.identity_id is a Supabase-internal UUID — never used for appleSub.
+    const id = e.id;
+    if (typeof id !== 'string' || id.length === 0) {
+      return { ok: false, error: 'identity_invalid' };
+    }
+
+    // identity_id must be present (Supabase internal UUID) but is not used for comparison
     const identityId = e.identity_id;
     if (typeof identityId !== 'string' || identityId.length === 0) {
       return { ok: false, error: 'identity_invalid' };
@@ -140,6 +148,16 @@ export function analyzeAuthIdentities(identities: unknown): IdentityAnalysisResu
       if (googleCount > 1) {
         return { ok: false, error: 'identity_invalid' };
       }
+      // Verify consistency: identity_data.sub must match identity.id if present
+      const identityData = e.identity_data as Record<string, unknown> | undefined;
+      const sub = identityData?.sub;
+      const providerId = identityData?.provider_id;
+      if (sub !== undefined && sub !== id) {
+        return { ok: false, error: 'identity_invalid' };
+      }
+      if (providerId !== undefined && providerId !== id) {
+        return { ok: false, error: 'identity_invalid' };
+      }
       hasGoogle = true;
     }
 
@@ -148,8 +166,18 @@ export function analyzeAuthIdentities(identities: unknown): IdentityAnalysisResu
       if (appleCount > 1) {
         return { ok: false, error: 'identity_invalid' };
       }
+      // Verify consistency: identity_data.sub must match identity.id if present
+      const identityData = e.identity_data as Record<string, unknown> | undefined;
+      const sub = identityData?.sub;
+      const providerId = identityData?.provider_id;
+      if (sub !== undefined && sub !== id) {
+        return { ok: false, error: 'identity_invalid' };
+      }
+      if (providerId !== undefined && providerId !== id) {
+        return { ok: false, error: 'identity_invalid' };
+      }
       hasApple = true;
-      appleSub = identityId;
+      appleSub = id;
     }
   }
 

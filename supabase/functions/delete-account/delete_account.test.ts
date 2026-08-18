@@ -409,34 +409,40 @@ Deno.test('analyzeAuthIdentities: provider non-string (number) → identity_inva
   if (!result.ok) assertEquals(result.error, 'identity_invalid');
 });
 
-Deno.test('analyzeAuthIdentities: identity_id absent → identity_invalid', () => {
-  const result = analyzeAuthIdentities([{ provider: 'google' }]);
+Deno.test('analyzeAuthIdentities: missing id → identity_invalid', () => {
+  const result = analyzeAuthIdentities([{ provider: 'google', identity_id: 'x-uuid' }]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
+});
+
+Deno.test('analyzeAuthIdentities: missing identity_id → identity_invalid', () => {
+  const result = analyzeAuthIdentities([{ provider: 'google', id: 'x' }]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
+});
+
+Deno.test('analyzeAuthIdentities: id empty string → identity_invalid', () => {
+  const result = analyzeAuthIdentities([{ provider: 'google', id: '', identity_id: 'x' }]);
   assertEquals(result.ok, false);
   if (!result.ok) assertEquals(result.error, 'identity_invalid');
 });
 
 Deno.test('analyzeAuthIdentities: identity_id empty string → identity_invalid', () => {
-  const result = analyzeAuthIdentities([{ provider: 'google', identity_id: '' }]);
-  assertEquals(result.ok, false);
-  if (!result.ok) assertEquals(result.error, 'identity_invalid');
-});
-
-Deno.test('analyzeAuthIdentities: identity_id non-string (number) → identity_invalid', () => {
-  const result = analyzeAuthIdentities([{ provider: 'google', identity_id: 123 }]);
+  const result = analyzeAuthIdentities([{ provider: 'google', id: 'x', identity_id: '' }]);
   assertEquals(result.ok, false);
   if (!result.ok) assertEquals(result.error, 'identity_invalid');
 });
 
 Deno.test('analyzeAuthIdentities: unknown provider → unknown_provider', () => {
-  const result = analyzeAuthIdentities([{ provider: 'github', identity_id: 'gh1' }]);
+  const result = analyzeAuthIdentities([{ provider: 'github', id: 'gh1', identity_id: 'gh-uuid' }]);
   assertEquals(result.ok, false);
   if (!result.ok) assertEquals(result.error, 'unknown_provider');
 });
 
 Deno.test('analyzeAuthIdentities: duplicate Google → identity_invalid', () => {
   const result = analyzeAuthIdentities([
-    { provider: 'google', identity_id: 'g1' },
-    { provider: 'google', identity_id: 'g2' },
+    { provider: 'google', id: 'g1', identity_id: 'g-uuid-1' },
+    { provider: 'google', id: 'g2', identity_id: 'g-uuid-2' },
   ]);
   assertEquals(result.ok, false);
   if (!result.ok) assertEquals(result.error, 'identity_invalid');
@@ -444,15 +450,15 @@ Deno.test('analyzeAuthIdentities: duplicate Google → identity_invalid', () => 
 
 Deno.test('analyzeAuthIdentities: duplicate Apple → identity_invalid', () => {
   const result = analyzeAuthIdentities([
-    { provider: 'apple', identity_id: 'a1' },
-    { provider: 'apple', identity_id: 'a2' },
+    { provider: 'apple', id: 'a1', identity_id: 'a-uuid-1' },
+    { provider: 'apple', id: 'a2', identity_id: 'a-uuid-2' },
   ]);
   assertEquals(result.ok, false);
   if (!result.ok) assertEquals(result.error, 'identity_invalid');
 });
 
 Deno.test('analyzeAuthIdentities: email only → ok, no apple, no google', () => {
-  const result = analyzeAuthIdentities([{ provider: 'email', identity_id: 'e1' }]);
+  const result = analyzeAuthIdentities([{ provider: 'email', id: 'e1', identity_id: 'e-uuid' }]);
   assertEquals(result.ok, true);
   if (result.ok) {
     assertEquals(result.hasApple, false);
@@ -462,7 +468,7 @@ Deno.test('analyzeAuthIdentities: email only → ok, no apple, no google', () =>
 });
 
 Deno.test('analyzeAuthIdentities: Google only → ok, hasGoogle, no apple', () => {
-  const result = analyzeAuthIdentities([{ provider: 'google', identity_id: 'g1' }]);
+  const result = analyzeAuthIdentities([{ provider: 'google', id: 'g1', identity_id: 'g-uuid' }]);
   assertEquals(result.ok, true);
   if (result.ok) {
     assertEquals(result.hasGoogle, true);
@@ -470,8 +476,8 @@ Deno.test('analyzeAuthIdentities: Google only → ok, hasGoogle, no apple', () =
   }
 });
 
-Deno.test('analyzeAuthIdentities: Apple only → ok, hasApple, appleSub set', () => {
-  const result = analyzeAuthIdentities([{ provider: 'apple', identity_id: 'apple-sub-123' }]);
+Deno.test('analyzeAuthIdentities: Apple only → ok, hasApple, appleSub set from identity.id', () => {
+  const result = analyzeAuthIdentities([{ provider: 'apple', id: 'apple-sub-123', identity_id: 'apple-uuid' }]);
   assertEquals(result.ok, true);
   if (result.ok) {
     assertEquals(result.hasApple, true);
@@ -480,10 +486,10 @@ Deno.test('analyzeAuthIdentities: Apple only → ok, hasApple, appleSub set', ()
   }
 });
 
-Deno.test('analyzeAuthIdentities: Google + Apple → ok, both recognized', () => {
+Deno.test('analyzeAuthIdentities: Google + Apple → ok, both recognized, appleSub from id', () => {
   const result = analyzeAuthIdentities([
-    { provider: 'google', identity_id: 'g1' },
-    { provider: 'apple', identity_id: 'a1' },
+    { provider: 'google', id: 'g1', identity_id: 'g-uuid' },
+    { provider: 'apple', id: 'a1', identity_id: 'a-uuid' },
   ]);
   assertEquals(result.ok, true);
   if (result.ok) {
@@ -491,6 +497,34 @@ Deno.test('analyzeAuthIdentities: Google + Apple → ok, both recognized', () =>
     assertEquals(result.hasApple, true);
     assertEquals(result.appleSub, 'a1');
   }
+});
+
+Deno.test('analyzeAuthIdentities: appleSub uses identity.id, not identity_id', () => {
+  const result = analyzeAuthIdentities([{ provider: 'apple', id: 'provider-id-999', identity_id: 'supabase-uuid-123' }]);
+  assertEquals(result.ok, true);
+  if (result.ok) {
+    assertEquals(result.appleSub, 'provider-id-999');
+  }
+});
+
+Deno.test('analyzeAuthIdentities: identity_data.sub mismatch with id → identity_invalid', () => {
+  const result = analyzeAuthIdentities([{ provider: 'apple', id: 'a1', identity_id: 'a-uuid', identity_data: { sub: 'different' } }]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
+});
+
+Deno.test('analyzeAuthIdentities: identity_data.sub matches id → ok', () => {
+  const result = analyzeAuthIdentities([{ provider: 'apple', id: 'a1', identity_id: 'a-uuid', identity_data: { sub: 'a1' } }]);
+  assertEquals(result.ok, true);
+  if (result.ok) {
+    assertEquals(result.appleSub, 'a1');
+  }
+});
+
+Deno.test('analyzeAuthIdentities: identity_data.provider_id mismatch → identity_invalid', () => {
+  const result = analyzeAuthIdentities([{ provider: 'google', id: 'g1', identity_id: 'g-uuid', identity_data: { provider_id: 'different' } }]);
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error, 'identity_invalid');
 });
 
 // ─── Handler integration tests ──────────────────────────────────────────────
@@ -538,7 +572,7 @@ Deno.test({
       },
       body: 'not json{',
     });
-    const { deps } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] }, {}, {});
+    const { deps } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', id: 'e1', identity_id: 'e1-uuid' }] }, {}, {});
     const resp = await handleDeleteAccount(req, deps);
     assertEquals(resp.status, 400);
     const body = await resp.json();
@@ -553,7 +587,7 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     const req = makeRequest('null');
-    const { deps } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] }, {}, {});
+    const { deps } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', id: 'e1', identity_id: 'e1-uuid' }] }, {}, {});
     const resp = await handleDeleteAccount(req, deps);
     assertEquals(resp.status, 400);
     const body = await resp.json();
@@ -567,7 +601,7 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     const req = makeRequest('[1,2,3]');
-    const { deps } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] }, {}, {});
+    const { deps } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', id: 'e1', identity_id: 'e1-uuid' }] }, {}, {});
     const resp = await handleDeleteAccount(req, deps);
     assertEquals(resp.status, 400);
     const body = await resp.json();
@@ -581,7 +615,7 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     const req = makeRequest({ foo: 'bar' });
-    const { deps } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] }, {}, {});
+    const { deps } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'email', id: 'e1', identity_id: 'e1-uuid' }] }, {}, {});
     const resp = await handleDeleteAccount(req, deps);
     assertEquals(resp.status, 400);
     const body = await resp.json();
@@ -595,7 +629,7 @@ Deno.test({
   sanitizeResources: false,
   async fn() {
     const req = makeRequest({ appleAuthorizationCode: 123 });
-    const { deps } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'apple', identity_id: 'a1' }] }, {}, {});
+    const { deps } = buildTestDeps({ userId: 'u1', identities: [{ provider: 'apple', id: 'a1', identity_id: 'a1-uuid' }] }, {}, {});
     const resp = await handleDeleteAccount(req, deps);
     assertEquals(resp.status, 400);
     const body = await resp.json();
@@ -818,13 +852,29 @@ Deno.test({
 });
 
 Deno.test({
+  name: 'handler: identity_data.sub mismatch with id → 400 identity_invalid, no side effects',
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const req = makeRequest({});
+    const { deps, adminClient, fetchFn } = buildTestDeps(
+      { userId: 'u1', identities: [{ provider: 'apple', id: 'a1', identity_id: 'a1-uuid', identity_data: { sub: 'different' } }] },
+      {},
+      {},
+    );
+    const resp = await handleDeleteAccount(req, deps);
+    await assertNoSideEffects(resp, 400, 'identity_invalid', adminClient, fetchFn);
+  },
+});
+
+Deno.test({
   name: 'handler: unknown provider → 400 unknown_provider, no side effects',
   sanitizeOps: false,
   sanitizeResources: false,
   async fn() {
     const req = makeRequest({});
     const { deps, adminClient, fetchFn } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'github', identity_id: 'gh1' }] },
+      { userId: 'u1', identities: [{ provider: 'github', id: 'gh1', identity_id: 'gh1-uuid' }] },
       {},
       {},
     );
@@ -841,8 +891,8 @@ Deno.test({
     const req = makeRequest({});
     const { deps, adminClient, fetchFn } = buildTestDeps(
       { userId: 'u1', identities: [
-        { provider: 'google', identity_id: 'g1' },
-        { provider: 'google', identity_id: 'g2' },
+        { provider: 'google', id: 'g1', identity_id: 'g1-uuid' },
+        { provider: 'google', id: 'g2', identity_id: 'g2-uuid' },
       ] },
       {},
       {},
@@ -860,8 +910,8 @@ Deno.test({
     const req = makeRequest({});
     const { deps, adminClient, fetchFn } = buildTestDeps(
       { userId: 'u1', identities: [
-        { provider: 'apple', identity_id: 'a1' },
-        { provider: 'apple', identity_id: 'a2' },
+        { provider: 'apple', id: 'a1', identity_id: 'a1-uuid' },
+        { provider: 'apple', id: 'a2', identity_id: 'a2-uuid' },
       ] },
       {},
       {},
@@ -881,7 +931,7 @@ Deno.test({
     const req = makeRequest({});
     const adminConfig: MockSupabaseConfig = { deleteUserError: null };
     const { deps } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] },
+      { userId: 'u1', identities: [{ provider: 'email', id: 'e1', identity_id: 'e1-uuid' }] },
       adminConfig,
       {},
     );
@@ -901,7 +951,7 @@ Deno.test({
     const req = makeRequest({});
     const adminConfig: MockSupabaseConfig = { deleteUserError: null };
     const { deps } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'google', identity_id: 'g1' }] },
+      { userId: 'u1', identities: [{ provider: 'google', id: 'g1', identity_id: 'g1-uuid' }] },
       adminConfig,
       {},
     );
@@ -919,7 +969,7 @@ Deno.test({
   async fn() {
     const req = makeRequest({});
     const { deps, adminClient, fetchFn } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
+      { userId: 'u1', identities: [{ provider: 'apple', id: 'apple-sub', identity_id: 'apple-sub-uuid' }] },
       {},
       {},
     );
@@ -944,7 +994,7 @@ Deno.test({
   async fn() {
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
     const { deps } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
+      { userId: 'u1', identities: [{ provider: 'apple', id: 'apple-sub', identity_id: 'apple-sub-uuid' }] },
       {},
       { tokenStatus: 400 },
     );
@@ -963,7 +1013,7 @@ Deno.test({
   async fn() {
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
     const { deps } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
+      { userId: 'u1', identities: [{ provider: 'apple', id: 'apple-sub', identity_id: 'apple-sub-uuid' }] },
       {},
       { tokenResponse: 'not-json', tokenContentType: 'text/plain' },
     );
@@ -981,7 +1031,7 @@ Deno.test({
   async fn() {
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
     const { deps } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
+      { userId: 'u1', identities: [{ provider: 'apple', id: 'apple-sub', identity_id: 'apple-sub-uuid' }] },
       {},
       { tokenResponse: { refresh_token: 'rt' } },
     );
@@ -1000,7 +1050,7 @@ Deno.test({
     const idToken = await signTestJwt({ sub: 'apple-sub' }, 'TESTKEY');
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
     const { deps } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
+      { userId: 'u1', identities: [{ provider: 'apple', id: 'apple-sub', identity_id: 'apple-sub-uuid' }] },
       {},
       { tokenResponse: { id_token: idToken } },
     );
@@ -1028,7 +1078,7 @@ Deno.test({
 
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
     const { deps } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
+      { userId: 'u1', identities: [{ provider: 'apple', id: 'apple-sub', identity_id: 'apple-sub-uuid' }] },
       {},
       { tokenResponse: { id_token: badToken, refresh_token: 'rt' } },
     );
@@ -1054,7 +1104,7 @@ Deno.test({
 
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
     const { deps } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
+      { userId: 'u1', identities: [{ provider: 'apple', id: 'apple-sub', identity_id: 'apple-sub-uuid' }] },
       {},
       { tokenResponse: { id_token: badToken, refresh_token: 'rt' } },
     );
@@ -1080,7 +1130,7 @@ Deno.test({
 
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
     const { deps } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
+      { userId: 'u1', identities: [{ provider: 'apple', id: 'apple-sub', identity_id: 'apple-sub-uuid' }] },
       {},
       { tokenResponse: { id_token: badToken, refresh_token: 'rt' } },
     );
@@ -1106,7 +1156,7 @@ Deno.test({
 
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
     const { deps } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
+      { userId: 'u1', identities: [{ provider: 'apple', id: 'apple-sub', identity_id: 'apple-sub-uuid' }] },
       {},
       { tokenResponse: { id_token: expiredToken, refresh_token: 'rt' } },
     );
@@ -1125,7 +1175,7 @@ Deno.test({
     const idToken = await signTestJwt({ sub: 'wrong-sub' }, 'TESTKEY');
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
     const { deps } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
+      { userId: 'u1', identities: [{ provider: 'apple', id: 'apple-sub', identity_id: 'apple-sub-uuid' }] },
       {},
       { tokenResponse: { id_token: idToken, refresh_token: 'rt' } },
     );
@@ -1145,7 +1195,7 @@ Deno.test({
     const idToken = await signTestJwt({ sub: 'apple-sub' }, 'TESTKEY');
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
     const { deps } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
+      { userId: 'u1', identities: [{ provider: 'apple', id: 'apple-sub', identity_id: 'apple-sub-uuid' }] },
       {},
       { tokenResponse: { id_token: idToken, refresh_token: 'rt' }, revokeStatus: 500 },
     );
@@ -1165,7 +1215,7 @@ Deno.test({
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
     const adminConfig: MockSupabaseConfig = { deleteUserError: null };
     const { deps, adminClient } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
+      { userId: 'u1', identities: [{ provider: 'apple', id: 'apple-sub', identity_id: 'apple-sub-uuid' }] },
       adminConfig,
       { tokenResponse: { id_token: idToken, refresh_token: 'rt' }, revokeStatus: 500 },
     );
@@ -1186,7 +1236,7 @@ Deno.test({
     const req = makeRequest({ appleAuthorizationCode: 'test-code' });
     const adminConfig: MockSupabaseConfig = { deleteUserError: null };
     const { deps, adminClient } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
+      { userId: 'u1', identities: [{ provider: 'apple', id: 'apple-sub', identity_id: 'apple-sub-uuid' }] },
       adminConfig,
       { tokenResponse: { id_token: idToken, refresh_token: 'rt' }, revokeStatus: 200 },
     );
@@ -1214,7 +1264,7 @@ Deno.test({
     const req = makeRequest({});
     const adminConfig: MockSupabaseConfig = { deleteUserError: null };
     const { deps, adminClient } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] },
+      { userId: 'u1', identities: [{ provider: 'email', id: 'e1', identity_id: 'e1-uuid' }] },
       adminConfig,
       {},
     );
@@ -1237,7 +1287,7 @@ Deno.test({
       deleteUserError: { status: 404, message: 'User not found' },
     };
     const { deps } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'email', identity_id: 'e1' }] },
+      { userId: 'u1', identities: [{ provider: 'email', id: 'e1', identity_id: 'e1-uuid' }] },
       adminConfig,
       {},
     );
@@ -1255,7 +1305,7 @@ Deno.test({
   async fn() {
     const req = makeRequest({ appleAuthorizationCode: 'secret-auth-code' });
     const { deps } = buildTestDeps(
-      { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'apple-sub' }] },
+      { userId: 'u1', identities: [{ provider: 'apple', id: 'apple-sub', identity_id: 'apple-sub-uuid' }] },
       {},
       { tokenStatus: 400 },
     );
@@ -1284,8 +1334,8 @@ Deno.test({
     // Test multiple error paths and verify none contain step
     const testCases = [
       { req: makeRequest({}), caller: { userId: 'u1', identities: null }, expectedError: 'identity_invalid' },
-      { req: makeRequest({}), caller: { userId: 'u1', identities: [{ provider: 'github', identity_id: 'g1' }] }, expectedError: 'unknown_provider' },
-      { req: makeRequest({}), caller: { userId: 'u1', identities: [{ provider: 'apple', identity_id: 'a1' }] }, expectedError: 'apple_code_missing' },
+      { req: makeRequest({}), caller: { userId: 'u1', identities: [{ provider: 'github', id: 'g1', identity_id: 'g1-uuid' }] }, expectedError: 'unknown_provider' },
+      { req: makeRequest({}), caller: { userId: 'u1', identities: [{ provider: 'apple', id: 'a1', identity_id: 'a1-uuid' }] }, expectedError: 'apple_code_missing' },
     ];
 
     for (const tc of testCases) {

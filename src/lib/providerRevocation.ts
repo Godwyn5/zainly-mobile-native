@@ -56,7 +56,7 @@ export type RevocationPreparationResult =
 
 export interface DetectedIdentity {
   provider: LinkedProvider;
-  identityId: string;
+  providerUserId: string;
 }
 
 export type IdentityDetectionResult =
@@ -70,14 +70,19 @@ const SOCIAL_PROVIDERS = new Set(['google', 'apple']);
  * Runtime validation of a single UserIdentity-like object.
  * Accesses only typed fields required by the revocation workflow.
  * Does not propagate the upstream `any` from identity_data.
+ *
+ * identity.id is the provider-side identifier (Apple sub, Google sub).
+ * identity.identity_id is a Supabase-internal UUID — never used for
+ * comparing with Apple credential.user or Google user.id.
  */
 function isValidIdentityEntry(
   entry: unknown,
-): entry is { provider: string; identity_id: string } {
+): entry is { provider: string; id: string; identity_id: string; identity_data?: { sub?: string; provider_id?: string } } {
   if (typeof entry !== 'object' || entry === null) return false;
   const obj = entry as Record<string, unknown>;
   return (
     typeof obj.provider === 'string' && obj.provider.length > 0 &&
+    typeof obj.id === 'string' && obj.id.length > 0 &&
     typeof obj.identity_id === 'string' && obj.identity_id.length > 0
   );
 }
@@ -90,9 +95,10 @@ function isValidIdentityEntry(
  * - { ok: true, identities: [...] } for accounts with Google/Apple
  * - { ok: false, reason: 'unknown_provider' } if any provider is not email/google/apple
  * - { ok: false, reason: 'identity_invalid' } if identities is missing/null/empty/malformed
- *   or if a Google/Apple identity has an empty identity_id
+ *   or if a Google/Apple identity has an empty id or a sub/provider_id mismatch
  *
  * Never compares emails. Never uses client-supplied identifiers as canonical.
+ * Uses identity.id (provider-side identifier) — never identity.identity_id (Supabase UUID).
  */
 export function detectSocialIdentities(
   identities: UserIdentity[] | undefined | null,
@@ -127,16 +133,27 @@ export function detectSocialIdentities(
     }
 
     if (SOCIAL_PROVIDERS.has(provider)) {
-      if (!entry.identity_id || entry.identity_id.length === 0) {
+      // Verify consistency: identity_data.sub or identity_data.provider_id
+      // must match identity.id if present. Fail-closed on mismatch.
+      const sub = entry.identity_data?.sub;
+      const providerId = entry.identity_data?.provider_id;
+      if (sub !== undefined && sub !== entry.id) {
         return {
           ok: false,
           reason: 'identity_invalid',
-          message: `Identifiant de fournisseur manquant pour ${provider}.`,
+          message: `Incohérence d'identité pour ${provider}.`,
+        };
+      }
+      if (providerId !== undefined && providerId !== entry.id) {
+        return {
+          ok: false,
+          reason: 'identity_invalid',
+          message: `Incohérence d'identité pour ${provider}.`,
         };
       }
       result.push({
         provider: provider as LinkedProvider,
-        identityId: entry.identity_id,
+        providerUserId: entry.id,
       });
     }
     // email provider: no revocation needed, skip
@@ -167,7 +184,7 @@ export type GoogleRevocationResult =
  * 4. A new authorization can then be revoked before retrying deletion.
  */
 export async function revokeGoogleAccess(
-  expectedGoogleIdentityId: string,
+  googleProviderUserId: string,
 ): Promise<GoogleRevocationResult> {
   // Phase 1: Re-authentication
   let response: SignInResponse;
@@ -206,9 +223,9 @@ export async function revokeGoogleAccess(
     return { ok: false, reason: 'google_reauth_failed', message: 'Google n\'a pas retourné d\'identifiant utilisateur.' };
   }
 
-  // Phase 2: Identity verification — compare stable Google user ID to Supabase identity_id.
-  // NEVER compare emails.
-  if (googleUserId !== expectedGoogleIdentityId) {
+  // Phase 2: Identity verification — compare stable Google user ID to Supabase identity.id.
+  // NEVER compare emails. NEVER use identity.identity_id (Supabase UUID).
+  if (googleUserId !== googleProviderUserId) {
     return { ok: false, reason: 'provider_mismatch', message: 'Le compte Google sélectionné ne correspond pas au compte lié.' };
   }
 
@@ -248,13 +265,13 @@ function generateStateToken(length: number = 32): string {
  * Uses signInAsync (not refreshAsync) because:
  * - signInAsync with operation LOGIN reliably echoes the state parameter
  *   in the credential response, unlike refreshAsync which may return null.
- * - The stable Apple user identifier from Supabase identity_id is verified
+ * - The stable Apple user identifier from Supabase identity.id is verified
  *   post-response against credential.user.
  * - It returns a fresh AppleAuthenticationCredential with authorizationCode.
  *
  * Controls:
  * - state: cryptographically random, exact equality on return.
- * - credential.user: exact equality with Supabase Apple identity_id.
+ * - credential.user: exact equality with Supabase Apple identity.id (provider user ID).
  * - authorizationCode: non-empty string.
  * - Code kept in memory only — never persisted to AsyncStorage, SecureStore,
  *   React Query, Zustand, or logs.
@@ -263,7 +280,7 @@ function generateStateToken(length: number = 32): string {
  * NOT marked as functional before testing on a physical iPhone.
  */
 export async function obtainAppleRevocationProof(
-  expectedAppleUserId: string,
+  appleProviderUserId: string,
 ): Promise<
   | { ok: true; authorizationCode: string }
   | { ok: false; reason: RevocationErrorCode; message?: string }
@@ -290,8 +307,8 @@ export async function obtainAppleRevocationProof(
       return { ok: false, reason: 'apple_state_mismatch', message: 'Diagnostic Apple : état différent.' };
     }
 
-    // Verify Apple user matches the Supabase-linked Apple identity
-    if (credential.user !== expectedAppleUserId) {
+    // Verify Apple user matches the Supabase-linked Apple identity (identity.id, not identity_id)
+    if (credential.user !== appleProviderUserId) {
       return { ok: false, reason: 'apple_user_mismatch', message: 'Le compte Apple sélectionné ne correspond pas au compte lié.' };
     }
 
@@ -357,7 +374,7 @@ export async function prepareRevocationProofs(): Promise<RevocationPreparationRe
     // 3. Apple first (reversible proof collection before irreversible revocation)
     const appleIdentity = detection.identities.find((i) => i.provider === 'apple');
     if (appleIdentity) {
-      const appleResult = await obtainAppleRevocationProof(appleIdentity.identityId);
+      const appleResult = await obtainAppleRevocationProof(appleIdentity.providerUserId);
       if (!appleResult.ok) {
         return { ok: false, reason: appleResult.reason, message: appleResult.message };
       }
@@ -367,7 +384,7 @@ export async function prepareRevocationProofs(): Promise<RevocationPreparationRe
     // 4. Google revocation (irreversible)
     const googleIdentity = detection.identities.find((i) => i.provider === 'google');
     if (googleIdentity) {
-      const googleResult = await revokeGoogleAccess(googleIdentity.identityId);
+      const googleResult = await revokeGoogleAccess(googleIdentity.providerUserId);
       if (!googleResult.ok) {
         return { ok: false, reason: googleResult.reason, message: googleResult.message };
       }

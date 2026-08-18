@@ -120,8 +120,12 @@ import {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeIdentity(provider: string, identity_id: string) {
-  return { id: `id-${identity_id}`, user_id: 'user-123', provider, identity_id };
+function makeIdentity(provider: string, providerUserId: string, opts?: { subMismatch?: boolean; noSub?: boolean }) {
+  const supabaseUuid = `supabase-uuid-${providerUserId}`;
+  const identity_data = opts?.noSub
+    ? {}
+    : { sub: opts?.subMismatch ? 'different-sub' : providerUserId };
+  return { id: providerUserId, user_id: 'user-123', provider, identity_id: supabaseUuid, identity_data };
 }
 
 function setMockUser(identities: ReturnType<typeof makeIdentity>[] | null) {
@@ -185,13 +189,13 @@ describe('detectSocialIdentities', () => {
   test('Google identity detected', () => {
     const result = detectSocialIdentities([makeIdentity('google', 'google-123')]);
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.identities).toEqual([{ provider: 'google', identityId: 'google-123' }]);
+    if (result.ok) expect(result.identities).toEqual([{ provider: 'google', providerUserId: 'google-123' }]);
   });
 
   test('Apple identity detected', () => {
     const result = detectSocialIdentities([makeIdentity('apple', 'apple-123')]);
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.identities).toEqual([{ provider: 'apple', identityId: 'apple-123' }]);
+    if (result.ok) expect(result.identities).toEqual([{ provider: 'apple', providerUserId: 'apple-123' }]);
   });
 
   test('Google + Apple detected together', () => {
@@ -203,8 +207,8 @@ describe('detectSocialIdentities', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.identities).toEqual([
-        { provider: 'google', identityId: 'google-1' },
-        { provider: 'apple', identityId: 'apple-1' },
+        { provider: 'google', providerUserId: 'google-1' },
+        { provider: 'apple', providerUserId: 'apple-1' },
       ]);
     }
   });
@@ -245,16 +249,42 @@ describe('detectSocialIdentities', () => {
     if (!result.ok) expect(result.reason).toBe('identity_invalid');
   });
 
-  test('Google with empty identity_id returns identity_invalid', () => {
+  test('Google with empty id returns identity_invalid', () => {
     const result = detectSocialIdentities([makeIdentity('google', '')]);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('identity_invalid');
   });
 
-  test('Apple with empty identity_id returns identity_invalid', () => {
+  test('Apple with empty id returns identity_invalid', () => {
     const result = detectSocialIdentities([makeIdentity('apple', '')]);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('identity_invalid');
+  });
+
+  test('Apple sub mismatch with identity.id returns identity_invalid', () => {
+    const result = detectSocialIdentities([makeIdentity('apple', 'apple-123', { subMismatch: true })]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('identity_invalid');
+  });
+
+  test('Google sub mismatch with identity.id returns identity_invalid', () => {
+    const result = detectSocialIdentities([makeIdentity('google', 'google-123', { subMismatch: true })]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('identity_invalid');
+  });
+
+  test('Apple with no identity_data.sub succeeds (sub optional)', () => {
+    const result = detectSocialIdentities([makeIdentity('apple', 'apple-123', { noSub: true })]);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.identities[0].providerUserId).toBe('apple-123');
+  });
+
+  test('identity_id is a Supabase UUID, distinct from identity.id — uses id for comparison', () => {
+    const result = detectSocialIdentities([makeIdentity('apple', 'apple-provider-id-999')]);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.identities[0].providerUserId).toBe('apple-provider-id-999');
+    }
   });
 });
 
@@ -604,6 +634,40 @@ describe('prepareRevocationProofs', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('google_reauth_failed');
     expect(mockGoogleRevokeAccess).not.toHaveBeenCalled();
+  });
+
+  test('Apple sub mismatch with identity.id: identity_invalid, no Apple call', async () => {
+    setMockUser([makeIdentity('apple', 'apple-123', { subMismatch: true })]);
+    const result = await prepareRevocationProofs();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('identity_invalid');
+    expect(mockAppleSignInAsync).not.toHaveBeenCalled();
+  });
+
+  test('Google sub mismatch with identity.id: identity_invalid, no Google call', async () => {
+    setMockUser([makeIdentity('google', 'google-123', { subMismatch: true })]);
+    const result = await prepareRevocationProofs();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('identity_invalid');
+    expect(mockGoogleSignIn).not.toHaveBeenCalled();
+  });
+
+  test('Apple uses identity.id (not identity_id) for credential.user comparison', async () => {
+    setMockUser([makeIdentity('apple', 'real-apple-provider-id')]);
+    mockAppleSignInAsync.mockImplementation(async (opts: { state: string }) => {
+      return appleCredential({ user: 'real-apple-provider-id', state: opts.state, authorizationCode: 'code' });
+    });
+    const result = await prepareRevocationProofs();
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.proof.appleAuthorizationCode).toBe('code');
+  });
+
+  test('Google uses identity.id (not identity_id) for user.id comparison', async () => {
+    setMockUser([makeIdentity('google', 'real-google-provider-id')]);
+    mockGoogleSignIn.mockResolvedValue(googleSuccessResponse('real-google-provider-id'));
+    const result = await prepareRevocationProofs();
+    expect(result.ok).toBe(true);
+    expect(mockGoogleRevokeAccess).toHaveBeenCalledTimes(1);
   });
 });
 
