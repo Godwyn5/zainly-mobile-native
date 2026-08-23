@@ -6,7 +6,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { hapticSelection, hapticSuccess } from '@/utils/haptics';
-import { readOnboardingDraft } from '@/lib/onboardingDraft';
+import { readOnboardingDraftForOwner } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 import { computePlan, isPlanError } from '@/core/planEngine';
 import {
   buildPlanInputFromDraft, isPlanValidationError, routeForOnboardingStep,
@@ -61,10 +62,13 @@ export default function OnboardingProgramGeneratingScreen() {
   }, []);
 
   // ── real validation + real computation, run once ──────────────────────
+  const { owner: draftOwner } = useDraftOwner();
+
   useEffect(() => {
+    if (!draftOwner) return;
     let cancelled = false;
     (async () => {
-      const draft = await readOnboardingDraft();
+      const draft = await readOnboardingDraftForOwner(draftOwner);
       if (cancelled) return;
       if (!draft) {
         router.replace('/onboarding-v2/experience-choice');
@@ -86,7 +90,8 @@ export default function OnboardingProgramGeneratingScreen() {
       planReadyRef.current = true;
     })();
     return () => { cancelled = true; };
-  }, []);
+
+  }, [draftOwner]);
 
   // ── decorative pacing around the already-finished computation ─────────
   const progress = useRef(new Animated.Value(0)).current;

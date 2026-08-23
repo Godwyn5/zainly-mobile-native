@@ -158,9 +158,11 @@ import {
   finalizeOnboardingV2Plan,
 } from '../onboardingFinalize';
 import {
-  readOnboardingDraft,
-  clearOnboardingDraft,
-  updateOnboardingDraft,
+  readOnboardingDraftForOwner,
+  updateOnboardingDraftForOwner,
+  clearOnboardingDraftForOwner,
+  purgeAllOnboardingDrafts,
+  type OnboardingDraftOwner,
 } from '../onboardingDraft';
 import {
   savePendingOnboardingPlan,
@@ -180,9 +182,11 @@ import { finalizeOnboardingPlanRpc } from '@/db/finalizeOnboardingPlan';
 // ── Helpers ────────────────────────────────────────────────────────────────
 const USER_A = 'user-aaa-111';
 const USER_B = 'user-bbb-222';
+const ownerA: OnboardingDraftOwner = { kind: 'authenticated', userId: USER_A };
+const ownerB: OnboardingDraftOwner = { kind: 'authenticated', userId: USER_B };
 
 async function seedValidDraft() {
-  await updateOnboardingDraft({
+  await updateOnboardingDraftForOwner(ownerA, {
     currentStep: 'program_summary',
     firstName: 'Ahmed',
     motivationReason: 'closer_to_allah',
@@ -194,13 +198,13 @@ async function seedValidDraft() {
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   // Reset all state
   mockPlansTable.clear();
   mockProgressTable.clear();
   mockAuthUid = USER_A;
   (AsyncStorage.clear as jest.Mock)();
-  clearOnboardingDraft();
+  await purgeAllOnboardingDrafts();
   // Reset mock call tracking
   (fetchPlan as jest.Mock).mockClear();
   (upsertPlan as jest.Mock).mockClear();
@@ -283,7 +287,7 @@ describe('Plan-already-exists guard', () => {
     await finalizeOnboardingV2Plan(USER_A, '');
 
     // Draft must be cleared
-    expect(await readOnboardingDraft()).toBeNull();
+    expect(await readOnboardingDraftForOwner(ownerA)).toBeNull();
   });
 
   it('returns persist_error (not ok) when fetchPlan throws — never finalizes blindly', async () => {
@@ -356,7 +360,7 @@ describe('Plan-already-exists guard', () => {
     expect(mockPlansTable.has(USER_A)).toBe(false);
     expect(mockProgressTable.has(USER_A)).toBe(false);
     // The draft source must survive for retry (not cleared on failure)
-    expect(await readOnboardingDraft()).not.toBeNull();
+    expect(await readOnboardingDraftForOwner(ownerA)).not.toBeNull();
 
     // Retry — RPC now succeeds (mockRejectedValueOnce only fails the first call).
     const result2 = await finalizeOnboardingV2Plan(USER_A, '');
@@ -414,32 +418,32 @@ describe('Plan-already-exists guard', () => {
 // ─── 2. Draft isolation across auth boundaries ─────────────────────────────
 
 describe('Draft isolation across auth boundaries', () => {
-  it('draft is cleared by clearOnboardingDraft and becomes null', async () => {
+  it('draft is cleared by clearOnboardingDraftForOwner and becomes null', async () => {
     await seedValidDraft();
-    expect(await readOnboardingDraft()).not.toBeNull();
+    expect(await readOnboardingDraftForOwner(ownerA)).not.toBeNull();
 
-    await clearOnboardingDraft();
-    expect(await readOnboardingDraft()).toBeNull();
+    await clearOnboardingDraftForOwner(ownerA);
+    expect(await readOnboardingDraftForOwner(ownerA)).toBeNull();
   });
 
-  it('account A draft is not visible to account B after clearOnboardingDraft', async () => {
+  it('account A draft is not visible to account B after purgeAllOnboardingDrafts', async () => {
     // Simulate account A creating a draft
-    await updateOnboardingDraft({ firstName: 'Alice', currentStep: 'first_name' });
-    expect((await readOnboardingDraft())?.firstName).toBe('Alice');
+    await updateOnboardingDraftForOwner(ownerA, { firstName: 'Alice', currentStep: 'first_name' });
+    expect((await readOnboardingDraftForOwner(ownerA))?.firstName).toBe('Alice');
 
-    // Simulate logout (clearOnboardingDraft is called)
-    await clearOnboardingDraft();
+    // Simulate logout: purgeAllOnboardingDrafts is called by useLogout
+    await purgeAllOnboardingDrafts();
 
     // Simulate account B logging in — draft must be null
-    expect(await readOnboardingDraft()).toBeNull();
+    expect(await readOnboardingDraftForOwner(ownerB)).toBeNull();
   });
 
-  it('account A draft cannot be finalized by account B after clearOnboardingDraft', async () => {
+  it('account A draft cannot be finalized by account B after purgeAllOnboardingDrafts', async () => {
     // Account A creates a draft
     await seedValidDraft();
 
-    // Logout clears the draft
-    await clearOnboardingDraft();
+    // Logout clears all drafts
+    await purgeAllOnboardingDrafts();
 
     // Account B tries to finalize — no draft, no pending → no_source
     mockAuthUid = USER_B;
@@ -451,10 +455,10 @@ describe('Draft isolation across auth boundaries', () => {
   });
 
   it('same-account draft is resumed without being overwritten', async () => {
-    await updateOnboardingDraft({ firstName: 'Alice', currentStep: 'first_name' });
+    await updateOnboardingDraftForOwner(ownerA, { firstName: 'Alice', currentStep: 'first_name' });
     // A second update merges, not replaces
-    await updateOnboardingDraft({ motivationReason: 'closer_to_allah' });
-    const draft = await readOnboardingDraft();
+    await updateOnboardingDraftForOwner(ownerA, { motivationReason: 'closer_to_allah' });
+    const draft = await readOnboardingDraftForOwner(ownerA);
     expect(draft?.firstName).toBe('Alice');
     expect(draft?.motivationReason).toBe('closer_to_allah');
   });
@@ -572,7 +576,7 @@ describe('V1 adapter redirect behavior', () => {
 // ─── 6. clearAllPendingOnboardingData + draft clearing ─────────────────────
 
 describe('Combined auth boundary clearing', () => {
-  it('clearAllPendingOnboardingData + clearOnboardingDraft together wipe all onboarding state', async () => {
+  it('clearAllPendingOnboardingData + purgeAllOnboardingDrafts together wipe all onboarding state', async () => {
     // Seed both durable and in-memory state
     await savePendingOnboardingPlan({
       firstName: 'Test',
@@ -589,9 +593,9 @@ describe('Combined auth boundary clearing', () => {
 
     // Clear everything (as logout does)
     await clearAllPendingOnboardingData();
-    await clearOnboardingDraft();
+    await purgeAllOnboardingDrafts();
 
-    expect(await readOnboardingDraft()).toBeNull();
+    expect(await readOnboardingDraftForOwner(ownerA)).toBeNull();
     // Pending plan should also be gone
     const raw = await AsyncStorage.getItem('zainly:onboardingV2:pendingPlan');
     expect(raw).toBeNull();
@@ -603,7 +607,7 @@ describe('Combined auth boundary clearing', () => {
 describe('Session-expiry boundary (clearOnboardingStateForSessionExpiry)', () => {
   it('clears the in-memory draft unconditionally, even with no pending payload', async () => {
     await seedValidDraft();
-    expect(await readOnboardingDraft()).not.toBeNull();
+    expect(await readOnboardingDraftForOwner(ownerA)).not.toBeNull();
 
     // No pending payload exists at all
     expect(await readPendingOnboardingPlan()).toBeNull();
@@ -611,7 +615,7 @@ describe('Session-expiry boundary (clearOnboardingStateForSessionExpiry)', () =>
     await clearOnboardingStateForSessionExpiry();
 
     // Draft must be cleared — this is the critical guarantee
-    expect(await readOnboardingDraft()).toBeNull();
+    expect(await readOnboardingDraftForOwner(ownerA)).toBeNull();
   });
 
   it('clears the draft and owned pending payload when pending is owned', async () => {
@@ -636,7 +640,7 @@ describe('Session-expiry boundary (clearOnboardingStateForSessionExpiry)', () =>
 
     await clearOnboardingStateForSessionExpiry();
 
-    expect(await readOnboardingDraft()).toBeNull();
+    expect(await readOnboardingDraftForOwner(ownerA)).toBeNull();
     expect(await readPendingOnboardingPlan()).toBeNull();
   });
 
@@ -657,7 +661,7 @@ describe('Session-expiry boundary (clearOnboardingStateForSessionExpiry)', () =>
 
     await clearOnboardingStateForSessionExpiry();
 
-    expect(await readOnboardingDraft()).toBeNull();
+    expect(await readOnboardingDraftForOwner(ownerA)).toBeNull();
     // Pending payload survives — it may belong to a new pre-auth flow
     const pending = await readPendingOnboardingPlan();
     expect(pending).not.toBeNull();
@@ -695,8 +699,17 @@ describe('Cross-account pending payload protection in plan_already_exists', () =
     setSessionAuthFlowId(saved.flowId);
     await claimPendingOnboardingPlanForUser(USER_A, saved.flowId);
 
-    // Also seed a draft (for USER_B's session, but draft has no owner)
-    await seedValidDraft();
+    // Also seed a draft for USER_B's session
+    await updateOnboardingDraftForOwner(ownerB, {
+      currentStep: 'program_summary',
+      firstName: 'Bob',
+      motivationReason: 'closer_to_allah',
+      learningMode: 'recommended',
+      knownSurahs: [1, 2],
+      experienceChoice: 'daily_limited',
+      notificationPreference: 'enabled',
+      discoverySource: 'tiktok',
+    });
 
     // USER_B finalizes — plan already exists for B
     mockAuthUid = USER_B;
@@ -708,8 +721,8 @@ describe('Cross-account pending payload protection in plan_already_exists', () =
     }
     expect(upsertPlan).not.toHaveBeenCalled();
 
-    // The draft is cleared (no ownerUserId)
-    expect(await readOnboardingDraft()).toBeNull();
+    // USER_B's draft is cleared after finalization
+    expect(await readOnboardingDraftForOwner(ownerB)).toBeNull();
 
     // USER_A's pending payload must survive — it is not B's to clear
     const pending = await readPendingOnboardingPlan();

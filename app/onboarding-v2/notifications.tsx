@@ -6,7 +6,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { hapticLight } from '@/utils/haptics';
-import { readOnboardingDraft, updateOnboardingDraft, ExperienceChoice } from '@/lib/onboardingDraft';
+import { readOnboardingDraftForOwner, updateOnboardingDraftForOwner, ExperienceChoice } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 import { getNotificationPermissionStatus, requestNotificationPermission, PermissionStatus } from '@/notifications/scheduler';
 import {
   TOTAL_ONBOARDING_PHASES, phaseStepNumber, notificationsBackTarget,
@@ -60,10 +61,13 @@ export default function OnboardingNotificationsScreen() {
     return () => { mountedRef.current = false; };
   }, []);
 
+  const { owner: draftOwner } = useDraftOwner();
+
   useEffect(() => {
+    if (!draftOwner) return;
     let cancelled = false;
     (async () => {
-      const draft = await readOnboardingDraft();
+      const draft = await readOnboardingDraftForOwner(draftOwner);
       if (cancelled) return;
       if (!draft?.experienceChoice) {
         router.replace('/onboarding-v2/experience-choice');
@@ -77,7 +81,8 @@ export default function OnboardingNotificationsScreen() {
       setReady(true);
     })();
     return () => { cancelled = true; };
-  }, []);
+
+  }, [draftOwner]);
 
   // ── entrance ──
   const titleOpacity = useRef(new Animated.Value(0)).current;
@@ -113,13 +118,13 @@ export default function OnboardingNotificationsScreen() {
   }
 
   async function handleActivate() {
-    if (isSubmittingRef.current) return;
+    if (isSubmittingRef.current || !draftOwner) return;
     isSubmittingRef.current = true;
     setBusy(true);
     hapticLight();
     try {
       const status = await requestNotificationPermission();
-      await updateOnboardingDraft({
+      await updateOnboardingDraftForOwner(draftOwner, {
         notificationPreference: status === 'granted' ? 'enabled' : 'denied',
         currentStep: 'discovery_source',
       });
@@ -131,11 +136,11 @@ export default function OnboardingNotificationsScreen() {
   }
 
   async function handleContinueAlreadyGranted() {
-    if (isSubmittingRef.current) return;
+    if (isSubmittingRef.current || !draftOwner) return;
     isSubmittingRef.current = true;
     hapticLight();
     try {
-      await updateOnboardingDraft({
+      await updateOnboardingDraftForOwner(draftOwner, {
         notificationPreference: 'already_granted',
         currentStep: 'discovery_source',
       });
@@ -146,11 +151,11 @@ export default function OnboardingNotificationsScreen() {
   }
 
   async function handleContinueDenied() {
-    if (isSubmittingRef.current) return;
+    if (isSubmittingRef.current || !draftOwner) return;
     isSubmittingRef.current = true;
     hapticLight();
     try {
-      await updateOnboardingDraft({
+      await updateOnboardingDraftForOwner(draftOwner, {
         notificationPreference: 'denied',
         currentStep: 'discovery_source',
       });
@@ -161,11 +166,11 @@ export default function OnboardingNotificationsScreen() {
   }
 
   async function handleLater() {
-    if (isSubmittingRef.current) return;
+    if (isSubmittingRef.current || !draftOwner) return;
     isSubmittingRef.current = true;
     hapticLight();
     try {
-      await updateOnboardingDraft({
+      await updateOnboardingDraftForOwner(draftOwner, {
         notificationPreference: 'skipped',
         currentStep: 'discovery_source',
       });

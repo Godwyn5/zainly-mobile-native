@@ -6,7 +6,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { hapticLight } from '@/utils/haptics';
-import { readOnboardingDraft, updateOnboardingDraft, ExperienceChoice } from '@/lib/onboardingDraft';
+import { readOnboardingDraftForOwner, updateOnboardingDraftForOwner, ExperienceChoice } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 import {
   TOTAL_ONBOARDING_PHASES, phaseStepNumber, QUESTIONNAIRE_BACK_TARGETS,
 } from '@/lib/onboardingQuestionnaire';
@@ -86,9 +87,12 @@ export default function OnboardingExperienceChoiceScreen() {
   }, []);
 
   // ── resume: restore a previously chosen experience within the session ──
+  const { owner: draftOwner } = useDraftOwner();
+
   useEffect(() => {
+    if (!draftOwner) return;
     let cancelled = false;
-    readOnboardingDraft().then(draft => {
+    readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
       if (!draft?.firstName) {
         router.replace('/onboarding-v2/name');
@@ -118,7 +122,8 @@ export default function OnboardingExperienceChoiceScreen() {
       setDraftChecked(true);
     });
     return () => { cancelled = true; };
-  }, []);
+
+  }, [draftOwner]);
 
   // ── living background — same breathing loops as every previous screen ──
   const washBreath   = useRef(new Animated.Value(0)).current;
@@ -186,12 +191,12 @@ export default function OnboardingExperienceChoiceScreen() {
   }
 
   async function handleContinue() {
-    if (isSubmittingRef.current || !selected) return;
+    if (isSubmittingRef.current || !selected || !draftOwner) return;
     isSubmittingRef.current = true;
     hapticLight();
 
     try {
-      await updateOnboardingDraft({ experienceChoice: selected });
+      await updateOnboardingDraftForOwner(draftOwner, { experienceChoice: selected });
 
       if (selected === 'daily_limited') {
         router.push('/onboarding-v2/free-support');

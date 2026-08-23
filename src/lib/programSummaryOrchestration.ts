@@ -2,6 +2,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 import { clearPendingOnboardingIfMatches, readPendingOnboardingPlan } from '@/lib/pendingOnboardingPlan';
+import { inspectDraftForOwner, clearOnboardingDraftForOwner, type OnboardingDraftOwner } from '@/lib/onboardingDraft';
 
 export type ProgramSummaryAuthedOutcome =
   | { status: 'navigate' }
@@ -12,7 +13,8 @@ export type ProgramSummaryAuthedOutcome =
   | { status: 'session_changed' }
   | { status: 'handoff_failed' }
   | { status: 'superseded' }
-  | { status: 'no_draft' };
+  | { status: 'no_draft' }
+  | { status: 'draft_owner_mismatch' };
 
 interface OrchestrationDeps {
   finalizeWithPremiumGate: typeof finalizeOnboardingV2PlanWithPremiumGate;
@@ -41,6 +43,29 @@ export async function orchestrateAuthedFinalize(
 ): Promise<ProgramSummaryAuthedOutcome> {
   const d = { ...defaultDeps, ...deps };
   const getSessionUserId = d.getSessionUserId ?? (() => undefined);
+
+  // ── Draft inspection guard ─────────────────────────────────────────
+  // Inspect the draft stored under this authenticated user's physical key.
+  // The discriminated result distinguishes:
+  //   - absent: no data under the key → proceed (may use pending payload)
+  //   - valid: well-formed envelope with matching owner → proceed
+  //   - corrupt: data exists but is malformed → abort (never treat as absent)
+  //   - owner_mismatch: envelope exists but belongs to a different owner
+  //     → abort (never treat as absent, never expose the data)
+  //
+  // A corrupted or mismatched envelope under the user's key must NEVER be
+  // silently treated as an ordinary absence. The finalization may proceed
+  // without a draft only if the draft is genuinely absent (null key) — in
+  // that case, finalization falls back to the pending payload path, which
+  // has its own flowId/ownerUserId binding.
+  const authedOwner: OnboardingDraftOwner = { kind: 'authenticated', userId: authedUserId };
+  const inspection = await inspectDraftForOwner(authedOwner);
+  if (inspection.status === 'corrupt') {
+    return { status: 'draft_owner_mismatch' };
+  }
+  if (inspection.status === 'owner_mismatch') {
+    return { status: 'draft_owner_mismatch' };
+  }
 
   const outcome = await d.finalizeWithPremiumGate(authedUserId, '');
   if (outcome.status === 'premium_sync_failed') {
@@ -99,6 +124,7 @@ export async function orchestrateAuthedFinalize(
       // safe. The pending survives as a stale marker and will be cleaned
       // up on next read, logout, or a future retry.
       d.invalidateNonCritical(queryClient, authedUserId);
+      await clearOnboardingDraftForOwner(authedOwner).catch(() => { /* non-fatal */ });
       return { status: 'navigate_clear_failed' };
     }
 
@@ -114,5 +140,7 @@ export async function orchestrateAuthedFinalize(
   }
 
   d.invalidateNonCritical(queryClient, authedUserId);
+  // Clear the finalized user's draft — targeted, not global.
+  await clearOnboardingDraftForOwner(authedOwner).catch(() => { /* non-fatal */ });
   return { status: 'navigate' };
 }

@@ -5,7 +5,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { hapticLight, hapticSelection, hapticWarning } from '@/utils/haptics';
-import { readOnboardingDraft, updateOnboardingDraft } from '@/lib/onboardingDraft';
+import { readOnboardingDraftForOwner, updateOnboardingDraftForOwner } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 import { TOTAL_ONBOARDING_PHASES, phaseStepNumber, QUESTIONNAIRE_BACK_TARGETS } from '@/lib/onboardingQuestionnaire';
 import { ZAINLY_ORDER } from '@/core/planEngine';
 import OnboardingQuestionHeader from '@/components/onboarding/OnboardingQuestionHeader';
@@ -25,9 +26,12 @@ export default function OnboardingStartSurahScreen() {
   const [startingSurah, setStartingSurah] = useState<number | null>(null);
   const [search, setSearch] = useState('');
 
+  const { owner: draftOwner } = useDraftOwner();
+
   useEffect(() => {
+    if (!draftOwner) return;
     let cancelled = false;
-    readOnboardingDraft().then(draft => {
+    readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
       if (!draft?.firstName) { router.replace('/onboarding-v2/name'); return; }
       if (!draft.motivationReason) { router.replace('/onboarding-v2/motivation'); return; }
@@ -39,7 +43,8 @@ export default function OnboardingStartSurahScreen() {
       setDraftChecked(true);
     });
     return () => { cancelled = true; };
-  }, []);
+
+  }, [draftOwner]);
 
   const normalizedSearch = search.trim().toLowerCase();
   const filteredSurahs = useMemo(() => {
@@ -60,12 +65,13 @@ export default function OnboardingStartSurahScreen() {
 
   async function handleContinue() {
     if (!startingSurah) { hapticWarning(); return; }
+    if (!draftOwner) return;
     hapticLight();
     // Invariant mirrored from the historical onboarding: the starting
     // surah must never also be marked as known.
-    const draft = await readOnboardingDraft();
+    const draft = await readOnboardingDraftForOwner(draftOwner);
     const sanitizedKnown = (draft?.knownSurahs ?? []).filter(n => n !== startingSurah);
-    await updateOnboardingDraft({
+    await updateOnboardingDraftForOwner(draftOwner, {
       currentStep: 'known_surahs', startingSurah, knownSurahs: sanitizedKnown,
     });
     setSearch('');

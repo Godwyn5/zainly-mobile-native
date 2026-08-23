@@ -22,7 +22,10 @@ import { fetchPlan } from '@/db/plans';
 import { fetchProgress } from '@/db/progress';
 import { finalizeOnboardingPlanRpc } from '@/db/finalizeOnboardingPlan';
 import { upsertProfileFirstName } from '@/db/profiles';
-import { readOnboardingDraft, clearOnboardingDraft } from './onboardingDraft';
+import {
+  readOnboardingDraftForOwner, clearOnboardingDraftForOwner,
+  type OnboardingDraftOwner, type NotificationPreference, type ExperienceChoice,
+} from './onboardingDraft';
 import {
   buildPlanInputFromDraft, isPlanValidationError, PlanInputSource,
 } from './onboardingPlanValidation';
@@ -34,7 +37,6 @@ import {
 import { scheduleDailyHifzReminder } from '@/notifications/scheduler';
 import { saveNotificationSettings } from '@/notifications/storage';
 import { DEFAULT_SETTINGS } from '@/notifications/types';
-import type { NotificationPreference, ExperienceChoice } from './onboardingDraft';
 import { syncRevenueCatUserAfterAuth } from '@/lib/revenueCat';
 
 export type FinalizeOnboardingV2Result =
@@ -70,8 +72,9 @@ export async function finalizeOnboardingV2Plan(userId: string, authFlowId: strin
  * grant premium access itself (RevenueCat entitlement remains the only
  * source of truth for that).
  */
-async function peekOnboardingV2ExperienceChoice(): Promise<ExperienceChoice | null> {
-  const draft = await readOnboardingDraft();
+async function peekOnboardingV2ExperienceChoice(userId: string): Promise<ExperienceChoice | null> {
+  const owner: OnboardingDraftOwner = { kind: 'authenticated', userId };
+  const draft = await readOnboardingDraftForOwner(owner);
   if (draft) return draft.experienceChoice;
   const pending = await readPendingOnboardingPlan();
   if (pending) return pending.experienceChoice;
@@ -106,7 +109,7 @@ export async function finalizeOnboardingV2PlanWithPremiumGate(
   userId: string,
   authFlowId: string
 ): Promise<PremiumGatedFinalizeResult> {
-  const experienceChoice = await peekOnboardingV2ExperienceChoice();
+  const experienceChoice = await peekOnboardingV2ExperienceChoice(userId);
 
   if (experienceChoice === 'unlimited') {
     const sync = await syncRevenueCatUserAfterAuth(userId);
@@ -171,9 +174,9 @@ async function runFinalize(userId: string, authFlowId: string): Promise<Finalize
   if (existingPlan && existingProgress) {
     // Plan + progress are both confirmed present — never recreate or
     // reinitialize a complete, legitimate pair.
-    // Always clear the in-memory draft — it has no ownerUserId and cannot
-    // belong to another account.
-    await clearOnboardingDraft();
+    // Always clear the authenticated user's draft — it belongs to this
+    // account and finalization is complete.
+    await clearOnboardingDraftForOwner({ kind: 'authenticated', userId });
 
     // IMPORTANT: the durable pending payload is NOT cleared here. It is the
     // transaction marker for the entire onboarding → dashboard handoff.
@@ -199,7 +202,8 @@ async function runFinalize(userId: string, authFlowId: string): Promise<Finalize
     };
   }
 
-  const draft = await readOnboardingDraft();
+  const draftOwner: OnboardingDraftOwner = { kind: 'authenticated', userId };
+  const draft = await readOnboardingDraftForOwner(draftOwner);
 
   let source: PlanInputSource | null = null;
   let notificationPreference: NotificationPreference | null = null;
@@ -274,7 +278,7 @@ async function runFinalize(userId: string, authFlowId: string): Promise<Finalize
       // already exist — treat this as idempotent success, not an error.
       // The source (draft/pending) is cleared below just like a normal
       // creation, so a retry never re-finalizes.
-      await clearOnboardingDraft();
+      await clearOnboardingDraftForOwner(draftOwner);
       return { ok: true, reason: 'plan_already_exists' };
     }
 
@@ -338,12 +342,12 @@ async function runFinalize(userId: string, authFlowId: string): Promise<Finalize
   }
 
   // Only reached after plan + progress are both durably persisted — clear
-  // the in-memory draft (no ownerUserId, cannot belong to another account).
+  // the authenticated user's draft (targeted, not global).
   // The durable pending payload is NOT cleared here — it is the transaction
   // marker for the entire onboarding → dashboard handoff. The caller
   // (orchestrateAuthedFinalize / useOnboardingV2AuthFinalize) clears it
   // only after handOffFinalizedProgram succeeds, so a handoff failure
   // leaves the pending intact for retry.
-  await clearOnboardingDraft();
+  await clearOnboardingDraftForOwner(draftOwner);
   return { ok: true, reason: 'created' };
 }

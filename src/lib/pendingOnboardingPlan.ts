@@ -19,15 +19,19 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { LearningMode, NotificationPreference, DiscoverySource, ExperienceChoice } from './onboardingDraft';
-import { clearOnboardingDraft } from './onboardingDraft';
+import { purgeAllOnboardingDrafts, claimDraftForUser, readOnboardingDraftForOwner, clearOnboardingDraftForOwner, getOrCreateGuestFlowId, clearGuestFlowId } from './onboardingDraft';
 
 const STORAGE_KEY = 'zainly:onboardingV2:pendingPlan';
 const HANDOFF_KEY = 'zainly:onboardingV2:authHandoff';
 const ACTIVE_AUTH_FLOW_KEY = 'zainly:onboardingV2:activeAuthFlow';
+const GUEST_DRAFT_HANDOFF_KEY = 'zainly:onboardingV2:guestDraftHandoff';
+const COMPLETED_AUTH_PROOF_KEY = 'zainly:onboardingV2:completedAuthProof';
 const CURRENT_VERSION = 1 as const;
 const TTL_MS = 72 * 60 * 60 * 1000; // 72h
 const HANDOFF_TTL_MS = 72 * 60 * 60 * 1000; // 72h — same as payload
 const ACTIVE_AUTH_FLOW_TTL_MS = 72 * 60 * 60 * 1000; // 72h
+const GUEST_DRAFT_HANDOFF_TTL_MS = 72 * 60 * 60 * 1000; // 72h
+const COMPLETED_AUTH_PROOF_TTL_MS = 72 * 60 * 60 * 1000; // 72h
 
 /**
  * Generates a sufficiently unique, non-predictable flow identifier.
@@ -549,6 +553,492 @@ export async function clearAuthHandoff(): Promise<void> {
   }
 }
 
+// ─── Guest-draft handoff — transaction-binding envelope ───────────────────
+// Binds the pending-plan transactionFlowId to the exact guest draft
+// sourceGuestDraftFlowId. This is the durable proof that the current
+// authentication originated from a specific guest onboarding parcours.
+//
+// Without this binding, sourceGuestFlowId (from GUEST_FLOW_KEY) is just a
+// persisted value that exists for any app launch — it does NOT prove an
+// active onboarding transaction. The claim decision must verify this
+// envelope before authorizing a guest draft transfer.
+//
+// CRITICAL: The transactionFlowId passed to claimGuestDraftWithHandoff must
+// come from an INDEPENDENT source — never from readGuestDraftHandoff() itself.
+// An envelope cannot authenticate itself. The independent source is
+// resolveCurrentAuthFlowId(), which reads:
+//   1. getSessionAuthFlowId() — in-memory, set by auth routes from route params
+//   2. readActiveOnboardingAuthFlow() — persisted, survives app kills
+// A direct Google/Apple login with no onboarding context produces '' from both.
+//
+// Lifecycle:
+//   Created: saveGuestDraftHandoff called by program-summary right before
+//            navigating to auth, alongside savePendingOnboardingPlan.
+//   Consumed: claimGuestDraftWithHandoff marks status='claimed' and sets
+//             claimedByUserId after the draft is transferred.
+//   Cleared: clearGuestDraftHandoff on logout, session expiry, or full data
+//            clear.
+//   Expired: 72h TTL, same as the pending payload.
+
+/**
+ * CompletedAuthProofV1 — persisted ONLY after a Supabase authentication
+ * result confirms the user identity. Unlike ActiveOnboardingAuthFlowV1
+ * (a pre-auth marker), this proof is created exclusively post-auth and
+ * binds the onboarding transactionFlowId to the actual authenticated userId.
+ *
+ * Created: runOnboardingTransition() calls saveCompletedAuthProof() after
+ *   supabase.auth.signUp/signInWithPassword/signInWithIdToken returns a
+ *   valid session. This is the shared path for ALL onboarding auth methods.
+ * Consumed: claimGuestDraftWithHandoff() marks status='consumed' after a
+ *   successful claim. Exactly-once consumption prevents replay.
+ * Cleared: clearAllPendingOnboardingData, invalidateStaleOnboardingAuthorization.
+ *
+ * TRUST BOUNDARY:
+ *   ActiveOnboardingAuthFlowV1 = "authentication was prepared" (pre-auth)
+ *   CompletedAuthProofV1       = "authentication succeeded for this user" (post-auth)
+ *
+ * A guest draft claim requires the COMPLETED proof, never the pre-auth marker.
+ */
+export interface CompletedAuthProofV1 {
+  version: 1;
+  transactionFlowId: string;
+  userId: string;
+  status: 'authenticated' | 'consumed';
+  createdAt: string;
+}
+
+function isValidCompletedAuthProof(raw: unknown): raw is CompletedAuthProofV1 {
+  if (typeof raw !== 'object' || raw === null) return false;
+  const r = raw as Record<string, unknown>;
+  return r.version === 1 &&
+    typeof r.transactionFlowId === 'string' &&
+    typeof r.userId === 'string' &&
+    (r.status === 'authenticated' || r.status === 'consumed') &&
+    typeof r.createdAt === 'string';
+}
+
+export async function saveCompletedAuthProof(
+  transactionFlowId: string,
+  userId: string,
+): Promise<void> {
+  if (!transactionFlowId || !userId) {
+    throw new Error('saveCompletedAuthProof: missing transactionFlowId or userId');
+  }
+  const proof: CompletedAuthProofV1 = {
+    version: 1,
+    transactionFlowId,
+    userId,
+    status: 'authenticated',
+    createdAt: new Date().toISOString(),
+  };
+  // Write — must throw on failure
+  await AsyncStorage.setItem(COMPLETED_AUTH_PROOF_KEY, JSON.stringify(proof));
+  // Readback — verify the write landed
+  const readback = await readCompletedAuthProof();
+  if (!readback) {
+    throw new Error('saveCompletedAuthProof: readback returned null after write');
+  }
+  if (readback.transactionFlowId !== transactionFlowId ||
+      readback.userId !== userId ||
+      readback.status !== 'authenticated' ||
+      readback.version !== 1) {
+    throw new Error('saveCompletedAuthProof: readback field mismatch');
+  }
+}
+
+export async function readCompletedAuthProof(): Promise<CompletedAuthProofV1 | null> {
+  try {
+    const raw = await AsyncStorage.getItem(COMPLETED_AUTH_PROOF_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!isValidCompletedAuthProof(parsed)) {
+      await AsyncStorage.removeItem(COMPLETED_AUTH_PROOF_KEY);
+      return null;
+    }
+    // TTL check
+    const age = Date.now() - new Date(parsed.createdAt).getTime();
+    if (age > COMPLETED_AUTH_PROOF_TTL_MS) {
+      await AsyncStorage.removeItem(COMPLETED_AUTH_PROOF_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    try { await AsyncStorage.removeItem(COMPLETED_AUTH_PROOF_KEY); } catch { /* best-effort */ }
+    return null;
+  }
+}
+
+export async function consumeCompletedAuthProof(): Promise<void> {
+  const proof = await readCompletedAuthProof();
+  if (!proof) return;
+  if (proof.status === 'consumed') return;
+  if (proof.status !== 'authenticated') return;
+  const consumed: CompletedAuthProofV1 = {
+    ...proof,
+    status: 'consumed',
+  };
+  // Write — must throw on failure
+  await AsyncStorage.setItem(COMPLETED_AUTH_PROOF_KEY, JSON.stringify(consumed));
+  // Readback — verify the write landed
+  const readback = await readCompletedAuthProof();
+  if (!readback || readback.status !== 'consumed') {
+    throw new Error('consumeCompletedAuthProof: readback status is not consumed');
+  }
+}
+
+export async function clearCompletedAuthProof(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(COMPLETED_AUTH_PROOF_KEY);
+  } catch {
+    // Non-fatal
+  }
+}
+
+/**
+ * Invalidates all stale onboarding authorization state. Called when a user
+ * begins a DIRECT authentication (Google/Apple/email) without onboarding
+ * context. This ensures that abandoned pre-auth markers from a previous
+ * onboarding session cannot authorize a guest draft claim for the new,
+ * unrelated authentication.
+ *
+ * Clears:
+ *   - _sessionAuthFlowId (in-memory pre-auth marker)
+ *   - ActiveOnboardingAuthFlowV1 (persisted pre-auth marker)
+ *   - GuestDraftHandoffV1 (persisted handoff envelope)
+ *   - CompletedAuthProofV1 (any stale completed proof)
+ *
+ * Does NOT clear:
+ *   - The guest draft itself (isolated AsyncStorage data, harmless without authorization)
+ *   - The pending onboarding plan (may be cleared separately if needed)
+ *
+ * Throws if any AsyncStorage.removeItem fails — callers must handle the
+ * error to avoid silently continuing with stale authorization present.
+ */
+export async function invalidateStaleOnboardingAuthorization(): Promise<void> {
+  clearSessionAuthFlowId();
+  // Use direct AsyncStorage.removeItem calls — NOT the swallowing wrappers.
+  // If any removal fails, the error propagates so the caller can fail-closed
+  // instead of silently continuing with stale authorization still present.
+  await Promise.all([
+    AsyncStorage.removeItem(ACTIVE_AUTH_FLOW_KEY),
+    AsyncStorage.removeItem(GUEST_DRAFT_HANDOFF_KEY),
+    AsyncStorage.removeItem(COMPLETED_AUTH_PROOF_KEY),
+  ]);
+}
+
+export interface GuestDraftHandoffV1 {
+  version: 1;
+  transactionFlowId: string;
+  sourceGuestDraftFlowId: string;
+  status: 'awaiting_auth' | 'claimed';
+  claimedByUserId: string | null;
+  createdAt: string;
+}
+
+function isValidGuestDraftHandoff(raw: unknown): raw is GuestDraftHandoffV1 {
+  if (typeof raw !== 'object' || raw === null) return false;
+  const d = raw as Record<string, unknown>;
+  if (d.version !== 1) return false;
+  if (typeof d.transactionFlowId !== 'string' || !d.transactionFlowId) return false;
+  if (typeof d.sourceGuestDraftFlowId !== 'string' || !d.sourceGuestDraftFlowId) return false;
+  if (d.status !== 'awaiting_auth' && d.status !== 'claimed') return false;
+  if (d.claimedByUserId !== null && typeof d.claimedByUserId !== 'string') return false;
+  if (typeof d.createdAt !== 'string' || !d.createdAt) return false;
+  return true;
+}
+
+function isGuestDraftHandoffExpired(createdAt: string): boolean {
+  const created = new Date(createdAt).getTime();
+  if (!Number.isFinite(created)) return true;
+  return Date.now() - created > GUEST_DRAFT_HANDOFF_TTL_MS;
+}
+
+/**
+ * Persists the guest-draft handoff envelope, binding the pending-plan
+ * transactionFlowId to the exact guest draft sourceGuestDraftFlowId.
+ * Called by program-summary right before navigating to auth.
+ * Never throws.
+ */
+export async function saveGuestDraftHandoff(
+  transactionFlowId: string,
+  sourceGuestDraftFlowId: string,
+): Promise<void> {
+  try {
+    const envelope: GuestDraftHandoffV1 = {
+      version: 1,
+      transactionFlowId,
+      sourceGuestDraftFlowId,
+      status: 'awaiting_auth',
+      claimedByUserId: null,
+      createdAt: new Date().toISOString(),
+    };
+    await AsyncStorage.setItem(GUEST_DRAFT_HANDOFF_KEY, JSON.stringify(envelope));
+  } catch {
+    // Non-fatal — but callers must check via readGuestDraftHandoff before
+    // authorizing a claim. If the write failed, no claim can proceed.
+  }
+}
+
+/**
+ * Reads the guest-draft handoff envelope. Returns null if missing,
+ * corrupted, wrongly versioned, or expired (and clears stale entries).
+ * Never throws.
+ */
+export async function readGuestDraftHandoff(): Promise<GuestDraftHandoffV1 | null> {
+  try {
+    const raw = await AsyncStorage.getItem(GUEST_DRAFT_HANDOFF_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!isValidGuestDraftHandoff(parsed) || isGuestDraftHandoffExpired(parsed.createdAt)) {
+      await clearGuestDraftHandoff();
+      return null;
+    }
+    return parsed;
+  } catch {
+    await clearGuestDraftHandoff();
+    return null;
+  }
+}
+
+/** Removes the guest-draft handoff envelope. Never throws. */
+export async function clearGuestDraftHandoff(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(GUEST_DRAFT_HANDOFF_KEY);
+  } catch {
+    // Non-fatal
+  }
+}
+
+// ─── Guest-draft claim orchestration ──────────────────────────────────────
+// The dedicated claim decision function. useDraftOwner() describes ownership;
+// it does NOT authorize handoffs. This function is the single authority that
+// validates the transaction-binding envelope before transferring a guest
+// draft to an authenticated user.
+//
+// Required invariant — ALL must be true:
+//   1. A guest-draft handoff exists and is valid (not expired/corrupt)
+//   2. The handoff's transactionFlowId matches currentAuthFlowId — an
+//      independently resolved value from resolveCurrentAuthFlowId(), NOT
+//      from readGuestDraftHandoff(). An envelope cannot authenticate itself.
+//   3. The handoff's sourceGuestDraftFlowId matches the given guestFlowId
+//   4. The handoff status is 'awaiting_auth' (not already claimed)
+//   5. The current session user matches targetUserId
+//   6. The handoff has not been claimed by another user
+//
+// Crash-safe and idempotent claim steps:
+//   1. Validate active handoff and current session
+//   2. Read the exact bound guest draft
+//   3. Write and verify the user-owned copy
+//   4. Mark/consume the handoff for that user
+//   5. Delete the exact guest copy
+//   6. Clear the guest flow only when it still matches the consumed flow
+
+export type GuestDraftClaimResult = {
+  ok: boolean;
+  reason:
+    | 'claimed'
+    | 'already_owned'
+    | 'no_handoff'
+    | 'handoff_mismatch'
+    | 'already_claimed'
+    | 'no_guest_draft'
+    | 'session_changed'
+    | 'write_failed';
+};
+
+/**
+ * Orchestrates the guest-to-user draft claim with full transaction-binding
+ * validation. Delegates the actual draft transfer to claimDraftForUser from
+ * onboardingDraft.ts, but ONLY after verifying BOTH:
+ *
+ *   1. A CompletedAuthProofV1 exists with status='authenticated', proving
+ *      that a Supabase authentication result confirmed this exact user
+ *      for this exact onboarding transaction. This proof is created ONLY
+ *      after successful auth (in runOnboardingTransition), never before.
+ *
+ *   2. A GuestDraftHandoffV1 envelope exists with status='awaiting_auth',
+ *      binding the transactionFlowId to the guest draft flowId.
+ *
+ * The claim is authorized ONLY when:
+ *   handoff.transactionFlowId === proof.transactionFlowId
+ *   proof.userId === targetUserId
+ *   proof.status === 'authenticated'
+ *
+ * The proof is read from its own AsyncStorage key — it is NEVER passed
+ * from the caller. This eliminates any possibility of circularity.
+ *
+ * @param targetUserId   The authenticated user claiming the draft.
+ * @param guestFlowId    The guest draft flowId to claim (from useDraftOwner).
+ * @param getSessionUserId Function to read the current session userId.
+ */
+export async function claimGuestDraftWithHandoff(
+  targetUserId: string,
+  guestFlowId: string,
+  getSessionUserId?: () => string | undefined,
+): Promise<GuestDraftClaimResult> {
+  if (!targetUserId || !guestFlowId) {
+    return { ok: false, reason: 'handoff_mismatch' };
+  }
+
+  // Step 1: Read the completed auth proof (independently persisted post-auth)
+  const proof = await readCompletedAuthProof();
+  if (!proof) {
+    return { ok: false, reason: 'no_handoff' };
+  }
+
+  // A consumed proof means the claim already succeeded. We allow it through
+  // so the idempotent retry path (handoff.status === 'claimed') can detect
+  // the existing user copy and return 'already_owned'. A consumed proof
+  // cannot authorize a NEW claim — the handoff will be 'claimed' and the
+  // user copy check will handle it.
+  if (proof.status !== 'authenticated' && proof.status !== 'consumed') {
+    return { ok: false, reason: 'no_handoff' };
+  }
+
+  // The proof must bind to the exact user claiming the draft
+  if (proof.userId !== targetUserId) {
+    return { ok: false, reason: 'handoff_mismatch' };
+  }
+
+  // Step 2: Validate the handoff envelope
+  const handoff = await readGuestDraftHandoff();
+  if (!handoff) {
+    return { ok: false, reason: 'no_handoff' };
+  }
+
+  // The handoff's transaction must match the completed proof's transaction
+  if (handoff.transactionFlowId !== proof.transactionFlowId) {
+    return { ok: false, reason: 'handoff_mismatch' };
+  }
+  if (handoff.sourceGuestDraftFlowId !== guestFlowId) {
+    return { ok: false, reason: 'handoff_mismatch' };
+  }
+
+  // Verify handoff is still active and unconsumed
+  if (handoff.status === 'claimed') {
+    // Idempotent retry: if claimed by the same user, check if user copy exists
+    if (handoff.claimedByUserId === targetUserId) {
+      // Session must still match even for idempotent retry
+      if (getSessionUserId && getSessionUserId() !== targetUserId) {
+        return { ok: false, reason: 'session_changed' };
+      }
+      // Check if the user already has the draft (crash recovery)
+      const existing = await readOnboardingDraftForOwner({ kind: 'authenticated', userId: targetUserId });
+      if (existing !== null) {
+        // Clean up stale guest copy if it still exists
+        await clearOnboardingDraftForOwner({ kind: 'guest', flowId: guestFlowId }).catch(() => {});
+        await clearGuestFlowId();
+        // If proof is still 'authenticated' (consumption failed on previous run),
+        // attempt to consume it now. This is idempotent — if already consumed,
+        // consumeCompletedAuthProof is a no-op.
+        if (proof.status === 'authenticated') {
+          try {
+            await consumeCompletedAuthProof();
+          } catch {
+            // Non-fatal — claim already succeeded, handoff is marked.
+            // A future retry will attempt consumption again.
+          }
+        }
+        return { ok: true, reason: 'already_owned' };
+      }
+      // Handoff says claimed but user copy is gone — cannot re-claim
+      return { ok: false, reason: 'already_claimed' };
+    }
+    // Claimed by a different user
+    return { ok: false, reason: 'already_claimed' };
+  }
+
+  // Safety-net guard: a consumed proof with an unconsumed handoff should
+  // never occur under the strict write order (handoff is marked before proof
+  // is consumed). This guard handles legacy data or storage corruption.
+  // If the user copy exists, the claim already succeeded — return already_owned.
+  // If not, reject as a potential replay.
+  if (proof.status === 'consumed') {
+    const existing = await readOnboardingDraftForOwner({ kind: 'authenticated', userId: targetUserId });
+    if (existing !== null) {
+      // User copy exists — claim already succeeded, clean up and return
+      await clearOnboardingDraftForOwner({ kind: 'guest', flowId: guestFlowId }).catch(() => {});
+      await clearGuestFlowId();
+      return { ok: true, reason: 'already_owned' };
+    }
+    // No user copy — genuine replay attempt, reject
+    return { ok: false, reason: 'already_claimed' };
+  }
+
+  // Verify current session matches target user
+  if (getSessionUserId && getSessionUserId() !== targetUserId) {
+    return { ok: false, reason: 'session_changed' };
+  }
+
+  // Steps 2-6: delegate to claimDraftForUser (crash-resistant)
+  const claimResult = await claimDraftForUser(targetUserId, guestFlowId, getSessionUserId);
+
+  if (!claimResult.ok) {
+    // Map claimDraftForUser reasons to our result type
+    if (claimResult.reason === 'no_guest_draft') {
+      return { ok: false, reason: 'no_guest_draft' };
+    }
+    if (claimResult.reason === 'session_changed') {
+      return { ok: false, reason: 'session_changed' };
+    }
+    if (claimResult.reason === 'write_failed') {
+      return { ok: false, reason: 'write_failed' };
+    }
+    // flow_mismatch or other — treat as handoff mismatch
+    return { ok: false, reason: 'handoff_mismatch' };
+  }
+
+  // Claim succeeded — durably mark the handoff as claimed for this user.
+  // This MUST succeed before we consume the proof. If it fails, the proof
+  // remains 'authenticated' and a retry will detect the existing user copy,
+  // re-attempt the handoff mark, and only then consume the proof.
+  const claimedHandoff: GuestDraftHandoffV1 = {
+    ...handoff,
+    status: 'claimed',
+    claimedByUserId: targetUserId,
+  };
+  try {
+    await AsyncStorage.setItem(GUEST_DRAFT_HANDOFF_KEY, JSON.stringify(claimedHandoff));
+  } catch {
+    // Handoff write failed — proof must remain authenticated.
+    // Return write_failed so the caller knows the transition is incomplete.
+    // A retry will find: user copy exists, handoff=awaiting_auth, proof=authenticated.
+    return { ok: false, reason: 'write_failed' };
+  }
+  // Readback — verify the handoff write landed
+  const handoffReadback = await readGuestDraftHandoff();
+  if (!handoffReadback || handoffReadback.status !== 'claimed' || handoffReadback.claimedByUserId !== targetUserId) {
+    // Handoff readback failed — proof must remain authenticated.
+    return { ok: false, reason: 'write_failed' };
+  }
+
+  // Handoff is durably marked claimed — now consume the completed auth proof.
+  // This is the exactly-once consumption that prevents replay. If this fails,
+  // a retry will find: user copy exists, handoff=claimed, proof=authenticated.
+  // The retry will see handoff.status=claimed and return already_owned, then
+  // attempt to consume the proof again idempotently.
+  try {
+    await consumeCompletedAuthProof();
+  } catch {
+    // Proof consumption failed — but the claim already succeeded and the
+    // handoff is durably marked. A retry will return already_owned and
+    // re-attempt consumption. This is safe.
+  }
+
+  // Clear the guest flow only when it still matches the consumed flow
+  // (claimDraftForUser already does this, but we ensure it here too)
+  try {
+    const currentFlow = await getOrCreateGuestFlowId();
+    if (currentFlow === guestFlowId) {
+      await clearGuestFlowId();
+    }
+  } catch {
+    // Non-fatal — guest flow ID cleanup is cosmetic
+  }
+
+  return { ok: true, reason: claimResult.reason === 'already_owned' ? 'already_owned' : 'claimed' };
+}
+
 /** Removes the pending payload. Never throws. Safe to call even if absent. */
 export async function clearPendingOnboardingPlan(): Promise<void> {
   try {
@@ -653,14 +1143,18 @@ export async function clearAllPendingOnboardingData(): Promise<void> {
     clearPendingOnboardingPlan(),
     clearAuthHandoff(),
     clearActiveOnboardingAuthFlow(),
+    clearGuestDraftHandoff(),
+    clearCompletedAuthProof(),
   ]);
 }
 
 /**
  * Auth-boundary cleanup for session expiry (_layout.tsx clearInvalidAuthSession).
  *
- * The in-memory draft has no ownerUserId — it must be cleared unconditionally
- * so that account A's answers cannot leak to account B after a session expiry.
+ * All onboarding drafts are purged — session expiry is an explicit reset
+ * scenario, not a simple session change. The physical key isolation means
+ * user B's draft was never visible to user A anyway, but purging on
+ * session expiry ensures no stale drafts linger.
  *
  * The durable pending payload is cleared only if it is owned by a specific
  * user (ownerUserId is set). An unclaimed pre-auth payload (ownerUserId null)
@@ -670,7 +1164,7 @@ export async function clearAllPendingOnboardingData(): Promise<void> {
  * Never throws.
  */
 export async function clearOnboardingStateForSessionExpiry(): Promise<void> {
-  await clearOnboardingDraft();
+  await purgeAllOnboardingDrafts();
   try {
     const pending = await readPendingOnboardingPlan();
     if (pending?.ownerUserId) {

@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { router } from 'expo-router';
 import { hapticLight } from '@/utils/haptics';
-import { readOnboardingDraft, updateOnboardingDraft } from '@/lib/onboardingDraft';
+import { readOnboardingDraftForOwner, updateOnboardingDraftForOwner } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 import {
   TOTAL_ONBOARDING_PHASES, phaseStepNumber, QUESTIONNAIRE_BACK_TARGETS,
 } from '@/lib/onboardingQuestionnaire';
@@ -18,9 +19,12 @@ export default function OnboardingMotivationReassuranceScreen() {
   // never left showing stale reassurance text (in-session edits). If the
   // route is ever opened without a valid answer, fall back to the
   // question that must produce one instead of showing generic text. ──────
+  const { owner: draftOwner } = useDraftOwner();
+
   useEffect(() => {
+    if (!draftOwner) return;
     let cancelled = false;
-    readOnboardingDraft().then(draft => {
+    readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
       if (!draft?.firstName) {
         router.replace('/onboarding-v2/name');
@@ -33,15 +37,17 @@ export default function OnboardingMotivationReassuranceScreen() {
       setContent(MOTIVATION_REASSURANCE_CONTENT[draft.motivationReason]);
     });
     return () => { cancelled = true; };
-  }, []);
+
+  }, [draftOwner]);
 
   function handleBack() {
     router.replace(QUESTIONNAIRE_BACK_TARGETS.motivation_reassurance!);
   }
 
   async function handleContinue() {
+    if (!draftOwner) return;
     hapticLight();
-    await updateOnboardingDraft({ currentStep: 'learning_mode' });
+    await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'learning_mode' });
     router.push('/onboarding-v2/learning-mode');
   }
 

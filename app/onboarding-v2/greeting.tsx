@@ -6,7 +6,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { hapticLight, hapticSelection } from '@/utils/haptics';
-import { readOnboardingDraft } from '@/lib/onboardingDraft';
+import { readOnboardingDraftForOwner } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 
 // ─── palette — identical tokens to Splash/Welcome/Name (kept local, not
 // exported from app/index.tsx, to avoid touching that file) ────────────────
@@ -240,9 +241,12 @@ export default function OnboardingGreetingScreen() {
   }, [reduceMotion]);
 
   // ── read firstName from the existing draft — never write to it ──
+  const { owner: draftOwner } = useDraftOwner();
+
   useEffect(() => {
+    if (!draftOwner) return;
     let cancelled = false;
-    readOnboardingDraft().then(draft => {
+    readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
       if (!draft?.firstName) {
         // Defensive only: this screen has nothing to greet without a name.
@@ -253,7 +257,8 @@ export default function OnboardingGreetingScreen() {
       setDraftChecked(true);
     });
     return () => { cancelled = true; };
-  }, []);
+
+  }, [draftOwner]);
 
   // ── scene start ──
   useEffect(() => {

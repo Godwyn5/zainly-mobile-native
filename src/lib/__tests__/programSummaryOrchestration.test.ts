@@ -4,6 +4,21 @@ import { orchestrateAuthedFinalize } from '../programSummaryOrchestration';
 import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 
+jest.mock('@react-native-async-storage/async-storage', () => {
+  const store: Record<string, string> = {};
+  const mock = {
+    getItem: jest.fn(async (key: string) => (key in store ? store[key] : null)),
+    setItem: jest.fn(async (key: string, value: string) => { store[key] = value; }),
+    removeItem: jest.fn(async (key: string) => { delete store[key]; }),
+    getAllKeys: jest.fn(async () => Object.keys(store)),
+    multiGet: jest.fn(async (keys: string[]) => keys.map(k => [k, k in store ? store[k] : null])),
+    multiSet: jest.fn(async (entries: [string, string][]) => { entries.forEach(([k, v]) => { store[k] = v; }); }),
+    multiRemove: jest.fn(async (keys: string[]) => { keys.forEach(k => { delete store[k]; }); }),
+    clear: jest.fn(async () => { Object.keys(store).forEach(k => delete store[k]); }),
+  };
+  return { __esModule: true, default: mock };
+});
+
 jest.mock('@/lib/onboardingFinalize', () => ({
   finalizeOnboardingV2PlanWithPremiumGate: jest.fn(),
 }));

@@ -5,7 +5,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { hapticLight, hapticSelection, hapticWarning } from '@/utils/haptics';
-import { readOnboardingDraft, updateOnboardingDraft, LearningMode } from '@/lib/onboardingDraft';
+import { readOnboardingDraftForOwner, updateOnboardingDraftForOwner, LearningMode } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 import {
   TOTAL_ONBOARDING_PHASES, phaseStepNumber, knownSurahsBackTarget,
 } from '@/lib/onboardingQuestionnaire';
@@ -38,9 +39,12 @@ export default function OnboardingKnownSurahsScreen() {
   const [startingSurah, setStartingSurah] = useState<number | null>(null);
   const [knownSurahs, setKnownSurahs] = useState<number[]>([]);
 
+  const { owner: draftOwner } = useDraftOwner();
+
   useEffect(() => {
+    if (!draftOwner) return;
     let cancelled = false;
-    readOnboardingDraft().then(draft => {
+    readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
       if (!draft?.firstName) { router.replace('/onboarding-v2/name'); return; }
       if (!draft.motivationReason) { router.replace('/onboarding-v2/motivation'); return; }
@@ -59,7 +63,8 @@ export default function OnboardingKnownSurahsScreen() {
       setDraftChecked(true);
     });
     return () => { cancelled = true; };
-  }, []);
+
+  }, [draftOwner]);
 
   const allKnownSelected = knownSurahs.length === ZAINLY_ORDER.length;
   const juzAmmaFullySelected = JUZ_AMMA_SURAH_NUMS.every(n => knownSurahs.includes(n));
@@ -105,8 +110,9 @@ export default function OnboardingKnownSurahsScreen() {
 
   async function handleContinue() {
     if (allKnownSelected) { hapticWarning(); return; }
+    if (!draftOwner) return;
     hapticLight();
-    const draft = await updateOnboardingDraft({ currentStep: 'experience_choice', knownSurahs });
+    const draft = await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'experience_choice', knownSurahs });
     // Last common gate before leaving the block — same completeness check
     // as experience-choice.tsx, defensive against any UI bug upstream.
     const check = buildPlanInputFromDraft(draft, 'pending-signup');

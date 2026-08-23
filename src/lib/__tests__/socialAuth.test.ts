@@ -61,6 +61,8 @@ jest.mock('@/lib/pendingOnboardingPlan', () => ({
   clearSessionAuthFlowId: jest.fn(),
   readPendingOnboardingPlan: jest.fn(async () => ({ flowId: 'flow-123', ownerUserId: 'user-A' })),
   clearPendingOnboardingIfMatches: jest.fn(async () => 'cleared'),
+  invalidateStaleOnboardingAuthorization: jest.fn(async () => {}),
+  saveCompletedAuthProof: jest.fn(async () => {}),
 }));
 
 jest.mock('@/db/plans', () => ({
@@ -74,6 +76,18 @@ jest.mock('@/db/progress', () => ({
 jest.mock('@/queries', () => ({
   planQueryOptions: (userId: string) => ({ queryKey: ['plan', userId], queryFn: jest.fn(), enabled: !!userId }),
   progressQueryOptions: (userId: string) => ({ queryKey: ['progress', userId], queryFn: jest.fn(), enabled: !!userId }),
+}));
+
+jest.mock('@/lib/prepareAuthenticatedLaunch', () => ({
+  prepareAuthenticatedLaunch: jest.fn(),
+  purgeUserScopedCaches: jest.fn(),
+}));
+
+jest.mock('@/lib/onboardingDraft', () => ({
+  clearOnboardingDraftForOwner: jest.fn(async () => {}),
+  saveOnboardingDraft: jest.fn(async () => {}),
+  readOnboardingDraft: jest.fn(async () => null),
+  claimDraftForUser: jest.fn(async () => null),
 }));
 
 // Apple mock

@@ -17,6 +17,7 @@ import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 import {
   clearPendingOnboardingIfMatches,
   clearSessionAuthFlowId,
+  saveCompletedAuthProof,
 } from '@/lib/pendingOnboardingPlan';
 
 jest.mock('@/lib/onboardingFinalize', () => ({
@@ -38,6 +39,7 @@ jest.mock('@/lib/pendingOnboardingPlan', () => ({
   clearSessionAuthFlowId: jest.fn(),
   readPendingOnboardingPlan: jest.fn(async () => ({ flowId: 'flow-123', ownerUserId: 'user-A' })),
   clearPendingOnboardingIfMatches: jest.fn(async () => 'cleared'),
+  saveCompletedAuthProof: jest.fn(async () => {}),
 }));
 jest.mock('@/db/plans', () => ({
   fetchPlan: jest.fn(async () => ({ id: 'plan-1' })),
@@ -167,6 +169,23 @@ describe('runOnboardingTransition', () => {
     expect(result.status).toBe('error');
     expect((result as { error: { kind: string } }).error.kind).toBe('handoff_error');
     expect(hasActiveTransitionLease()).toBe(false);
+    expect(clearPendingOnboardingIfMatches).not.toHaveBeenCalled();
+  });
+
+  it('returns proof_persist_failed when saveCompletedAuthProof throws — pending NOT cleared, lease released', async () => {
+    const leaseId = await setupLease('flow-123');
+    queryClient.setQueryData(['plan', 'user-A'], { id: 'plan-1' });
+    queryClient.setQueryData(['progress', 'user-A'], { id: 'progress-1' });
+
+    // Inject proof persistence failure
+    (saveCompletedAuthProof as jest.Mock).mockRejectedValueOnce(new Error('Storage write failed'));
+
+    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId, 'gen-1', VISUAL);
+    expect(result.status).toBe('error');
+    expect((result as { error: { kind: string } }).error.kind).toBe('proof_persist_failed');
+    // Lease is released
+    expect(hasActiveTransitionLease()).toBe(false);
+    // Pending payload is NOT cleared — recovery state preserved
     expect(clearPendingOnboardingIfMatches).not.toHaveBeenCalled();
   });
 

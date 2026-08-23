@@ -35,7 +35,32 @@ import {
 
 export type PrepareAuthenticatedLaunchResult =
   | { status: 'ready' }
+  | { status: 'account_not_found' }
   | { status: 'error'; error: unknown };
+
+// Query keys scoped to a single userId — every dashboard-critical and
+// non-critical source prefetched by this module. Shared by the `force`
+// reset below and by purgeUserScopedCaches so both stay in sync.
+const USER_SCOPED_QUERY_PREFIXES = [
+  'plan',
+  'progress',
+  'dueReviews',
+  'profile',
+  'revenueCatCustomerInfo',
+  'pendingOnboarding',
+] as const;
+
+/**
+ * Fully evicts (not just invalidates) every dashboard-critical and
+ * non-critical query cached for this exact userId. Used by the
+ * account_not_found fail-closed sign-out — purges only this user's
+ * cached data, never a global queryClient.clear().
+ */
+export function purgeUserScopedCaches(queryClient: QueryClient, userId: string): void {
+  for (const prefix of USER_SCOPED_QUERY_PREFIXES) {
+    queryClient.removeQueries({ queryKey: [prefix, userId] });
+  }
+}
 
 export async function prepareAuthenticatedLaunch(
   queryClient: QueryClient,
@@ -47,30 +72,12 @@ export async function prepareAuthenticatedLaunch(
     // stale state for this userId so fetchQuery invokes a fresh queryFn
     // instead of reusing a cached error or pending promise.
     if (opts?.force) {
-      await queryClient.resetQueries({
-        queryKey: ['plan', userId],
-        type: 'active',
-      }).catch(() => {});
-      await queryClient.resetQueries({
-        queryKey: ['progress', userId],
-        type: 'active',
-      }).catch(() => {});
-      await queryClient.resetQueries({
-        queryKey: ['dueReviews', userId],
-        type: 'active',
-      }).catch(() => {});
-      await queryClient.resetQueries({
-        queryKey: ['profile', userId],
-        type: 'active',
-      }).catch(() => {});
-      await queryClient.resetQueries({
-        queryKey: ['revenueCatCustomerInfo', userId],
-        type: 'active',
-      }).catch(() => {});
-      await queryClient.resetQueries({
-        queryKey: ['pendingOnboarding', userId],
-        type: 'active',
-      }).catch(() => {});
+      for (const prefix of USER_SCOPED_QUERY_PREFIXES) {
+        await queryClient.resetQueries({
+          queryKey: [prefix, userId],
+          type: 'active',
+        }).catch(() => {});
+      }
     }
 
     // ── Pending onboarding detection ───────────────────────────────────
@@ -164,7 +171,15 @@ export async function prepareAuthenticatedLaunch(
       queryClient.fetchQuery(pendingOnboardingQueryOptions(userId)),
     ]);
 
-    // Check critical results — any rejection means global error.
+    // ── Typed launch decision ──────────────────────────────────────────
+    //   - Both queries rejected → genuine network/RLS error → error screen
+    //   - Both queries fulfilled, both null → no Zainly account recognized
+    //     for this identity (no pending onboarding either, checked above)
+    //     → account_not_found: the gate fails closed (local sign-out) and
+    //     shows "Compte introuvable" on the auth screen
+    //   - Both queries fulfilled, both non-null → complete program → ready
+    //   - One null, one non-null → inconsistent state → error (partial data)
+    //   - One rejected, one fulfilled → genuine error on the rejected query
     const criticalFailure = criticalResults.find(
       (r) => r.status === 'rejected',
     );
@@ -175,7 +190,22 @@ export async function prepareAuthenticatedLaunch(
       };
     }
 
-    return { status: 'ready' };
+    const planData = (criticalResults[0] as PromiseFulfilledResult<unknown>).value;
+    const progressData = (criticalResults[1] as PromiseFulfilledResult<unknown>).value;
+
+    if (!planData && !progressData) {
+      return { status: 'account_not_found' };
+    }
+
+    if (planData && progressData) {
+      return { status: 'ready' };
+    }
+
+    // Inconsistent state — one exists but not the other
+    return {
+      status: 'error',
+      error: new Error('inconsistent_state'),
+    };
   } catch (error) {
     return { status: 'error', error };
   }

@@ -8,13 +8,22 @@ import { router } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { hapticLight } from '@/utils/haptics';
 import { useAuthStore } from '@/store/authStore';
-import { readOnboardingDraft, LearningMode } from '@/lib/onboardingDraft';
+import {
+  readOnboardingDraftForOwner,
+  draftKeyForOwner,
+  type LearningMode,
+  type OnboardingDraftOwner,
+} from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 import { computePlan, isPlanError, PlanResult } from '@/core/planEngine';
 import {
   buildPlanInputFromDraft, isPlanValidationError, routeForOnboardingStep,
   PENDING_SIGNUP_USER_ID,
 } from '@/lib/onboardingPlanValidation';
-import { savePendingOnboardingPlan, saveActiveOnboardingAuthFlow, setSessionAuthFlowId } from '@/lib/pendingOnboardingPlan';
+import {
+  savePendingOnboardingPlan, saveActiveOnboardingAuthFlow, setSessionAuthFlowId,
+  saveGuestDraftHandoff, claimGuestDraftWithHandoff,
+} from '@/lib/pendingOnboardingPlan';
 import { orchestrateAuthedFinalize } from '@/lib/programSummaryOrchestration';
 import { createSubmissionLock } from '@/lib/submissionLock';
 import {
@@ -57,6 +66,13 @@ export default function OnboardingProgramSummaryScreen() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const submissionLock = useRef(createSubmissionLock());
+  const currentOwnerKeyRef = useRef<string | null>(null);
+  const draftOwnerRef = useRef<OnboardingDraftOwner | null>(null);
+
+  // ── Compute draft owner ──
+  const { owner: draftOwner, sourceGuestFlowId } = useDraftOwner();
+  const ownerKey = draftOwner ? draftKeyForOwner(draftOwner) : null;
+  draftOwnerRef.current = draftOwner;
 
   useEffect(() => {
     AccessibilityInfo.isReduceMotionEnabled()
@@ -66,10 +82,32 @@ export default function OnboardingProgramSummaryScreen() {
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const draft = await readOnboardingDraft();
-      if (cancelled) return;
+    let active = true;
+    currentOwnerKeyRef.current = ownerKey;
+
+    // Clear owner-derived state immediately on owner change so stale
+    // data from a previous owner is never visible.
+    setPlanResult(null);
+    setLearningMode(null);
+    setKnownCount(0);
+    setReady(false);
+
+    if (!ownerKey) {
+      setReady(true);
+      return () => { active = false; };
+    }
+
+    const owner = draftOwnerRef.current;
+    if (!owner) {
+      setReady(true);
+      return () => { active = false; };
+    }
+
+    void (async () => {
+      const draft = await readOnboardingDraftForOwner(owner);
+      if (!active) return;
+      if (currentOwnerKeyRef.current !== ownerKey) return;
+
       if (!draft) {
         router.replace('/onboarding-v2/experience-choice');
         return;
@@ -89,8 +127,9 @@ export default function OnboardingProgramSummaryScreen() {
       setKnownCount(draft.knownSurahs.length);
       setReady(true);
     })();
-    return () => { cancelled = true; };
-  }, []);
+
+    return () => { active = false; };
+  }, [ownerKey]);
 
   const titleOpacity = useRef(new Animated.Value(0)).current;
   const titleY        = useRef(new Animated.Value(12)).current;
@@ -134,22 +173,52 @@ export default function OnboardingProgramSummaryScreen() {
     let navigated = false;
 
     try {
-      // Re-read the full draft (only learningMode/knownCount were kept in
-      // state above) — the in-memory draft is still the source of truth for
-      // this write, it just isn't durable past this exact point.
-      const draft = await readOnboardingDraft();
+      // Re-read the full draft for this owner — the draft is the source of
+      // truth for this write, it just isn't durable past this exact point.
+      if (!draftOwner) {
+        setSaveError("Ton programme n'a pas pu être préparé. Reviens en arrière et réessaie.");
+        return;
+      }
+      const draft = await readOnboardingDraftForOwner(draftOwner);
       if (!draft || !draft.learningMode) {
-        setSaveError('Ton programme n’a pas pu être préparé. Reviens en arrière et réessaie.');
+        setSaveError("Ton programme n'a pas pu être préparé. Reviens en arrière et réessaie.");
         return;
       }
 
       // ── Authenticated user path — finalize directly, no signup needed ──
       // An authenticated user without a plan reached V2 from the dashboard
-      // CTA. The draft is in memory, so finalizeOnboardingV2Plan reads it
-      // directly (no pending payload, no authHandoff, no flowId required).
+      // CTA. The draft is in AsyncStorage under the user's key, so
+      // finalizeOnboardingV2Plan reads it directly (no pending payload,
+      // no authHandoff, no flowId required).
       // The premium gate is still applied for 'unlimited' experience.
       const authedUserId = session?.user?.id;
       if (authedUserId) {
+        // ── Claim the guest draft for this authenticated user ──────────
+        // The claim is authorized ONLY when a CompletedAuthProofV1 exists
+        // in AsyncStorage, proving that a Supabase authentication result
+        // confirmed this exact user for this exact onboarding transaction.
+        // The proof is created by runOnboardingTransition() after successful
+        // auth — never before. It is read internally by
+        // claimGuestDraftWithHandoff from its own AsyncStorage key, never
+        // passed from the caller.
+        //
+        // A direct Google/Apple/email login without onboarding context
+        // invalidates stale onboarding authorization → no proof → no claim.
+        //
+        // sourceGuestFlowId from useDraftOwner provides the guest draft
+        // flowId to claim, but does NOT authorize the claim itself.
+        if (sourceGuestFlowId) {
+          const claimResult = await claimGuestDraftWithHandoff(
+            authedUserId,
+            sourceGuestFlowId,
+            () => useAuthStore.getState().session?.user?.id,
+          );
+          if (!claimResult.ok) {
+            setSaveError('Une erreur est survenue. Redémarre l\'onboarding.');
+            return;
+          }
+        }
+
         const result = await orchestrateAuthedFinalize(
           queryClient,
           authedUserId,
@@ -180,12 +249,16 @@ export default function OnboardingProgramSummaryScreen() {
           case 'handoff_failed':
             setSaveError("Ton programme est enregistré mais n'a pas pu être chargé. Réessaie.");
             return;
+          case 'draft_owner_mismatch':
+            setSaveError('Une erreur est survenue. Redémarre l\'onboarding.');
+            return;
           case 'navigate':
           case 'navigate_clear_failed':
+            // Draft is cleared by orchestrateAuthedFinalize — no need to clear here.
             try {
               router.replace('/(app)/(tabs)');
               navigated = true;
-            } catch (navErr) {
+            } catch {
               setSaveError('Erreur de navigation. Réessaie.');
             }
             return;
@@ -223,13 +296,21 @@ export default function OnboardingProgramSummaryScreen() {
       // Also set the in-memory session var as same-session fast path.
       await saveActiveOnboardingAuthFlow(saved.flowId);
       setSessionAuthFlowId(saved.flowId);
+      // Write the guest-draft handoff envelope — binds the pending plan
+      // transactionFlowId to the exact guest draft flowId. This is the
+      // durable proof that the current authentication originated from
+      // this specific guest onboarding parcours. Without it, a stale
+      // guest flowId cannot authorize a draft claim after auth.
+      if (sourceGuestFlowId) {
+        await saveGuestDraftHandoff(saved.flowId, sourceGuestFlowId);
+      }
       // flowId is passed explicitly so each auth route can supply it as
       // proof of the originating parcours — prevents a Welcome login from
       // claiming a pending payload.
       try {
         router.push(`/(auth)/signup-methods?context=onboarding&flowId=${encodeURIComponent(saved.flowId)}`);
         navigated = true;
-      } catch (navErr) {
+      } catch {
         setSaveError('Erreur de navigation. Réessaie.');
       }
     } finally {

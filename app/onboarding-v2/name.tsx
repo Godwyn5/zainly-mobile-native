@@ -1,18 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  View, TextInput, TouchableOpacity, StyleSheet,
+  View, Text, TextInput, TouchableOpacity, StyleSheet,
   Animated, Easing, StatusBar, Platform, KeyboardAvoidingView,
-  AccessibilityInfo,
+  AccessibilityInfo, Keyboard,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuthStore } from '@/store/authStore';
 import { usePlan } from '@/hooks/usePlan';
 import { hapticLight } from '@/utils/haptics';
 import {
-  readOnboardingDraft, updateOnboardingDraft, clearOnboardingDraft,
+  readOnboardingDraftForOwner, updateOnboardingDraftForOwner, clearOnboardingDraftForOwner,
   normalizeFirstName, isValidFirstName,
 } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 
 // ─── palette — same identity as Splash/Welcome (kept local, not exported
 // from app/index.tsx, to avoid touching that file beyond its CTA target) ──
@@ -38,6 +39,8 @@ export default function OnboardingNameScreen() {
   const isSubmittingRef = useRef(false);
   const wasValidRef      = useRef(false);
   const mountedRef       = useRef(true);
+  const backLockedRef    = useRef(false);
+  const insets           = useSafeAreaInsets();
 
   // ── entrance animation values ──
   const titleOpacity  = useRef(new Animated.Value(0)).current;
@@ -57,6 +60,24 @@ export default function OnboardingNameScreen() {
     return () => { mountedRef.current = false; };
   }, []);
 
+  // ── keyboard layout synchronization (iOS) ──
+  // KeyboardAvoidingView updates padding via state, which triggers an
+  // instant layout pass. Without synchronization, the button jumps while
+  // the keyboard is still animating. Keyboard.scheduleLayoutAnimation
+  // configures the native layout system to animate the next layout change
+  // using the keyboard's own duration and easing curve, so the button
+  // rises and descends in perfect sync with the keyboard.
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    const showSub = Keyboard.addListener('keyboardWillShow', (e) => {
+      Keyboard.scheduleLayoutAnimation(e);
+    });
+    const hideSub = Keyboard.addListener('keyboardWillHide', (e) => {
+      Keyboard.scheduleLayoutAnimation(e);
+    });
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
+
   // ── plan-exists guard: redirect authenticated users who already have a ──
   // ── plan back to the dashboard. The plan query (usePlan) is the same ─────
   // ── authoritative source the dashboard uses. While planLoading is true ──
@@ -66,30 +87,35 @@ export default function OnboardingNameScreen() {
     if (!ready || !userId) return;
     if (planLoading) return;
     if (existingPlan) {
-      clearOnboardingDraft();
+      clearOnboardingDraftForOwner({ kind: 'authenticated', userId }).catch(() => {});
       router.replace('/(app)/(tabs)');
     }
   }, [ready, userId, existingPlan, planLoading]);
 
-  // ── resume: prefill firstName, or skip ahead if a later step is pending ──
+  // ── Compute the draft owner based on auth state ──
+  // Authenticated users own their draft by userId. Guests use a guest
+  // owner with a real flowId from getOrCreateGuestFlowId — never empty.
+  const { owner: draftOwner } = useDraftOwner();
+
+  // ── resume: prefill firstName from a previous session ──
+  // This screen never auto-skips to a later step. The central router
+  // decides which onboarding step to show; the name screen only handles
+  // name entry and restoration.
   useEffect(() => {
     if (!ready) return;
+    if (!draftOwner) return; // guest flowId not yet resolved
     // Don't proceed with draft resume until the plan-exists guard has had
     // a chance to run for authenticated users.
     if (userId && planLoading) return;
 
     let cancelled = false;
-    readOnboardingDraft().then(draft => {
+    readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
-      if (draft?.currentStep === 'greeting') {
-        router.replace('/onboarding-v2/greeting');
-        return;
-      }
       if (draft?.firstName) setFirstName(draft.firstName);
       setDraftChecked(true);
     });
     return () => { cancelled = true; };
-  }, [ready, userId, planLoading]);
+  }, [ready, userId, planLoading, draftOwner]);
 
   // ── entrance choreography — runs once the draft check has resolved ──
   useEffect(() => {
@@ -129,21 +155,41 @@ export default function OnboardingNameScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isValid]);
 
+  function handleBack() {
+    if (backLockedRef.current) return;
+    backLockedRef.current = true;
+    hapticLight();
+    // Persist the current firstName so the draft resume logic can restore
+    // it when the user returns. If the field is empty, persist null so a
+    // stale old name is not restored on re-entry.
+    if (draftOwner) {
+      const trimmed = firstName.trim();
+      updateOnboardingDraftForOwner(draftOwner, { firstName: trimmed || null }).catch(() => {});
+    }
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/welcome');
+    }
+    setTimeout(() => { backLockedRef.current = false; }, 600);
+  }
+
   async function handleContinue() {
     if (isSubmittingRef.current) return;
+    if (!draftOwner) return;
     const normalized = normalizeFirstName(firstName);
     if (!isValidFirstName(normalized)) return;
 
     isSubmittingRef.current = true;
     hapticLight();
 
-    await updateOnboardingDraft({ currentStep: 'greeting', firstName: normalized });
+    await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'greeting', firstName: normalized });
     router.replace('/onboarding-v2/greeting');
   }
 
   // ── avoid flashing an empty field before the draft check resolves ──
   // ── also wait for plan query if authenticated (plan-exists guard) ──────
-  if (!ready || !draftChecked || (userId && planLoading)) {
+  if (!ready || !draftChecked || !draftOwner || (userId && planLoading)) {
     return <View style={styles.root} />;
   }
 
@@ -166,9 +212,20 @@ export default function OnboardingNameScreen() {
       <View pointerEvents="none" style={styles.motifLineA} />
       <View pointerEvents="none" style={styles.motifLineB} />
 
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <SafeAreaView style={styles.safe}>
-          <View style={styles.shell}>
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={[styles.shell, { paddingBottom: insets.bottom + 10 }]}>
+
+            <TouchableOpacity
+              onPress={handleBack}
+              activeOpacity={0.6}
+              style={styles.backButton}
+              accessibilityRole="button"
+              accessibilityLabel="Retour à l'écran de bienvenue"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.backChevron}>‹</Text>
+            </TouchableOpacity>
 
             <View style={styles.content}>
               <Animated.Text
@@ -215,8 +272,8 @@ export default function OnboardingNameScreen() {
             </Animated.View>
 
           </View>
-        </SafeAreaView>
-      </KeyboardAvoidingView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </View>
   );
 }
@@ -260,7 +317,18 @@ const styles = StyleSheet.create({
   shell: {
     flex: 1,
     paddingHorizontal: 28,
-    paddingBottom: 10,
+  },
+  backButton: {
+    width: 44,
+    height: 44,
+    marginLeft: -10,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+  },
+  backChevron: {
+    fontSize: 26,
+    fontWeight: '600',
+    color: SPLASH_GREEN,
   },
   content: {
     flex: 1,

@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { router } from 'expo-router';
 import { hapticLight } from '@/utils/haptics';
-import { readOnboardingDraft, updateOnboardingDraft, LearningMode } from '@/lib/onboardingDraft';
+import { readOnboardingDraftForOwner, updateOnboardingDraftForOwner, LearningMode } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 import {
   TOTAL_ONBOARDING_PHASES, phaseStepNumber, QUESTIONNAIRE_BACK_TARGETS,
 } from '@/lib/onboardingQuestionnaire';
@@ -18,9 +19,12 @@ export default function OnboardingLearningModeReassuranceScreen() {
   // ── every mount re-reads the draft, so a modified learningMode is never
   // left showing stale reassurance text (in-session edits). Falls back to
   // the question that must produce a valid answer if opened without one. ─
+  const { owner: draftOwner } = useDraftOwner();
+
   useEffect(() => {
+    if (!draftOwner) return;
     let cancelled = false;
-    readOnboardingDraft().then(draft => {
+    readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
       if (!draft?.firstName) {
         router.replace('/onboarding-v2/name');
@@ -38,29 +42,31 @@ export default function OnboardingLearningModeReassuranceScreen() {
       setMode(draft.learningMode);
     });
     return () => { cancelled = true; };
-  }, []);
+
+  }, [draftOwner]);
 
   function handleBack() {
     router.replace(QUESTIONNAIRE_BACK_TARGETS.learning_mode_reassurance!);
   }
 
   async function handleContinue() {
+    if (!draftOwner) return;
     hapticLight();
     // Opens the deep branch matching the chosen mode — never straight to
     // experience-choice — so computePlan() later receives the specific
     // data each mode requires (startingSurah / customSurahOrder), then the
     // common known-surahs question shared by all 3 modes.
     if (mode === 'start_surah') {
-      await updateOnboardingDraft({ currentStep: 'start_surah_picker' });
+      await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'start_surah_picker' });
       router.push('/onboarding-v2/start-surah');
       return;
     }
     if (mode === 'custom_order') {
-      await updateOnboardingDraft({ currentStep: 'custom_order_picker' });
+      await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'custom_order_picker' });
       router.push('/onboarding-v2/custom-order');
       return;
     }
-    await updateOnboardingDraft({ currentStep: 'known_surahs' });
+    await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'known_surahs' });
     router.push('/onboarding-v2/known-surahs');
   }
 

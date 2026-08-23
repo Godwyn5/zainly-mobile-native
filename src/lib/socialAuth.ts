@@ -43,7 +43,11 @@ import { fetchProgress } from '@/db/progress';
 import {
   clearPendingOnboardingIfMatches,
   clearSessionAuthFlowId,
+  invalidateStaleOnboardingAuthorization,
 } from '@/lib/pendingOnboardingPlan';
+import { purgeUserScopedCaches } from '@/lib/prepareAuthenticatedLaunch';
+import { clearOnboardingDraftForOwner } from '@/lib/onboardingDraft';
+import { useAuthStore } from '@/store/authStore';
 
 // ─── Attempt generation guard & unified session mutation queue ──────────────
 //
@@ -134,6 +138,62 @@ export async function waitForSessionMutationQueue(): Promise<void> {
   await _sessionMutationChain.catch(() => {});
 }
 
+// ─── Fail-closed sign-out for account_not_found ─────────────────────────────
+//
+// Shared by BOTH boundaries per the product decision:
+//   1. src/lib/socialAuth.ts (this file) — the interactive direct-login path,
+//      called synchronously inside performSocialAuth so login-methods.tsx
+//      can render the "Compte introuvable" message inline, no navigation.
+//   2. app/_layout.tsx — the cold-start / root-gate path, for a session that
+//      already exists (persisted) but was never checked interactively (e.g.
+//      the app was killed right after OAuth, before this function ran).
+//
+// Enqueued in the SAME unified session mutation queue as every other
+// sign-in/sign-out — this prevents it from racing with a concurrent
+// exchange or logout. Idempotent: if the session for `userId` is already
+// gone by the time this runs (e.g. the other boundary already handled it),
+// the signOut call is skipped and this is treated as success — required
+// for the cold-start case where cleanup must be safely repeatable.
+export async function signOutForAccountNotFound(
+  userId: string,
+  queryClient: QueryClient,
+): Promise<{ ok: true } | { ok: false }> {
+  const signOutOutcome = await enqueueSessionMutation(async (): Promise<{ ok: boolean }> => {
+    if (useAuthStore.getState().session?.user?.id !== userId) {
+      // Already signed out (or a different user is now signed in) —
+      // idempotent no-op, treated as success.
+      return { ok: true };
+    }
+    try {
+      const { error } = await supabase.auth.signOut({ scope: 'local' });
+      if (error) return { ok: false };
+    } catch {
+      return { ok: false };
+    }
+    return { ok: true };
+  });
+
+  if (!signOutOutcome.ok) {
+    return { ok: false };
+  }
+
+  // Targeted purge — only this user's cached queries and onboarding draft.
+  // Never a global queryClient.clear() (that would affect a different
+  // account that may already be mid sign-in on a shared device).
+  purgeUserScopedCaches(queryClient, userId);
+  await clearOnboardingDraftForOwner({ kind: 'authenticated', userId }).catch(() => {});
+
+  // Belt-and-suspenders: confirm local state no longer considers this user
+  // authenticated, even if the onAuthStateChange SIGNED_OUT event is still
+  // in flight. Guarded so a concurrent, already-current session isn't
+  // clobbered.
+  if (useAuthStore.getState().session?.user?.id === userId) {
+    useAuthStore.getState().setSession(null);
+  }
+
+  return { ok: true };
+}
+
 // ─── Normalized internal types ──────────────────────────────────────────────
 
 export type SocialProvider = 'apple' | 'google';
@@ -158,7 +218,7 @@ export type SocialAuthSessionResult =
 
 export type SocialAuthFullResult =
   | { ok: true; userId: string; transitionResult?: OnboardingTransitionResult; skippedFinalization?: boolean }
-  | { ok: false; reason: SocialAuthFailureReason | 'auth_error' | 'state_check_failed' | 'stale_attempt'; message?: string; transitionError?: OnboardingTransitionResult };
+  | { ok: false; reason: SocialAuthFailureReason | 'auth_error' | 'state_check_failed' | 'stale_attempt' | 'account_not_found' | 'signout_failed'; message?: string; transitionError?: OnboardingTransitionResult };
 
 // ─── Nonce generation ───────────────────────────────────────────────────────
 //
@@ -416,6 +476,19 @@ export async function performSocialAuth(
   }
 
   const { flowId, visual } = options ?? {};
+
+  // ── Direct login invalidation ──────────────────────────────────────
+  // When authentication starts WITHOUT onboarding context (no flowId),
+  // invalidate any stale onboarding authorization from a previous session.
+  // This prevents an abandoned pre-auth marker from authorizing a guest
+  // draft claim for this unrelated authentication.
+  if (!flowId) {
+    try {
+      await invalidateStaleOnboardingAuthorization();
+    } catch {
+      return { ok: false, reason: 'unknown', message: 'Impossible de réinitialiser l\'état d\'authentification. Redémarre l\'application.' };
+    }
+  }
 
   let leaseId: string | null = null;
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { View } from 'react-native';
-import { Stack } from 'expo-router';
+import { Stack, router, usePathname } from 'expo-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
@@ -14,8 +14,9 @@ import { DashboardReadyProvider } from '@/components/providers/DashboardReadyPro
 import { ColdStartSplash } from '@/components/launch/ColdStartSplash';
 import { LaunchErrorScreen } from '@/components/launch/LaunchErrorScreen';
 import { TransitionCoverOverlay } from '@/components/auth/TransitionCoverOverlay';
-import { prepareAuthenticatedLaunch } from '@/lib/prepareAuthenticatedLaunch';
-import { clearOnboardingStateForSessionExpiry } from '@/lib/pendingOnboardingPlan';
+import { prepareAuthenticatedLaunch, purgeUserScopedCaches } from '@/lib/prepareAuthenticatedLaunch';
+import { clearOnboardingStateForSessionExpiry, hasValidPendingOnboardingPlan, readActiveOnboardingAuthFlow } from '@/lib/pendingOnboardingPlan';
+import { clearOnboardingDraftForOwner, prepareGuestLaunchIfNeeded } from '@/lib/onboardingDraft';
 import {
   subscribeToTransitionLease,
   getLeaseSnapshot,
@@ -25,15 +26,22 @@ import {
 import {
   acceptResultForUser,
   canRenderStackForUser,
+  canRenderOnboardingStackForUser,
   shouldShowCustomSplash,
   shouldShowPreparationError,
+  shouldShowMinimalOverlay,
+  shouldSignOutForAccountNotFound,
   createInitialPreparationState,
   createPreparingState,
   createReadyState,
+  createAccountNotFoundState,
   createErrorState,
   type PreparationState,
 } from '@/lib/preparationStateMachine';
 import { configureGoogleSignIn } from '@/lib/socialAuth';
+import AccountNotFoundScreen, {
+  type AccountNotFoundPhase,
+} from '@/components/auth/AccountNotFoundScreen';
 
 // ── Google Sign-In configuration (module level, runs once) ──────────────────
 // webClientId is required to obtain an idToken from Google Sign-In.
@@ -97,7 +105,7 @@ function AuthBootstrap() {
 
   useEffect(() => {
     supabase.auth.getSession()
-      .then(({ data: { session }, error }) => {
+      .then(async ({ data: { session }, error }) => {
         if (error) {
           if (isStaleTokenError(error.message)) {
             clearInvalidAuthSession(setSession, setReady);
@@ -107,6 +115,15 @@ function AuthBootstrap() {
             setReady();
           }
           return;
+        }
+        // Guest path: clear stale guest draft BEFORE setReady() so no
+        // onboarding screen can read an old firstName during bootstrap.
+        // Authenticated path: no cleanup needed — user drafts are isolated.
+        if (!session) {
+          await prepareGuestLaunchIfNeeded(
+            hasValidPendingOnboardingPlan,
+            readActiveOnboardingAuthFlow,
+          );
         }
         setSession(session);
         setReady();
@@ -124,6 +141,16 @@ function AuthBootstrap() {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
+        // Do NOT clear the onboarding draft here. The draft is now
+        // physically isolated by owner key in AsyncStorage — user A's
+        // draft is under a different key than user B's, so no global
+        // clear is needed at auth boundaries.
+        //
+        // INITIAL_SESSION(null): a guest draft may exist and must survive
+        //   until explicit claim or abandonment.
+        // SIGNED_IN: a guest draft must survive for guest→user claim.
+        // SIGNED_OUT: the previous user's draft is under their own key;
+        //   it is not visible to the next user.
         setSession(session);
       }
     );
@@ -144,6 +171,7 @@ const SPLASH_BEIGE = '#F7F2E7';
 export default function RootLayout() {
   const { session, ready } = useAuthStore();
   const userId = session?.user?.id ?? null;
+  const pathname = usePathname();
 
   const [fontsLoaded] = useFonts({
     Amiri_700Bold,
@@ -225,10 +253,23 @@ export default function RootLayout() {
   const prevUserIdRef = useRef<string | null>(null);
 
   // Clear handoff bypass when userId changes (account switch, logout).
+  // Do NOT clear the onboarding draft on null→userId: that is the
+  // guest→auth transition where the guest draft must survive for
+  // claimDraftForUser. Do NOT clear on userId→null: useLogout handles
+  // its own targeted cleanup. Only clear on user-a→user-b: remove
+  // user-a's draft so it doesn't linger in AsyncStorage (B can't read
+  // it anyway due to physical key isolation, but we clean up for hygiene).
   useEffect(() => {
     if (prevUserIdRef.current !== userId) {
       handoffReadyRef.current = null;
       forceReleaseTransitionLease();
+      // Only clear previous user's draft on actual user-a→user-b switch.
+      // null→userId (login) and userId→null (logout) are handled elsewhere.
+      if (prevUserIdRef.current && userId && prevUserIdRef.current !== userId) {
+        clearOnboardingDraftForOwner(
+          { kind: 'authenticated', userId: prevUserIdRef.current }
+        ).catch(() => { /* non-fatal */ });
+      }
       prevUserIdRef.current = userId;
     }
   }, [userId]);
@@ -321,6 +362,8 @@ export default function RootLayout() {
 
         if (result.status === 'ready') {
           setAccountPreparation(createReadyState(preparationUserId));
+        } else if (result.status === 'account_not_found') {
+          setAccountPreparation(createAccountNotFoundState(preparationUserId));
         } else {
           // On timeout: cancel only the preparation queries scoped to
           // preparationUserId so their late results don't populate the
@@ -357,6 +400,87 @@ export default function RootLayout() {
   const authed = ready && !!session && !leaseActive;
   const guest = ready && (!session || leaseActive);
 
+  // ── account_not_found: fail-closed local sign-out + cache purge ──
+  // When prepareAuthenticatedLaunch returns 'account_not_found', the user
+  // authenticated (e.g. via Google) but has no Zainly account (plan +
+  // progress both null, no pending onboarding). We sign out locally and
+  // purge user-scoped caches so no stale data leaks.
+  //
+  // Three-phase state machine:
+  //   signing_out     — signOut in flight, buttons disabled, spinner shown
+  //   ready_to_choose — signOut succeeded + caches purged + session null,
+  //                     buttons enabled
+  //   sign_out_error  — signOut failed, error + retry shown, no navigation
+  //
+  // CRITICAL: accountNotFoundUserId is set BEFORE calling signOut. This
+  // ensures the overlay stays visible when onAuthStateChange fires
+  // (setSession(null) → userId null → authed false). Without this, the
+  // overlay would disappear for one render frame, briefly exposing the
+  // guest auth stack.
+  const [accountNotFoundUserId, setAccountNotFoundUserId] =
+    useState<string | null>(null);
+  const [accountNotFoundPhase, setAccountNotFoundPhase] =
+    useState<AccountNotFoundPhase | null>(null);
+  const accountNotFoundSignOutRef = useRef<string | null>(null);
+  const [accountNotFoundRetryCount, setAccountNotFoundRetryCount] =
+    useState(0);
+
+  useEffect(() => {
+    if (!shouldSignOutForAccountNotFound(authed, accountPreparation, userId)) return;
+    if (!userId) return;
+    // Idempotency: prevent concurrent signOut calls from multiple Auth
+    // events or React effect re-invocations (e.g. Strict Mode double-invoke).
+    if (accountNotFoundSignOutRef.current === userId) return;
+
+    accountNotFoundSignOutRef.current = userId;
+    // Set userId + phase BEFORE the async signOut so the overlay is
+    // already visible when the session-null transition fires.
+    setAccountNotFoundUserId(userId);
+    setAccountNotFoundPhase('signing_out');
+
+    let cancelled = false;
+    (async () => {
+      try {
+        await supabase.auth.signOut({ scope: 'local' });
+        if (cancelled) return;
+        purgeUserScopedCaches(queryClient, userId);
+        // Belt-and-suspenders: confirm local session is null for this user.
+        if (useAuthStore.getState().session?.user?.id === userId) {
+          useAuthStore.getState().setSession(null);
+        }
+        setAccountNotFoundPhase('ready_to_choose');
+      } catch {
+        if (cancelled) return;
+        // Clear the ref so a retry can re-enter.
+        accountNotFoundSignOutRef.current = null;
+        setAccountNotFoundPhase('sign_out_error');
+      }
+    })();
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authed, accountPreparation.status, userId, accountNotFoundRetryCount]);
+
+  // Clear the account-not-found overlay when a different user logs in.
+  useEffect(() => {
+    if (userId && accountNotFoundUserId && userId !== accountNotFoundUserId) {
+      setAccountNotFoundUserId(null);
+      setAccountNotFoundPhase(null);
+      accountNotFoundSignOutRef.current = null;
+    }
+  }, [userId, accountNotFoundUserId]);
+
+  const dismissAccountNotFound = useCallback(() => {
+    setAccountNotFoundUserId(null);
+    setAccountNotFoundPhase(null);
+    accountNotFoundSignOutRef.current = null;
+  }, []);
+
+  const retryAccountNotFoundSignOut = useCallback(() => {
+    setAccountNotFoundPhase('signing_out');
+    setAccountNotFoundRetryCount((c) => c + 1);
+  }, []);
+
   // For authenticated users, also require account preparation.
   // matchingReadyHandoff is computed synchronously during render from the
   // lease snapshot. When true, it is equivalent to accountPreparation ===
@@ -364,14 +488,26 @@ export default function RootLayout() {
   // showMinimalScreen stays false, and the dashboard mounts without any
   // intermediate beige screen.
   const preparationReady =
-    (accountPreparation.userId === userId && accountPreparation.status === 'ready') ||
-    matchingReadyHandoff;
+    (accountPreparation.userId === userId &&
+      accountPreparation.status === 'ready') ||
+      matchingReadyHandoff;
 
   const canRenderStack = canRenderStackForUser(
     initialVisualReleased,
     ready,
     authed,
     { userId, status: preparationReady ? 'ready' : accountPreparation.status },
+    userId,
+  );
+
+  // Separate gate for needs_onboarding: the Stack must mount so expo-router
+  // can navigate to /onboarding-v2/name, but (app) must NOT be included.
+  // The splash stays on top until the onboarding route is ready.
+  const canRenderOnboardingStack = canRenderOnboardingStackForUser(
+    initialVisualReleased,
+    ready,
+    authed,
+    accountPreparation,
     userId,
   );
 
@@ -389,24 +525,91 @@ export default function RootLayout() {
     showPreparationError,
   );
 
-  // Minimal beige screen: during resolving (session unknown) or post-boot
-  // preparation (e.g. after in-app login). Never the branded splash.
-  const showMinimalScreen =
-    !ready || (bootCompletedRef.current && authed && !canRenderStack && !showPreparationError);
+  // Minimal beige screen: during resolving (session unknown), post-boot
+  // preparation (e.g. after in-app login), or needs_onboarding BEFORE the
+  // onboarding-v2 route is active. Once the user is on any /onboarding-v2/*
+  // route, the overlay disappears so they can interact with the onboarding
+  // screens. It does NOT reappear on step changes within onboarding-v2.
+  // It also disappears after finalization (status becomes 'ready', not
+  // 'needs_onboarding', so canRenderOnboardingStack becomes false).
+  const onboardingRouteActive = pathname.startsWith('/onboarding-v2/');
+  const showMinimalScreen = shouldShowMinimalOverlay(
+    ready,
+    authed,
+    bootCompletedRef.current,
+    canRenderStack,
+    canRenderOnboardingStack,
+    showPreparationError,
+    onboardingRouteActive,
+  );
 
-  // Mark boot complete once the stack is first rendered.
+  // Mark boot complete once the stack is first rendered (either app or
+  // onboarding-only). This prevents the branded splash from replaying.
   useEffect(() => {
-    if (canRenderStack) {
+    if (canRenderStack || canRenderOnboardingStack) {
       bootCompletedRef.current = true;
     }
-  }, [canRenderStack]);
+  }, [canRenderStack, canRenderOnboardingStack]);
+
+  // ── Navigate to onboarding-v2 for needs_onboarding users ────────────
+  // Fire exactly once per stable (userId + needs_onboarding) pair. The
+  // ref guard prevents duplicate navigation on re-render. The Stack is
+  // already mounted with onboarding-v2 routes (canRenderOnboardingStack),
+  // so router.replace is safe here.
+  const onboardingNavRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (canRenderOnboardingStack && userId && onboardingNavRef.current !== userId) {
+      onboardingNavRef.current = userId;
+      // Use a microtask to ensure the Stack has mounted before navigating.
+      // This avoids 'navigation not ready' errors during initial boot.
+      requestAnimationFrame(() => {
+        router.replace('/onboarding-v2/name');
+      });
+    }
+    // Reset the ref when userId changes or needs_onboarding clears so a
+    // future needs_onboarding for the same or different user can fire.
+    if (!canRenderOnboardingStack && onboardingNavRef.current !== null) {
+      onboardingNavRef.current = null;
+    }
+  }, [canRenderOnboardingStack, userId]);
+
+  const showAccountNotFound =
+    !!accountNotFoundUserId && ready && accountNotFoundPhase !== null;
 
   return (
     <QueryClientProvider client={queryClient}>
       <StatusBar style="dark" />
       <AuthBootstrap />
       <RevenueCatProvider />
-      {showMinimalScreen ? (
+      {showAccountNotFound ? (
+        <AccountNotFoundScreen
+          phase={accountNotFoundPhase}
+          onCommencer={() => {
+            dismissAccountNotFound();
+            router.replace('/onboarding-v2/name');
+          }}
+          onAutreCompte={() => {
+            dismissAccountNotFound();
+            router.replace('/welcome');
+          }}
+          onRetry={retryAccountNotFoundSignOut}
+        />
+      ) : canRenderOnboardingStack ? (
+        // ── needs_onboarding: mount Stack with ONLY onboarding-v2 routes ──
+        // The splash/minimal screen is layered on top via showMinimalScreen
+        // so the user never sees the Stack until the onboarding route is
+        // ready. (app) and public routes are excluded — no tabs, no
+        // TodayScreen, no dashboard content.
+        <>
+          <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: SPLASH_BEIGE } }}>
+            {/* Onboarding V2 flow — accessible in any auth state. */}
+            <Stack.Screen name="onboarding-v2" />
+          </Stack>
+          {showMinimalScreen && (
+            <View style={{ flex: 1, backgroundColor: SPLASH_BEIGE }} />
+          )}
+        </>
+      ) : showMinimalScreen ? (
         <View style={{ flex: 1, backgroundColor: SPLASH_BEIGE }} />
       ) : showBrandedSplash ? (
         <ColdStartSplash fontsLoaded={fontsLoaded} />
@@ -425,15 +628,15 @@ export default function RootLayout() {
             {/* Public routes — accessible when NOT authenticated.
                 When session becomes true, these are automatically removed. */}
             <Stack.Protected guard={guest}>
-              <Stack.Screen name="welcome" />
+              <Stack.Screen name="welcome" options={{ animation: 'none', contentStyle: { backgroundColor: '#F7F2E7' } }} />
               <Stack.Screen name="index" />
-              <Stack.Screen name="(auth)" />
+              <Stack.Screen name="(auth)" options={{ animation: 'none', contentStyle: { backgroundColor: '#F7F2E7' } }} />
             </Stack.Protected>
 
             {/* Onboarding V1 adapters, V2 flow, and premium paywall —
                 accessible in any auth state. V1 adapters redirect to V2. */}
             <Stack.Screen name="onboarding" />
-            <Stack.Screen name="onboarding-v2" />
+            <Stack.Screen name="onboarding-v2" options={{ animation: 'none', contentStyle: { backgroundColor: '#F7F2E7' } }} />
             <Stack.Screen name="premium" />
           </Stack>
           {showCoverOverlay && leaseSnapshot.visual && (

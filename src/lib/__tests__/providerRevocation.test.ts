@@ -106,6 +106,20 @@ jest.mock('@/db/plans', () => ({
 jest.mock('@/db/progress', () => ({
   fetchProgress: jest.fn(),
 }));
+jest.mock('@/queries', () => ({
+  planQueryOptions: (userId: string) => ({ queryKey: ['plan', userId], queryFn: jest.fn(), enabled: !!userId }),
+  progressQueryOptions: (userId: string) => ({ queryKey: ['progress', userId], queryFn: jest.fn(), enabled: !!userId }),
+}));
+jest.mock('@/lib/prepareAuthenticatedLaunch', () => ({
+  prepareAuthenticatedLaunch: jest.fn(),
+  purgeUserScopedCaches: jest.fn(),
+}));
+jest.mock('@/lib/onboardingDraft', () => ({
+  clearOnboardingDraftForOwner: jest.fn(async () => {}),
+  saveOnboardingDraft: jest.fn(async () => {}),
+  readOnboardingDraft: jest.fn(async () => null),
+  claimDraftForUser: jest.fn(async () => null),
+}));
 
 // ── Imports (after mocks) ────────────────────────────────────────────────────
 

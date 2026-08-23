@@ -7,8 +7,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { hapticLight } from '@/utils/haptics';
 import {
-  readOnboardingDraft, updateOnboardingDraft, MotivationReason,
+  readOnboardingDraftForOwner, updateOnboardingDraftForOwner, MotivationReason,
 } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 import {
   TOTAL_ONBOARDING_PHASES, phaseStepNumber, QUESTIONNAIRE_BACK_TARGETS,
 } from '@/lib/onboardingQuestionnaire';
@@ -74,9 +75,12 @@ export default function OnboardingMotivationScreen() {
   }, []);
 
   // ── resume: restore a previously chosen reason within the same session ──
+  const { owner: draftOwner } = useDraftOwner();
+
   useEffect(() => {
+    if (!draftOwner) return;
     let cancelled = false;
-    readOnboardingDraft().then(draft => {
+    readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
       if (!draft?.firstName) {
         router.replace('/onboarding-v2/name');
@@ -86,7 +90,8 @@ export default function OnboardingMotivationScreen() {
       setDraftChecked(true);
     });
     return () => { cancelled = true; };
-  }, []);
+
+  }, [draftOwner]);
 
   // ── living background — same breathing loops as every previous screen ──
   const washBreath   = useRef(new Animated.Value(0)).current;
@@ -149,11 +154,11 @@ export default function OnboardingMotivationScreen() {
   }
 
   async function handleContinue() {
-    if (isSubmittingRef.current || !selected) return;
+    if (isSubmittingRef.current || !selected || !draftOwner) return;
     isSubmittingRef.current = true;
     hapticLight();
 
-    await updateOnboardingDraft({ currentStep: 'motivation_reassurance', motivationReason: selected });
+    await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'motivation_reassurance', motivationReason: selected });
     router.push('/onboarding-v2/motivation-reassurance');
   }
 

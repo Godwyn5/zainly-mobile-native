@@ -5,7 +5,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { hapticLight, hapticSelection, hapticWarning } from '@/utils/haptics';
-import { readOnboardingDraft, updateOnboardingDraft } from '@/lib/onboardingDraft';
+import { readOnboardingDraftForOwner, updateOnboardingDraftForOwner } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 import { TOTAL_ONBOARDING_PHASES, phaseStepNumber, QUESTIONNAIRE_BACK_TARGETS } from '@/lib/onboardingQuestionnaire';
 import { ZAINLY_ORDER } from '@/core/planEngine';
 import OnboardingQuestionHeader from '@/components/onboarding/OnboardingQuestionHeader';
@@ -36,9 +37,12 @@ export default function OnboardingCustomOrderScreen() {
   const [search, setSearch] = useState('');
   const [showIncompleteWarning, setShowIncompleteWarning] = useState(false);
 
+  const { owner: draftOwner } = useDraftOwner();
+
   useEffect(() => {
+    if (!draftOwner) return;
     let cancelled = false;
-    readOnboardingDraft().then(draft => {
+    readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
       if (!draft?.firstName) { router.replace('/onboarding-v2/name'); return; }
       if (!draft.motivationReason) { router.replace('/onboarding-v2/motivation'); return; }
@@ -50,7 +54,8 @@ export default function OnboardingCustomOrderScreen() {
       setDraftChecked(true);
     });
     return () => { cancelled = true; };
-  }, []);
+
+  }, [draftOwner]);
 
   const normalizedSearch = search.trim().toLowerCase();
   const filteredSurahs = useMemo(() => {
@@ -92,6 +97,7 @@ export default function OnboardingCustomOrderScreen() {
   }
 
   async function handleContinue() {
+    if (!draftOwner) return;
     hapticLight();
     // Explicit, not implicit: the user has just assigned a position to all
     // 114 surahs, so there is no "rest of the Quran" left to append after
@@ -101,7 +107,7 @@ export default function OnboardingCustomOrderScreen() {
     // already makes that flag mathematically inert (validCustomSet already
     // covers every surah, so the 'true' branch's appended-rest is always
     // empty). Being explicit removes any dependency on that invariant.
-    await updateOnboardingDraft({
+    await updateOnboardingDraftForOwner(draftOwner, {
       currentStep: 'known_surahs', customSurahOrder: customOrder, continueWithRest: false,
     });
     setSearch('');

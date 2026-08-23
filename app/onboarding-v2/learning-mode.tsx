@@ -7,8 +7,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { hapticLight } from '@/utils/haptics';
 import {
-  readOnboardingDraft, updateOnboardingDraft, setLearningModeAndCleanupBranch, LearningMode,
+  readOnboardingDraftForOwner, updateOnboardingDraftForOwner, setLearningModeAndCleanupBranchForOwner, LearningMode,
 } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 import {
   TOTAL_ONBOARDING_PHASES, phaseStepNumber, QUESTIONNAIRE_BACK_TARGETS,
 } from '@/lib/onboardingQuestionnaire';
@@ -88,9 +89,12 @@ export default function OnboardingLearningModeScreen() {
   }, []);
 
   // ── resume: restore a previously chosen mode within the same session ──
+  const { owner: draftOwner } = useDraftOwner();
+
   useEffect(() => {
+    if (!draftOwner) return;
     let cancelled = false;
-    readOnboardingDraft().then(draft => {
+    readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
       if (!draft?.firstName) {
         router.replace('/onboarding-v2/name');
@@ -104,7 +108,8 @@ export default function OnboardingLearningModeScreen() {
       setDraftChecked(true);
     });
     return () => { cancelled = true; };
-  }, []);
+
+  }, [draftOwner]);
 
   // ── living background — same breathing loops as every previous screen ──
   const washBreath   = useRef(new Animated.Value(0)).current;
@@ -173,16 +178,16 @@ export default function OnboardingLearningModeScreen() {
   }
 
   async function handleContinue() {
-    if (isSubmittingRef.current || !selected) return;
+    if (isSubmittingRef.current || !selected || !draftOwner) return;
     isSubmittingRef.current = true;
     hapticLight();
 
     // Clears any stale branch-specific data (startingSurah / customSurahOrder
     // / continueWithRest) if this is an actual mode CHANGE from a previously
     // filled-in branch — knownSurahs (common) is preserved.
-    await setLearningModeAndCleanupBranch(selected);
+    await setLearningModeAndCleanupBranchForOwner(draftOwner, selected);
 
-    await updateOnboardingDraft({ currentStep: 'learning_mode_reassurance' });
+    await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'learning_mode_reassurance' });
     router.push('/onboarding-v2/learning-mode-reassurance');
   }
 

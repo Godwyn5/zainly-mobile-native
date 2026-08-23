@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { router } from 'expo-router';
 import { hapticLight } from '@/utils/haptics';
-import { readOnboardingDraft, updateOnboardingDraft } from '@/lib/onboardingDraft';
+import { readOnboardingDraftForOwner, updateOnboardingDraftForOwner } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 import { TOTAL_ONBOARDING_PHASES, phaseStepNumber } from '@/lib/onboardingQuestionnaire';
 import OnboardingReassuranceLayout from '@/components/onboarding/OnboardingReassuranceLayout';
 
@@ -16,9 +17,12 @@ const SPLASH_BEIGE = '#F7F2E7';
 export default function OnboardingFreeSupportScreen() {
   const [draftChecked, setDraftChecked] = useState(false);
 
+  const { owner: draftOwner } = useDraftOwner();
+
   useEffect(() => {
+    if (!draftOwner) return;
     let cancelled = false;
-    readOnboardingDraft().then(draft => {
+    readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
       if (!draft?.experienceChoice) {
         router.replace('/onboarding-v2/experience-choice');
@@ -27,15 +31,17 @@ export default function OnboardingFreeSupportScreen() {
       setDraftChecked(true);
     });
     return () => { cancelled = true; };
-  }, []);
+
+  }, [draftOwner]);
 
   function handleBack() {
     router.replace('/onboarding-v2/experience-choice');
   }
 
   async function handleContinue() {
+    if (!draftOwner) return;
     hapticLight();
-    await updateOnboardingDraft({ currentStep: 'notifications' });
+    await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'notifications' });
     router.push('/onboarding-v2/notifications');
   }
 

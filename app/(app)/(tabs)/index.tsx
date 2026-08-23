@@ -562,20 +562,22 @@ export default function TodayScreen() {
     );
   }
 
-  // ── no plan state — genuine legacy case only (no onboarding-v2 pending) ──
+  // ── no plan state — secondary defense, never a CTA ──────────────────
+  // Under normal operation, (app) only mounts when app/_layout.tsx's
+  // accountPreparation.status is 'ready' for this exact userId (or a
+  // verified onboarding handoff) — both of which guarantee plan and
+  // progress exist. A session with no recognized Zainly account is
+  // caught upstream, at the connection/preparation boundary (see
+  // src/lib/socialAuth.ts and src/lib/prepareAuthenticatedLaunch.ts),
+  // resulting in a fail-closed sign-out and an "account introuvable"
+  // message on the auth screen — never in this dashboard.
+  //
+  // This branch is a defensive fallback only, for the narrow edge case
+  // where plan/progress are removed after the gate already committed
+  // 'ready' for this userId. TodayScreen never navigates or signs out
+  // itself — it only renders a neutral background.
   if (hasNoPlan) {
-    return (
-      <SafeAreaView style={s.centered}>
-        <View style={s.stateCard}>
-          <EmptyState
-            title="Créons ton programme."
-            description="Réponds à quelques questions pour que Zainly prépare ton parcours personnalisé."
-            buttonLabel="Créer mon programme"
-            onPress={() => router.replace('/onboarding-v2/name')}
-          />
-        </View>
-      </SafeAreaView>
-    );
+    return <View style={{ flex: 1, backgroundColor: colors.background }} />;
   }
 
   // ── derived display values ──

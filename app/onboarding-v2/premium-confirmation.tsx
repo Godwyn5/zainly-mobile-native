@@ -6,7 +6,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { hapticLight, hapticSuccess } from '@/utils/haptics';
-import { readOnboardingDraft } from '@/lib/onboardingDraft';
+import { readOnboardingDraftForOwner } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 import { getRevenueCatCustomerInfo, hasRevenueCatEntitlement } from '@/lib/revenueCat';
 import { TOTAL_ONBOARDING_PHASES, phaseStepNumber } from '@/lib/onboardingQuestionnaire';
 import OnboardingQuestionHeader from '@/components/onboarding/OnboardingQuestionHeader';
@@ -61,10 +62,13 @@ export default function OnboardingPremiumConfirmationScreen() {
   // ── hard guard: this screen only exists after a real purchase or an
   // already-active entitlement — never reachable from merely tapping the
   // 'unlimited' card. ──────────────────────────────────────────────────────
+  const { owner: draftOwner } = useDraftOwner();
+
   useEffect(() => {
+    if (!draftOwner) return;
     let cancelled = false;
     (async () => {
-      const draft = await readOnboardingDraft();
+      const draft = await readOnboardingDraftForOwner(draftOwner);
       if (cancelled) return;
       if (!draft?.experienceChoice) {
         router.replace('/onboarding-v2/experience-choice');
@@ -79,7 +83,8 @@ export default function OnboardingPremiumConfirmationScreen() {
       setReady(true);
     })();
     return () => { cancelled = true; };
-  }, []);
+
+  }, [draftOwner]);
 
   // ── living background — same breathing loops as every other v2 screen ──
   const washBreath = useRef(new Animated.Value(0)).current;

@@ -6,7 +6,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { hapticLight } from '@/utils/haptics';
-import { readOnboardingDraft } from '@/lib/onboardingDraft';
+import { readOnboardingDraftForOwner } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 
 // ─── palette — identical tokens to Splash/Welcome/Name/Greeting/
 // Session (kept local, not exported from those files, to avoid touching
@@ -55,9 +56,12 @@ export default function OnboardingRevisionsScreen() {
     return () => { mountedRef.current = false; };
   }, []);
 
+  const { owner: draftOwner } = useDraftOwner();
+
   useEffect(() => {
+    if (!draftOwner) return;
     let cancelled = false;
-    readOnboardingDraft().then(draft => {
+    readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
       if (!draft?.firstName) {
         router.replace('/onboarding-v2/name');
@@ -66,7 +70,8 @@ export default function OnboardingRevisionsScreen() {
       setDraftChecked(true);
     });
     return () => { cancelled = true; };
-  }, []);
+
+  }, [draftOwner]);
 
   useEffect(() => () => { timersRef.current.forEach(clearTimeout); }, []);
 

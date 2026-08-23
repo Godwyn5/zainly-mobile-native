@@ -21,6 +21,7 @@ import {
   clearSessionAuthFlowId,
   readPendingOnboardingPlan,
   clearPendingOnboardingIfMatches,
+  saveCompletedAuthProof,
 } from '@/lib/pendingOnboardingPlan';
 import {
   createTransitionLease,
@@ -37,6 +38,7 @@ export type OnboardingTransitionError =
   | { kind: 'premium_sync_failed'; reason: 'configure_failed' | 'login_failed' | 'customer_info_failed' }
   | { kind: 'premium_entitlement_missing' }
   | { kind: 'handoff_error'; message: string }
+  | { kind: 'proof_persist_failed'; message: string }
   | { kind: 'clear_superseded'; message: string }
   | { kind: 'cache_verification_failed'; message: string };
 
@@ -103,6 +105,33 @@ export async function runOnboardingTransition(
         error: {
           kind: 'handoff_error',
           message: "Ton programme est enregistré mais n'a pas pu être chargé. Réessaie.",
+        },
+      };
+    }
+
+    // ── Step 2b: Persist completed auth proof ───────────────────────────
+    // This is the POST-AUTH proof that binds the onboarding transaction
+    // to the authenticated userId. It is created ONLY after Supabase auth
+    // succeeded AND the finalize+handoff completed. It is NOT a pre-auth
+    // marker — it proves "this exact user authenticated for this exact
+    // onboarding transaction."
+    //
+    // claimGuestDraftWithHandoff reads this proof from its own AsyncStorage
+    // key to authorize the guest draft claim. Without it, no claim.
+    //
+    // CRITICAL: If proof persistence fails, we must NOT clear the pending
+    // payload or navigate into a route that requires the proof. The Supabase
+    // session is still active — the user can retry the transition without
+    // re-authenticating.
+    try {
+      await saveCompletedAuthProof(authFlowId, userId);
+    } catch {
+      releaseTransitionLease(leaseId);
+      return {
+        status: 'error',
+        error: {
+          kind: 'proof_persist_failed',
+          message: "L'authentification a réussi mais la preuve n'a pas pu être enregistrée. Réessaie.",
         },
       };
     }

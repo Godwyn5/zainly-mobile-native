@@ -15,7 +15,7 @@ import { cancelUserHifzNotifications } from '@/notifications/scheduler';
 import { clearNotificationData }       from '@/notifications/storage';
 import { revenueCatLogOut }            from '@/lib/revenueCat';
 import { clearAllPendingOnboardingData } from '@/lib/pendingOnboardingPlan';
-import { clearOnboardingDraft }           from '@/lib/onboardingDraft';
+import { purgeAllOnboardingDrafts }           from '@/lib/onboardingDraft';
 import { signOutGoogle, invalidateAllSocialAuthAttempts, enqueueLogoutSessionMutation } from '@/lib/socialAuth';
 
 export function useLogout() {
@@ -65,10 +65,10 @@ export function useLogout() {
       // leave a pending plan that a different account could claim after
       // re-login. This is the primary defense against A→B leakage.
       await clearAllPendingOnboardingData().catch(() => {/* non-fatal */});
-      // 2c. Clear the in-memory onboarding draft — it has no ownerUserId or
-      // flowId, so it must be wiped at every auth boundary to prevent
-      // account A's answers from being finalized by account B.
-      await clearOnboardingDraft().catch(() => {/* non-fatal */});
+      // 2c. Purge all onboarding drafts — logout is an explicit reset
+      // scenario. Physical key isolation means B's draft was never visible
+      // to A, but purging ensures no stale drafts linger after logout.
+      await purgeAllOnboardingDrafts().catch(() => {/* non-fatal */});
 
       // 3. Clear React Query cache so next user starts fresh
       queryClient.clear();

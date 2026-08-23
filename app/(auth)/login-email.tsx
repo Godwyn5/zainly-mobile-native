@@ -17,6 +17,7 @@ import {
   type OnboardingTransitionResult,
 } from '@/lib/onboardingTransition';
 import { forceReleaseTransitionLease, type SignupVisualSnapshot } from '@/lib/transitionLease';
+import { invalidateStaleOnboardingAuthorization } from '@/lib/pendingOnboardingPlan';
 import { hapticLight, hapticMedium, hapticSelection } from '@/utils/haptics';
 import ZainlyLogo from '@/components/auth/ZainlyLogo';
 
@@ -98,6 +99,19 @@ export default function LoginEmailScreen() {
     const trimEmail = email.trim().toLowerCase();
     if (!trimEmail || !password) { setError('Saisis ton e-mail et ton mot de passe.'); return; }
     setLoading(true);
+
+    // ── Direct login invalidation ──────────────────────────────────────
+    // When login starts WITHOUT onboarding context, invalidate any stale
+    // onboarding authorization from a previous session.
+    if (!fromOnboarding) {
+      try {
+        await invalidateStaleOnboardingAuthorization();
+      } catch {
+        setLoading(false);
+        setError('Impossible de réinitialiser l\'état. Redémarre l\'application.');
+        return;
+      }
+    }
 
     // ── Onboarding transition: create lease BEFORE signIn ──
     if (fromOnboarding && flowIdParam) {

@@ -6,7 +6,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { hapticLight } from '@/utils/haptics';
-import { readOnboardingDraft, updateOnboardingDraft, DiscoverySource } from '@/lib/onboardingDraft';
+import { readOnboardingDraftForOwner, updateOnboardingDraftForOwner, DiscoverySource } from '@/lib/onboardingDraft';
+import { useDraftOwner } from '@/hooks/useDraftOwner';
 import { TOTAL_ONBOARDING_PHASES, phaseStepNumber } from '@/lib/onboardingQuestionnaire';
 import OnboardingQuestionHeader from '@/components/onboarding/OnboardingQuestionHeader';
 import OnboardingChoiceCard from '@/components/onboarding/OnboardingChoiceCard';
@@ -64,9 +65,12 @@ export default function OnboardingDiscoverySourceScreen() {
     return () => { mountedRef.current = false; };
   }, []);
 
+  const { owner: draftOwner } = useDraftOwner();
+
   useEffect(() => {
+    if (!draftOwner) return;
     let cancelled = false;
-    readOnboardingDraft().then(draft => {
+    readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
       if (!draft?.experienceChoice) {
         router.replace('/onboarding-v2/experience-choice');
@@ -76,7 +80,8 @@ export default function OnboardingDiscoverySourceScreen() {
       setDraftChecked(true);
     });
     return () => { cancelled = true; };
-  }, []);
+
+  }, [draftOwner]);
 
   const washBreath = useRef(new Animated.Value(0)).current;
   const titleOpacity = useRef(new Animated.Value(0)).current;
@@ -117,11 +122,11 @@ export default function OnboardingDiscoverySourceScreen() {
   }
 
   async function handleContinue() {
-    if (isSubmittingRef.current || !selected) return;
+    if (isSubmittingRef.current || !selected || !draftOwner) return;
     isSubmittingRef.current = true;
     hapticLight();
     try {
-      await updateOnboardingDraft({
+      await updateOnboardingDraftForOwner(draftOwner, {
         discoverySource: selected,
         currentStep: 'program_generating',
       });
