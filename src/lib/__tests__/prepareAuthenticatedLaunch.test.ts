@@ -11,7 +11,7 @@ import {
   clearSessionAuthFlowId,
   readPendingOnboardingPlan,
 } from '@/lib/pendingOnboardingPlan';
-import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { finalizeOnboardingV2Plan } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 import { getRevenueCatCustomerInfo, ensureRevenueCatReadyForUser } from '@/lib/revenueCat';
 
@@ -40,10 +40,7 @@ jest.mock('@/lib/pendingOnboardingPlan', () => ({
   clearPendingOnboardingIfMatches: jest.fn(async () => 'already_absent'),
 }));
 jest.mock('@/lib/onboardingFinalize', () => ({
-  finalizeOnboardingV2PlanWithPremiumGate: jest.fn(async () => ({
-    status: 'finalized',
-    finalize: { ok: true, reason: 'created' },
-  })),
+  finalizeOnboardingV2Plan: jest.fn(async () => ({ ok: true, reason: 'created' })),
 }));
 jest.mock('@/lib/onboardingDashboardHandoff', () => ({
   handOffFinalizedProgram: jest.fn(async () => ({
@@ -179,7 +176,7 @@ describe('prepareAuthenticatedLaunch', () => {
     expect(result.status).toBe('ready');
 
     // Finalize was called
-    expect(finalizeOnboardingV2PlanWithPremiumGate).toHaveBeenCalledWith('user-A', '');
+    expect(finalizeOnboardingV2Plan).toHaveBeenCalledWith('user-A', '');
     // Handoff was called
     expect(handOffFinalizedProgram).toHaveBeenCalledWith(queryClient, 'user-A');
     // Clear was called
@@ -194,9 +191,7 @@ describe('prepareAuthenticatedLaunch', () => {
 
   it('when pending is true but finalize fails, returns error (no fallthrough)', async () => {
     (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValueOnce(true);
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValueOnce({
-      status: 'finalized', finalize: { ok: false, reason: 'persist_error' },
-    });
+    (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValueOnce({ ok: false, reason: 'persist_error' });
 
     const result = await prepareAuthenticatedLaunch(queryClient, 'user-A');
     expect(result.status).toBe('error');
@@ -204,28 +199,6 @@ describe('prepareAuthenticatedLaunch', () => {
     expect(handOffFinalizedProgram).not.toHaveBeenCalled();
     // Plan/progress were NOT fetched — no fallthrough
     expect(fetchPlan).not.toHaveBeenCalledWith('user-A');
-  });
-
-  it('when pending is true but premium gate blocks, returns error (no fallthrough)', async () => {
-    (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValueOnce(true);
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValueOnce({
-      status: 'premium_entitlement_missing',
-    });
-
-    const result = await prepareAuthenticatedLaunch(queryClient, 'user-A');
-    expect(result.status).toBe('error');
-    expect(handOffFinalizedProgram).not.toHaveBeenCalled();
-  });
-
-  it('when pending is true and premium sync fails, returns error (no fallthrough)', async () => {
-    (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValueOnce(true);
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValueOnce({
-      status: 'premium_sync_failed', reason: 'configure_failed',
-    });
-
-    const result = await prepareAuthenticatedLaunch(queryClient, 'user-A');
-    expect(result.status).toBe('error');
-    expect(handOffFinalizedProgram).not.toHaveBeenCalled();
   });
 
   it('when pending is true, finalize ok, but handoff fails, returns error (no fallthrough)', async () => {
@@ -246,7 +219,7 @@ describe('prepareAuthenticatedLaunch', () => {
     // Default mock: hasValidPendingOnboardingPlanForUser returns false
     await prepareAuthenticatedLaunch(queryClient, 'user-A');
 
-    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
+    expect(finalizeOnboardingV2Plan).not.toHaveBeenCalled();
     expect(handOffFinalizedProgram).not.toHaveBeenCalled();
     expect(clearPendingOnboardingIfMatches).not.toHaveBeenCalled();
   });
@@ -273,9 +246,7 @@ describe('Targeted cancellation and retry', () => {
     (getRevenueCatCustomerInfo as jest.Mock).mockResolvedValue(null);
     (ensureRevenueCatReadyForUser as jest.Mock).mockResolvedValue({ ready: true, generation: 1 });
     // Re-setup finalize/handoff/clear mocks
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({
-      status: 'finalized', finalize: { ok: true, reason: 'created' },
-    });
+    (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValue({ ok: true, reason: 'created' });
     (handOffFinalizedProgram as jest.Mock).mockResolvedValue({
       status: 'ready', plan: { id: 'plan-1' }, progress: { id: 'progress-1' },
     });

@@ -12,7 +12,7 @@ import {
   getLeaseSnapshot,
   type SignupVisualSnapshot,
 } from '../transitionLease';
-import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { finalizeOnboardingV2Plan } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 import {
   clearPendingOnboardingIfMatches,
@@ -21,10 +21,7 @@ import {
 } from '@/lib/pendingOnboardingPlan';
 
 jest.mock('@/lib/onboardingFinalize', () => ({
-  finalizeOnboardingV2PlanWithPremiumGate: jest.fn(async () => ({
-    status: 'finalized',
-    finalize: { ok: true, reason: 'created' },
-  })),
+  finalizeOnboardingV2Plan: jest.fn(async () => ({ ok: true, reason: 'created' })),
 }));
 jest.mock('@/lib/onboardingDashboardHandoff', () => ({
   handOffFinalizedProgram: jest.fn(async () => ({
@@ -119,9 +116,8 @@ describe('runOnboardingTransition', () => {
 
   it('returns error when finalize fails (ok: false)', async () => {
     const leaseId = await setupLease('flow-123');
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValueOnce({
-      status: 'finalized',
-      finalize: { ok: false, reason: 'persist_error', message: 'DB error' },
+    (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValueOnce({
+      ok: false, reason: 'persist_error', message: 'DB error'
     });
 
     const result = await runOnboardingTransition(queryClient, 'user-A', leaseId, 'gen-1', VISUAL);
@@ -131,31 +127,6 @@ describe('runOnboardingTransition', () => {
     expect(handOffFinalizedProgram).not.toHaveBeenCalled();
     // No verified handoff on error — phase is idle, not data_ready_covered
     expect(getLeaseSnapshot().phase).toBe('idle');
-  });
-
-  it('returns error when premium entitlement is missing', async () => {
-    const leaseId = await setupLease('flow-123');
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValueOnce({
-      status: 'premium_entitlement_missing',
-    });
-
-    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId, 'gen-1', VISUAL);
-    expect(result.status).toBe('error');
-    expect((result as { error: { kind: string } }).error.kind).toBe('premium_entitlement_missing');
-    expect(hasActiveTransitionLease()).toBe(false);
-  });
-
-  it('returns error when premium sync fails', async () => {
-    const leaseId = await setupLease('flow-123');
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValueOnce({
-      status: 'premium_sync_failed',
-      reason: 'configure_failed',
-    });
-
-    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId, 'gen-1', VISUAL);
-    expect(result.status).toBe('error');
-    expect((result as { error: { kind: string } }).error.kind).toBe('premium_sync_failed');
-    expect(hasActiveTransitionLease()).toBe(false);
   });
 
   it('returns error when handoff fails', async () => {
@@ -212,7 +183,7 @@ describe('runOnboardingTransition', () => {
 
   it('releases the lease even when an unexpected exception occurs', async () => {
     const leaseId = await setupLease('flow-123');
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockRejectedValueOnce(
+    (finalizeOnboardingV2Plan as jest.Mock).mockRejectedValueOnce(
       new Error('unexpected'),
     );
 

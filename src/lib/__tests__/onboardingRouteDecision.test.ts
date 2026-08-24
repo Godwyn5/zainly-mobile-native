@@ -20,7 +20,7 @@ import {
   createInitialPreparationState,
 } from '../preparationStateMachine';
 import { orchestrateAuthedFinalize } from '../programSummaryOrchestration';
-import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { finalizeOnboardingV2Plan } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 import { clearPendingOnboardingIfMatches, readPendingOnboardingPlan } from '@/lib/pendingOnboardingPlan';
 import { QueryClient } from '@tanstack/react-query';
@@ -41,10 +41,7 @@ jest.mock('@react-native-async-storage/async-storage', () => {
 });
 
 jest.mock('@/lib/onboardingFinalize', () => ({
-  finalizeOnboardingV2PlanWithPremiumGate: jest.fn(async () => ({
-    status: 'finalized',
-    finalize: { ok: true, reason: 'created' },
-  })),
+  finalizeOnboardingV2Plan: jest.fn(async () => ({ ok: true, reason: 'created' })),
 }));
 jest.mock('@/lib/onboardingDashboardHandoff', () => ({
   handOffFinalizedProgram: jest.fn(async () => ({
@@ -248,10 +245,7 @@ describe('Authenticated onboarding finalization', () => {
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     sessionUserId = 'user-google-123';
 
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({
-      status: 'finalized',
-      finalize: { ok: true, reason: 'created' },
-    });
+    (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValue({ ok: true, reason: 'created' });
     (handOffFinalizedProgram as jest.Mock).mockResolvedValue({
       status: 'ready',
       plan: { id: 'plan-1' },
@@ -268,7 +262,7 @@ describe('Authenticated onboarding finalization', () => {
     const result = await orchestrateAuthedFinalize(queryClient, 'user-google-123', {
       getSessionUserId: () => sessionUserId,
     });
-    expect(finalizeOnboardingV2PlanWithPremiumGate).toHaveBeenCalledWith('user-google-123', '');
+    expect(finalizeOnboardingV2Plan).toHaveBeenCalledWith('user-google-123', '');
     expect(result.status).toBe('navigate');
   });
 
@@ -278,7 +272,7 @@ describe('Authenticated onboarding finalization', () => {
       getSessionUserId: () => sessionUserId,
     });
     // finalize is called with empty flowId — no social auth involved
-    expect(finalizeOnboardingV2PlanWithPremiumGate).toHaveBeenCalledWith('user-google-123', '');
+    expect(finalizeOnboardingV2Plan).toHaveBeenCalledWith('user-google-123', '');
   });
 
   // ── finalization receives exactly the session userId ──
@@ -286,7 +280,7 @@ describe('Authenticated onboarding finalization', () => {
     await orchestrateAuthedFinalize(queryClient, 'user-apple-456', {
       getSessionUserId: () => 'user-apple-456',
     });
-    expect(finalizeOnboardingV2PlanWithPremiumGate).toHaveBeenCalledWith('user-apple-456', '');
+    expect(finalizeOnboardingV2Plan).toHaveBeenCalledWith('user-apple-456', '');
   });
 
   // ── plan and progress are created exactly once ──
@@ -294,7 +288,7 @@ describe('Authenticated onboarding finalization', () => {
     await orchestrateAuthedFinalize(queryClient, 'user-google-123', {
       getSessionUserId: () => sessionUserId,
     });
-    expect(finalizeOnboardingV2PlanWithPremiumGate).toHaveBeenCalledTimes(1);
+    expect(finalizeOnboardingV2Plan).toHaveBeenCalledTimes(1);
   });
 
   // ── handoff is called exactly once ──
@@ -336,10 +330,10 @@ describe('Authenticated onboarding finalization', () => {
   // ── session change during finalization → session_changed ──
   it('session changes during finalization → session_changed (no navigation)', async () => {
     sessionUserId = 'user-google-123';
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockImplementation(async () => {
+    (finalizeOnboardingV2Plan as jest.Mock).mockImplementation(async () => {
       // Simulate session change during async finalize
       sessionUserId = 'user-other-789';
-      return { status: 'finalized', finalize: { ok: true, reason: 'created' } };
+      return {  ok: true, reason: 'created'  };
     });
     const result = await orchestrateAuthedFinalize(queryClient, 'user-google-123', {
       getSessionUserId: () => sessionUserId,
@@ -349,10 +343,7 @@ describe('Authenticated onboarding finalization', () => {
 
   // ── finalize fails → finalize_failed (no handoff) ──
   it('finalize fails → finalize_failed, handoff NOT called', async () => {
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({
-      status: 'finalized',
-      finalize: { ok: false, reason: 'persist_error' },
-    });
+    (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValue({ ok: false, reason: 'persist_error' });
     const result = await orchestrateAuthedFinalize(queryClient, 'user-google-123', {
       getSessionUserId: () => sessionUserId,
     });
@@ -373,35 +364,13 @@ describe('Authenticated onboarding finalization', () => {
     expect(clearPendingOnboardingIfMatches).not.toHaveBeenCalled();
   });
 
-  // ── premium sync fails → premium_sync_failed ──
-  it('premium sync fails → premium_sync_failed', async () => {
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({
-      status: 'premium_sync_failed',
-    });
-    const result = await orchestrateAuthedFinalize(queryClient, 'user-google-123', {
-      getSessionUserId: () => sessionUserId,
-    });
-    expect(result.status).toBe('premium_sync_failed');
-  });
-
-  // ── premium entitlement missing → premium_entitlement_missing ──
-  it('premium entitlement missing → premium_entitlement_missing', async () => {
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({
-      status: 'premium_entitlement_missing',
-    });
-    const result = await orchestrateAuthedFinalize(queryClient, 'user-google-123', {
-      getSessionUserId: () => sessionUserId,
-    });
-    expect(result.status).toBe('premium_entitlement_missing');
-  });
-
   // ── Apple user: same behavior as Google ──
   it('Apple user with existing session: same finalization path', async () => {
     const appleUserId = 'user-apple-999';
     const result = await orchestrateAuthedFinalize(queryClient, appleUserId, {
       getSessionUserId: () => appleUserId,
     });
-    expect(finalizeOnboardingV2PlanWithPremiumGate).toHaveBeenCalledWith(appleUserId, '');
+    expect(finalizeOnboardingV2Plan).toHaveBeenCalledWith(appleUserId, '');
     expect(result.status).toBe('navigate');
   });
 });

@@ -52,7 +52,6 @@ function makeDraft(firstName: string): OnboardingDraftV1 {
     startingSurah: 1,
     customSurahOrder: [],
     continueWithRest: true,
-    experienceChoice: null,
     notificationPreference: null,
     discoverySource: null,
   };

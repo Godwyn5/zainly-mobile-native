@@ -6,11 +6,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { hapticLight } from '@/utils/haptics';
-import { readOnboardingDraftForOwner, updateOnboardingDraftForOwner, ExperienceChoice } from '@/lib/onboardingDraft';
+import { readOnboardingDraftForOwner, updateOnboardingDraftForOwner } from '@/lib/onboardingDraft';
 import { useDraftOwner } from '@/hooks/useDraftOwner';
 import { getNotificationPermissionStatus, requestNotificationPermission, PermissionStatus } from '@/notifications/scheduler';
 import {
-  TOTAL_ONBOARDING_PHASES, phaseStepNumber, notificationsBackTarget,
+  TOTAL_ONBOARDING_PHASES, phaseStepNumber,
 } from '@/lib/onboardingQuestionnaire';
 import OnboardingQuestionHeader from '@/components/onboarding/OnboardingQuestionHeader';
 import OnboardingBottomAction from '@/components/onboarding/OnboardingBottomAction';
@@ -47,9 +47,8 @@ function ambientBreath(value: Animated.Value, halfDuration: number, delay = 0) {
 // onboardingFinalize.ts).
 export default function OnboardingNotificationsScreen() {
   const [ready, setReady] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
-  const [experienceChoice, setExperienceChoice] = useState<ExperienceChoice | null>(null);
+  const [busy, setBusy] = useState(false);
   const [permissionStatus, setPermissionStatus] = useState<PermissionStatus>('undetermined');
   const mountedRef = useRef(true);
   const isSubmittingRef = useRef(false);
@@ -69,11 +68,22 @@ export default function OnboardingNotificationsScreen() {
     (async () => {
       const draft = await readOnboardingDraftForOwner(draftOwner);
       if (cancelled) return;
-      if (!draft?.experienceChoice) {
-        router.replace('/onboarding-v2/experience-choice');
+      if (!draft?.firstName) {
+        router.replace('/onboarding-v2/name');
         return;
       }
-      setExperienceChoice(draft.experienceChoice);
+      if (!draft.learningMode) {
+        router.replace('/onboarding-v2/learning-mode');
+        return;
+      }
+      if (draft.learningMode === 'start_surah' && draft.startingSurah == null) {
+        router.replace('/onboarding-v2/start-surah');
+        return;
+      }
+      if (draft.learningMode === 'custom_order' && draft.customSurahOrder.length === 0) {
+        router.replace('/onboarding-v2/custom-order');
+        return;
+      }
 
       const status = await getNotificationPermissionStatus();
       if (cancelled) return;
@@ -114,7 +124,7 @@ export default function OnboardingNotificationsScreen() {
   }, [ready, reduceMotion]);
 
   function handleBack() {
-    router.replace(notificationsBackTarget(experienceChoice));
+    router.replace('/onboarding-v2/known-surahs');
   }
 
   async function handleActivate() {

@@ -1,5 +1,5 @@
 import type { QueryClient } from '@tanstack/react-query';
-import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { finalizeOnboardingV2Plan } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 import { clearPendingOnboardingIfMatches, readPendingOnboardingPlan } from '@/lib/pendingOnboardingPlan';
 import { inspectDraftForOwner, clearOnboardingDraftForOwner, type OnboardingDraftOwner } from '@/lib/onboardingDraft';
@@ -7,8 +7,6 @@ import { inspectDraftForOwner, clearOnboardingDraftForOwner, type OnboardingDraf
 export type ProgramSummaryAuthedOutcome =
   | { status: 'navigate' }
   | { status: 'navigate_clear_failed' }
-  | { status: 'premium_sync_failed' }
-  | { status: 'premium_entitlement_missing' }
   | { status: 'finalize_failed'; message?: string }
   | { status: 'session_changed' }
   | { status: 'handoff_failed' }
@@ -17,7 +15,7 @@ export type ProgramSummaryAuthedOutcome =
   | { status: 'draft_owner_mismatch' };
 
 interface OrchestrationDeps {
-  finalizeWithPremiumGate: typeof finalizeOnboardingV2PlanWithPremiumGate;
+  finalize: typeof finalizeOnboardingV2Plan;
   handoff: typeof handOffFinalizedProgram;
   getSessionUserId: () => string | undefined;
   invalidateNonCritical: (queryClient: QueryClient, userId: string) => void;
@@ -25,7 +23,7 @@ interface OrchestrationDeps {
 }
 
 const defaultDeps: OrchestrationDeps = {
-  finalizeWithPremiumGate: finalizeOnboardingV2PlanWithPremiumGate,
+  finalize: finalizeOnboardingV2Plan,
   handoff: handOffFinalizedProgram,
   getSessionUserId: () => undefined,
   invalidateNonCritical: (qc, uid) => {
@@ -67,15 +65,9 @@ export async function orchestrateAuthedFinalize(
     return { status: 'draft_owner_mismatch' };
   }
 
-  const outcome = await d.finalizeWithPremiumGate(authedUserId, '');
-  if (outcome.status === 'premium_sync_failed') {
-    return { status: 'premium_sync_failed' };
-  }
-  if (outcome.status === 'premium_entitlement_missing') {
-    return { status: 'premium_entitlement_missing' };
-  }
-  if (!outcome.finalize.ok) {
-    return { status: 'finalize_failed', message: outcome.finalize.message };
+  const outcome = await d.finalize(authedUserId, '');
+  if (!outcome.ok) {
+    return { status: 'finalize_failed', message: outcome.message };
   }
 
   if (getSessionUserId() !== authedUserId) {

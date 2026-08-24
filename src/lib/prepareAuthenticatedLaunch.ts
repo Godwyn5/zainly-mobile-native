@@ -24,7 +24,7 @@ import {
   pendingOnboardingQueryOptions,
   revenueCatCustomerInfoQueryOptions,
 } from '@/queries';
-import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { finalizeOnboardingV2Plan } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 import {
   getSessionAuthFlowId,
@@ -91,25 +91,9 @@ export async function prepareAuthenticatedLaunch(
     if (pendingResult === true) {
       // A valid pending payload exists — run finalize + handoff + clear.
       const authFlowId = getSessionAuthFlowId();
-      const outcome = await finalizeOnboardingV2PlanWithPremiumGate(userId, authFlowId);
+      const outcome = await finalizeOnboardingV2Plan(userId, authFlowId);
 
-      if (outcome.status === 'premium_sync_failed') {
-        // Premium sync failure — the dashboard's recovery hook handles retry.
-        // Return error so the gate blocks the dashboard until the user retries.
-        return {
-          status: 'error',
-          error: new Error('premium_sync_failed'),
-        };
-      }
-      if (outcome.status === 'premium_entitlement_missing') {
-        // Premium entitlement missing — same: block dashboard, let recovery handle.
-        return {
-          status: 'error',
-          error: new Error('premium_entitlement_missing'),
-        };
-      }
-
-      if (outcome.status === 'finalized' && outcome.finalize.ok) {
+      if (outcome.ok) {
         // Finalize succeeded — run handoff to populate cache with canonical rows.
         const handoff = await handOffFinalizedProgram(queryClient, userId);
         if (handoff.status === 'ready') {
@@ -138,12 +122,12 @@ export async function prepareAuthenticatedLaunch(
             error: new Error('handoff_failed'),
           };
         }
-      } else if (outcome.status === 'finalized' && !outcome.finalize.ok) {
+      } else if (!outcome.ok) {
         // Finalize failed (persist_error, no_source, etc.) — do NOT fall
         // through. Return error so the gate blocks the dashboard.
         return {
           status: 'error',
-          error: new Error(`finalize_failed:${outcome.finalize.reason}`),
+          error: new Error(`finalize_failed:${outcome.reason}`),
         };
       }
     }

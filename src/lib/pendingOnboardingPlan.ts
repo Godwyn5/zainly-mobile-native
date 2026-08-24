@@ -18,7 +18,7 @@
 // personalize the account it creates.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { LearningMode, NotificationPreference, DiscoverySource, ExperienceChoice } from './onboardingDraft';
+import type { LearningMode, NotificationPreference, DiscoverySource } from './onboardingDraft';
 import { purgeAllOnboardingDrafts, claimDraftForUser, readOnboardingDraftForOwner, clearOnboardingDraftForOwner, getOrCreateGuestFlowId, clearGuestFlowId } from './onboardingDraft';
 
 const STORAGE_KEY = 'zainly:onboardingV2:pendingPlan';
@@ -62,7 +62,6 @@ const VALID_NOTIFICATION_PREFERENCES: NotificationPreference[] = [
 const VALID_DISCOVERY_SOURCES: DiscoverySource[] = [
   'tiktok', 'instagram', 'youtube', 'google', 'app_store', 'word_of_mouth', 'other',
 ];
-const VALID_EXPERIENCE_CHOICES: ExperienceChoice[] = ['unlimited', 'daily_limited'];
 
 export interface PendingOnboardingPlanV1 {
   version: 1;
@@ -75,12 +74,6 @@ export interface PendingOnboardingPlanV1 {
   continueWithRest: boolean;
   notificationPreference: NotificationPreference | null;
   discoverySource: DiscoverySource | null;
-  // Never used to GRANT premium access — RevenueCat entitlement remains the
-  // only source of truth for that. Its sole purpose is letting
-  // onboardingFinalize.ts know, after auth, whether this finalization came
-  // from a parcours that requires a strict RevenueCat entitlement check
-  // before the plan is finalized and this payload is cleared.
-  experienceChoice: ExperienceChoice | null;
   // userId of the account that claimed this payload during finalization.
   // null means the payload was created pre-auth and is still unclaimed.
   // Once set, only that userId may use it.
@@ -226,10 +219,6 @@ function isValidShape(raw: unknown): raw is PendingOnboardingPlanV1 {
   if (
     d.discoverySource !== null
     && (typeof d.discoverySource !== 'string' || !VALID_DISCOVERY_SOURCES.includes(d.discoverySource as DiscoverySource))
-  ) return false;
-  if (
-    d.experienceChoice !== null
-    && (typeof d.experienceChoice !== 'string' || !VALID_EXPERIENCE_CHOICES.includes(d.experienceChoice as ExperienceChoice))
   ) return false;
   if (d.ownerUserId !== undefined && d.ownerUserId !== null && typeof d.ownerUserId !== 'string') return false;
   if (d.flowId !== undefined && d.flowId !== null && typeof d.flowId !== 'string') return false;

@@ -17,16 +17,12 @@ import { useAuthStore } from '@/store/authStore';
 import { useRevenueCatPaywall, PaywallPlan } from '@/hooks/useRevenueCatPaywall';
 import { PurchasesPackage } from '@/lib/revenueCat';
 
-type PaywallContext = 'daily_limit' | 'profile' | 'onboarding';
+type PaywallContext = 'daily_limit' | 'profile';
 
 type ContextCopy = { title: string; subtitle: string };
 
 const CONTEXT_COPY: Record<PaywallContext, ContextCopy> = {
   daily_limit: {
-    title: 'Garde ton élan dans ton Hifz.',
-    subtitle: 'Sessions guidées sans limite quotidienne, pour continuer quand tu es concentré.',
-  },
-  onboarding: {
     title: 'Garde ton élan dans ton Hifz.',
     subtitle: 'Sessions guidées sans limite quotidienne, pour continuer quand tu es concentré.',
   },
@@ -105,7 +101,7 @@ function legalText(plan: PaywallPlan, priceString: string | undefined, trialDura
 export default function PremiumScreen() {
   const { context } = useLocalSearchParams<{ context?: string }>();
   const ctx: PaywallContext =
-    context === 'daily_limit' || context === 'profile' || context === 'onboarding'
+    context === 'daily_limit' || context === 'profile'
       ? context
       : 'profile';
 
@@ -145,15 +141,8 @@ export default function PremiumScreen() {
 
     if (result.ok) {
       if (result.hasEntitlement) {
-        // Onboarding context: the dedicated premium-confirmation screen
-        // IS the confirmation moment — a native Alert on top of it would be
-        // redundant/jarring, so it is skipped only for this context.
-        if (ctx === 'onboarding') {
-          router.replace('/onboarding-v2/premium-confirmation');
-        } else {
-          Alert.alert('Zainly+ activé', 'Ton accès Zainly+ est maintenant actif.');
-          goBackAfterPurchase();
-        }
+        Alert.alert('Zainly+ activé', 'Ton accès Zainly+ est maintenant actif.');
+        goBackAfterPurchase();
       } else {
         Alert.alert(
           'Achat confirmé, activation en attente',
@@ -181,12 +170,8 @@ export default function PremiumScreen() {
 
     if (result.ok) {
       if (result.hasEntitlement) {
-        if (ctx === 'onboarding') {
-          router.replace('/onboarding-v2/premium-confirmation');
-        } else {
-          Alert.alert('Achats restaurés', 'Ton accès Zainly+ est actif.');
-          goBackAfterPurchase();
-        }
+        Alert.alert('Achats restaurés', 'Ton accès Zainly+ est actif.');
+        goBackAfterPurchase();
       } else {
         Alert.alert('Aucun achat trouvé', `Aucun abonnement Zainly+ actif n'a été trouvé sur ce compte ${STORE_SETTINGS_LABEL}.`);
       }

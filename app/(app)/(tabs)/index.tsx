@@ -15,7 +15,6 @@ import { getTodayProgramme } from '@/core/dailyPlan';
 import { Screen } from '@/components/ui/Screen';
 import { useDashboardReady } from '@/components/providers/DashboardReadyProvider';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { SecondaryButton } from '@/components/ui/SecondaryButton';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
 import { hapticLight } from '@/utils/haptics';
@@ -234,9 +233,7 @@ export default function TodayScreen() {
     (pendingOnboardingV2.isLoading ||
       pendingOnboardingV2.hasPending ||
       finalize.status === 'running' ||
-      finalize.status === 'error' ||
-      finalize.status === 'premium_sync_failed' ||
-      finalize.status === 'premium_entitlement_missing');
+      finalize.status === 'error');
 
   // ── dashboard-ready signal: gated on the REAL hydrated branch, not mount ──
   // Screen's onLayout resolves the instant its flex:1 SafeAreaView is laid
@@ -497,50 +494,6 @@ export default function TodayScreen() {
               buttonLabel="Réessayer"
               onPress={finalize.retryFinalize}
             />
-          </View>
-        </SafeAreaView>
-      );
-    }
-
-    // Premium sync failed
-    if (finalize.status === 'premium_sync_failed') {
-      return (
-        <SafeAreaView style={s.centered}>
-          <View style={s.stateCard}>
-            <EmptyState
-              title="Nous n'avons pas pu vérifier ton accès Zainly+"
-              description="Ton programme est conservé. Réessaie lorsque ta connexion est stable."
-              buttonLabel="Réessayer"
-              onPress={finalize.retryFinalize}
-            />
-          </View>
-        </SafeAreaView>
-      );
-    }
-
-    // Premium entitlement missing
-    if (finalize.status === 'premium_entitlement_missing') {
-      return (
-        <SafeAreaView style={s.centered}>
-          <View style={s.stateCard}>
-            <EmptyState
-              title="Nous n'avons pas encore pu vérifier ton accès premium"
-              description="Tu peux réessayer ou restaurer ton achat."
-            />
-            <View style={s.finalizingActions}>
-              <SecondaryButton
-                label="Réessayer"
-                onPress={finalize.retryFinalize}
-                disabled={finalize.isResolvingPremiumGate}
-                style={s.finalizingActionBtn}
-              />
-              <SecondaryButton
-                label="Restaurer mon achat"
-                onPress={finalize.restorePremiumPurchase}
-                disabled={finalize.isResolvingPremiumGate}
-                style={s.finalizingActionBtn}
-              />
-            </View>
           </View>
         </SafeAreaView>
       );

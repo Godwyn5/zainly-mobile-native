@@ -24,20 +24,18 @@ import { finalizeOnboardingPlanRpc } from '@/db/finalizeOnboardingPlan';
 import { upsertProfileFirstName } from '@/db/profiles';
 import {
   readOnboardingDraftForOwner, clearOnboardingDraftForOwner,
-  type OnboardingDraftOwner, type NotificationPreference, type ExperienceChoice,
+  type OnboardingDraftOwner, type NotificationPreference,
 } from './onboardingDraft';
 import {
   buildPlanInputFromDraft, isPlanValidationError, PlanInputSource,
 } from './onboardingPlanValidation';
 import {
-  readPendingOnboardingPlan,
   claimPendingOnboardingPlanForUser,
   readOwnedPendingOnboardingPlanForUser,
 } from './pendingOnboardingPlan';
 import { scheduleDailyHifzReminder } from '@/notifications/scheduler';
 import { saveNotificationSettings } from '@/notifications/storage';
 import { DEFAULT_SETTINGS } from '@/notifications/types';
-import { syncRevenueCatUserAfterAuth } from '@/lib/revenueCat';
 
 export type FinalizeOnboardingV2Result =
   | { ok: true; reason?: 'created' | 'plan_already_exists' }
@@ -62,70 +60,6 @@ export async function finalizeOnboardingV2Plan(userId: string, authFlowId: strin
   if (inFlight) return inFlight;
   inFlight = runFinalize(userId, authFlowId).finally(() => { inFlight = null; });
   return inFlight;
-}
-
-/**
- * Reads (never clears) the experienceChoice from whichever source
- * finalization would use — the in-memory draft first, then the durable
- * pending payload. Read-only peek: used only to decide whether a strict
- * RevenueCat entitlement check is required before finalizing, never to
- * grant premium access itself (RevenueCat entitlement remains the only
- * source of truth for that).
- */
-async function peekOnboardingV2ExperienceChoice(userId: string): Promise<ExperienceChoice | null> {
-  const owner: OnboardingDraftOwner = { kind: 'authenticated', userId };
-  const draft = await readOnboardingDraftForOwner(owner);
-  if (draft) return draft.experienceChoice;
-  const pending = await readPendingOnboardingPlan();
-  if (pending) return pending.experienceChoice;
-  return null;
-}
-
-/**
- * Discriminated result of finalizeOnboardingV2PlanWithPremiumGate() below.
- */
-export type PremiumGatedFinalizeResult =
-  | { status: 'finalized'; finalize: FinalizeOnboardingV2Result }
-  | { status: 'premium_sync_failed'; reason: 'configure_failed' | 'login_failed' | 'customer_info_failed' }
-  | { status: 'premium_entitlement_missing' };
-
-/**
- * The premium-aware entry point signup.tsx/login.tsx must call instead of
- * finalizeOnboardingV2Plan() directly. Free/daily_limited parcours (or any
- * signup/login with no onboarding-v2 source at all) are entirely unaffected
- * — they go straight to finalization, never blocked on RevenueCat. A
- * 'unlimited' parcours is only ever finalized (plan persisted, pending
- * payload cleared) once syncRevenueCatUserAfterAuth() confirms a real,
- * active entitlement — a pre-auth purchase that hasn't linked yet must never
- * be silently treated as free, and a payload that merely CLAIMS 'unlimited'
- * without a real purchase must never be granted access either.
- *
- * On unsupported_platform (Android — Zainly+ is iOS-only), the check is
- * skipped and finalization proceeds normally: there is nothing to verify
- * and free users must never be blocked because of a RevenueCat platform
- * limitation that predates this patch.
- */
-export async function finalizeOnboardingV2PlanWithPremiumGate(
-  userId: string,
-  authFlowId: string
-): Promise<PremiumGatedFinalizeResult> {
-  const experienceChoice = await peekOnboardingV2ExperienceChoice(userId);
-
-  if (experienceChoice === 'unlimited') {
-    const sync = await syncRevenueCatUserAfterAuth(userId);
-
-    if (!sync.ok && sync.reason !== 'unsupported_platform') {
-      return { status: 'premium_sync_failed', reason: sync.reason };
-    }
-    if (sync.ok && !sync.entitlementActive) {
-      return { status: 'premium_entitlement_missing' };
-    }
-    // sync.ok && entitlementActive, OR unsupported_platform (nothing to
-    // verify) — fall through to finalize normally.
-  }
-
-  const finalize = await finalizeOnboardingV2Plan(userId, authFlowId);
-  return { status: 'finalized', finalize };
 }
 
 async function runFinalize(userId: string, authFlowId: string): Promise<FinalizeOnboardingV2Result> {

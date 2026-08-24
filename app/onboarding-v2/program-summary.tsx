@@ -109,7 +109,7 @@ export default function OnboardingProgramSummaryScreen() {
       if (currentOwnerKeyRef.current !== ownerKey) return;
 
       if (!draft) {
-        router.replace('/onboarding-v2/experience-choice');
+        router.replace('/onboarding-v2/known-surahs');
         return;
       }
       const validation = buildPlanInputFromDraft(draft, PENDING_SIGNUP_USER_ID);
@@ -190,7 +190,6 @@ export default function OnboardingProgramSummaryScreen() {
       // CTA. The draft is in AsyncStorage under the user's key, so
       // finalizeOnboardingV2Plan reads it directly (no pending payload,
       // no authHandoff, no flowId required).
-      // The premium gate is still applied for 'unlimited' experience.
       const authedUserId = session?.user?.id;
       if (authedUserId) {
         // ── Claim the guest draft for this authenticated user ──────────
@@ -233,12 +232,6 @@ export default function OnboardingProgramSummaryScreen() {
         );
 
         switch (result.status) {
-          case 'premium_sync_failed':
-            setSaveError('Impossible de vérifier ton abonnement. Réessaie.');
-            return;
-          case 'premium_entitlement_missing':
-            setSaveError("Ton abonnement Zainly+ n'a pas pu être confirmé. Réessaie ou restaure ton achat.");
-            return;
           case 'finalize_failed':
             setSaveError(result.message ?? 'Impossible de créer ton programme. Réessaie.');
             return;
@@ -278,7 +271,6 @@ export default function OnboardingProgramSummaryScreen() {
         continueWithRest: draft.continueWithRest,
         notificationPreference: draft.notificationPreference,
         discoverySource: draft.discoverySource,
-        experienceChoice: draft.experienceChoice,
       });
 
       if (!saved.ok) {

@@ -10,7 +10,7 @@ import { create } from 'react-test-renderer';
 import { useOnboardingV2AuthFinalize } from '../useOnboardingV2AuthFinalize';
 
 jest.mock('@/lib/onboardingFinalize', () => ({
-  finalizeOnboardingV2PlanWithPremiumGate: jest.fn(),
+  finalizeOnboardingV2Plan: jest.fn(),
 }));
 jest.mock('@/lib/onboardingDashboardHandoff', () => ({
   handOffFinalizedProgram: jest.fn(),
@@ -31,11 +31,11 @@ jest.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: mockInvalidateQueries }),
 }));
 
-import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { finalizeOnboardingV2Plan } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 import { clearPendingOnboardingIfMatches } from '@/lib/pendingOnboardingPlan';
 
-const mockFinalize = finalizeOnboardingV2PlanWithPremiumGate as jest.Mock;
+const mockFinalize = finalizeOnboardingV2Plan as jest.Mock;
 const mockHandoff = handOffFinalizedProgram as jest.Mock;
 const mockClearPending = clearPendingOnboardingIfMatches as jest.Mock;
 
@@ -65,7 +65,7 @@ describe('useOnboardingV2AuthFinalize — recovery handoff', () => {
   });
 
   it('status becomes "success" only after the handoff also confirms plan+progress', async () => {
-    mockFinalize.mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+    mockFinalize.mockResolvedValue({  ok: true, reason: 'created'  });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: {}, progress: {} });
 
     const harness = renderHookHarness(useOnboardingV2AuthFinalize);
@@ -80,7 +80,7 @@ describe('useOnboardingV2AuthFinalize — recovery handoff', () => {
   });
 
   it('status becomes "error" (not "success") when finalize succeeds but the handoff fails', async () => {
-    mockFinalize.mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+    mockFinalize.mockResolvedValue({  ok: true, reason: 'created'  });
     mockHandoff.mockResolvedValue({ status: 'error', error: new Error('network') });
 
     const harness = renderHookHarness(useOnboardingV2AuthFinalize);
@@ -94,7 +94,7 @@ describe('useOnboardingV2AuthFinalize — recovery handoff', () => {
   });
 
   it('does not call the handoff at all when finalize itself fails', async () => {
-    mockFinalize.mockResolvedValue({ status: 'finalized', finalize: { ok: false, reason: 'persist_error', message: 'x' } });
+    mockFinalize.mockResolvedValue({  ok: false, reason: 'persist_error', message: 'x'  });
 
     const harness = renderHookHarness(useOnboardingV2AuthFinalize);
 
@@ -107,7 +107,7 @@ describe('useOnboardingV2AuthFinalize — recovery handoff', () => {
   });
 
   it('a retry after a handoff failure re-runs finalize+handoff and can reach success', async () => {
-    mockFinalize.mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'plan_already_exists' } });
+    mockFinalize.mockResolvedValue({  ok: true, reason: 'plan_already_exists'  });
     mockHandoff
       .mockResolvedValueOnce({ status: 'error', error: new Error('network') })
       .mockResolvedValueOnce({ status: 'ready', plan: {}, progress: {} });
@@ -141,7 +141,7 @@ describe('useOnboardingV2AuthFinalize — recovery handoff', () => {
     });
 
     await act(async () => {
-      resolveFinalize({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+      resolveFinalize({  ok: true, reason: 'created'  });
       await Promise.all([firstCall, secondCall]);
     });
 
@@ -153,7 +153,7 @@ describe('useOnboardingV2AuthFinalize — recovery handoff', () => {
 
   it('retry after hook recreation succeeds (does not depend on volatile closure state)', async () => {
     // First hook instance: finalize succeeds, handoff fails
-    mockFinalize.mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+    mockFinalize.mockResolvedValue({  ok: true, reason: 'created'  });
     mockHandoff.mockResolvedValueOnce({ status: 'error', error: new Error('network') });
 
     const harness1 = renderHookHarness(useOnboardingV2AuthFinalize);
@@ -212,7 +212,7 @@ describe('useOnboardingV2AuthFinalize — multi-account protection', () => {
     //
     // However, we can test that the hook doesn't mix userIds internally:
     await act(async () => {
-      resolveFinalize({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+      resolveFinalize({  ok: true, reason: 'created'  });
       await callPromise;
     });
 
@@ -222,7 +222,7 @@ describe('useOnboardingV2AuthFinalize — multi-account protection', () => {
   });
 
   it('clearPendingOnboardingForUser is called with the correct userId, not a stale one', async () => {
-    mockFinalize.mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+    mockFinalize.mockResolvedValue({  ok: true, reason: 'created'  });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: {}, progress: {} });
 
     mockClearPending.mockClear();
@@ -239,7 +239,7 @@ describe('useOnboardingV2AuthFinalize — multi-account protection', () => {
   });
 
   it('does not clear pending for user-A when runFinalize was called with user-B', async () => {
-    mockFinalize.mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+    mockFinalize.mockResolvedValue({  ok: true, reason: 'created'  });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: {}, progress: {} });
 
     mockClearPending.mockClear();
@@ -272,7 +272,7 @@ describe('useOnboardingV2AuthFinalize — multi-account protection', () => {
     // Finalize is in-flight. Even if the session changes to user-B externally,
     // the hook captured user-A at call time.
     await act(async () => {
-      resolveFinalize!({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+      resolveFinalize!({  ok: true, reason: 'created'  });
       await callPromise;
     });
 
@@ -284,7 +284,7 @@ describe('useOnboardingV2AuthFinalize — multi-account protection', () => {
 
   it('A→B during handoff → clearPending still uses user-A (hook does not re-read session)', async () => {
     let resolveHandoff: (v: unknown) => void;
-    mockFinalize.mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+    mockFinalize.mockResolvedValue({  ok: true, reason: 'created'  });
     mockHandoff.mockReturnValueOnce(new Promise(r => { resolveHandoff = r; }));
     mockClearPending.mockClear();
 
@@ -319,7 +319,7 @@ describe('useOnboardingV2AuthFinalize — multi-account protection', () => {
       return { flowId: 'new-flow-id-T2', ownerUserId: 'user-A' };
     });
 
-    mockFinalize.mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+    mockFinalize.mockResolvedValue({  ok: true, reason: 'created'  });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: {}, progress: {} });
     mockClearPending.mockClear();
 
@@ -339,7 +339,7 @@ describe('useOnboardingV2AuthFinalize — multi-account protection', () => {
   });
 
   it('clearPending returns superseded → hook does NOT announce success', async () => {
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true, reason: 'created' });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: { id: 'p', user_id: 'user-A' }, progress: { user_id: 'user-A' } });
     mockClearPending.mockResolvedValueOnce('superseded');
 

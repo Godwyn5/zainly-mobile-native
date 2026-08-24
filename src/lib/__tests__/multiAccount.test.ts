@@ -66,7 +66,6 @@ const validInput: PendingPlanInput = {
   continueWithRest: true,
   notificationPreference: 'enabled',
   discoverySource: 'tiktok',
-  experienceChoice: 'daily_limited',
   ownerUserId: null,
 };
 
@@ -213,7 +212,6 @@ describe('hasValidPendingOnboardingPlanForUser', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
       ownerUserId: null,
     };
     await AsyncStorage.setItem('zainly:onboardingV2:pendingPlan', JSON.stringify(payload));
@@ -261,7 +259,6 @@ describe('hasValidPendingOnboardingPlanForUser', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
       ownerUserId: null,
       flowId: 'test-flow-id',
     };
@@ -379,7 +376,6 @@ describe('Pending payload ownership lifecycle', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
       ownerUserId: null,
     };
     await AsyncStorage.setItem('zainly:onboardingV2:pendingPlan', JSON.stringify(legacyPayload));

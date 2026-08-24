@@ -47,7 +47,6 @@ const validInput: PendingPlanInput = {
   continueWithRest: false,
   notificationPreference: 'enabled',
   discoverySource: 'tiktok',
-  experienceChoice: 'unlimited',
 };
 
 beforeEach(() => {
@@ -87,7 +86,13 @@ describe('savePendingOnboardingPlan', () => {
     expect(parsed.knownSurahs).toEqual([1, 114]);
     expect(parsed.notificationPreference).toBe('enabled');
     expect(parsed.discoverySource).toBe('tiktok');
-    expect(parsed.experienceChoice).toBe('unlimited');
+  });
+
+  it('never writes experienceChoice in a new payload', async () => {
+    await savePendingOnboardingPlan(validInput);
+    const raw = (AsyncStorage.setItem as jest.Mock).mock.calls[0][1] as string;
+    const parsed = JSON.parse(raw);
+    expect(parsed).not.toHaveProperty('experienceChoice');
   });
 });
 
@@ -101,6 +106,20 @@ describe('readPendingOnboardingPlan — valid payload', () => {
     expect(payload!.firstName).toBe('Ahmed');
     expect(payload!.learningMode).toBe('recommended');
     expect(payload!.version).toBe(1);
+  });
+
+  it('still reads and validates a legacy payload that contains experienceChoice', async () => {
+    const legacy = {
+      ...validInput,
+      version: 1 as const,
+      createdAt: new Date().toISOString(),
+      experienceChoice: 'unlimited',
+    };
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(legacy));
+    const payload = await readPendingOnboardingPlan();
+    expect(payload).not.toBeNull();
+    expect(payload!.learningMode).toBe('recommended');
+    expect(await hasValidPendingOnboardingPlan()).toBe(true);
   });
 });
 

@@ -31,14 +31,10 @@ jest.mock('@/components/providers/DashboardReadyProvider', () => ({
 
 jest.mock('@/hooks/useOnboardingV2AuthFinalize', () => ({
   useOnboardingV2AuthFinalize: () => ({
-    premiumGateIssue: null,
-    isResolvingPremiumGate: false,
     status: 'idle',
     lastError: null,
     runFinalize: jest.fn(),
-    retryPremiumGate: jest.fn(),
     retryFinalize: jest.fn(),
-    restorePremiumPurchase: jest.fn(),
   }),
 }));
 

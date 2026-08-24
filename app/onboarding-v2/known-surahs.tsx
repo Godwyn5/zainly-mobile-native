@@ -111,15 +111,14 @@ export default function OnboardingKnownSurahsScreen() {
     if (allKnownSelected) { hapticWarning(); return; }
     if (!draftOwner) return;
     hapticLight();
-    const draft = await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'experience_choice', knownSurahs });
-    // Last common gate before leaving the block — same completeness check
-    // as experience-choice.tsx, defensive against any UI bug upstream.
+    const draft = await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'notifications', knownSurahs });
+    // Defensive completeness check before leaving the block.
     const check = buildPlanInputFromDraft(draft, 'pending-signup');
     if (isPlanValidationError(check) && check.missingStep !== 'first_name') {
       router.replace(routeForOnboardingStep(check.missingStep));
       return;
     }
-    router.push('/onboarding-v2/experience-choice');
+    router.push('/onboarding-v2/notifications');
   }
 
   const listHeader = useMemo(() => (

@@ -191,7 +191,6 @@ async function seedValidDraft() {
     firstName: 'Ahmed',
     learningMode: 'recommended',
     knownSurahs: [1, 2],
-    experienceChoice: 'daily_limited',
     notificationPreference: 'enabled',
     discoverySource: 'tiktok',
   });
@@ -280,7 +279,6 @@ describe('Plan-already-exists guard', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
 
     await finalizeOnboardingV2Plan(USER_A, '');
@@ -383,7 +381,6 @@ describe('Plan-already-exists guard', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved.flowId);
@@ -586,7 +583,6 @@ describe('Combined auth boundary clearing', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     await seedValidDraft();
 
@@ -628,7 +624,6 @@ describe('Session-expiry boundary (clearOnboardingStateForSessionExpiry)', () =>
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     // Set up the auth flow proof so claim can succeed
@@ -654,7 +649,6 @@ describe('Session-expiry boundary (clearOnboardingStateForSessionExpiry)', () =>
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     // Not claimed — ownerUserId is absent (undefined), not explicitly null
 
@@ -691,7 +685,6 @@ describe('Cross-account pending payload protection in plan_already_exists', () =
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved.flowId);
@@ -704,7 +697,6 @@ describe('Cross-account pending payload protection in plan_already_exists', () =
       firstName: 'Bob',
       learningMode: 'recommended',
       knownSurahs: [1, 2],
-      experienceChoice: 'daily_limited',
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
     });
@@ -753,7 +745,6 @@ describe('Pending payload as transaction marker', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved.flowId);
@@ -813,7 +804,6 @@ describe('Pending payload as transaction marker', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved.flowId);
@@ -839,7 +829,6 @@ describe('Pending payload as transaction marker', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     // Not claimed — no ownerUserId
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
@@ -863,7 +852,6 @@ describe('Pending payload as transaction marker', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     if (!saved1.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved1.flowId);
@@ -880,7 +868,6 @@ describe('Pending payload as transaction marker', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     if (!saved2.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved2.flowId);
@@ -908,7 +895,6 @@ describe('Pending payload as transaction marker', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved.flowId);
@@ -935,7 +921,6 @@ describe('Pending payload as transaction marker', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved.flowId);
@@ -994,7 +979,6 @@ describe('Pending payload as transaction marker', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved.flowId);
@@ -1064,7 +1048,6 @@ describe('Pending payload as transaction marker', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     if (!saved2.ok) throw new Error('savePendingOnboardingPlan failed in test setup 2');
     saveActiveOnboardingAuthFlow(saved2.flowId);
@@ -1112,7 +1095,6 @@ describe('Pending payload as transaction marker', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     if (!saved1.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved1.flowId);
@@ -1129,7 +1111,6 @@ describe('Pending payload as transaction marker', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     if (!saved2.ok) throw new Error('savePendingOnboardingPlan failed in test setup 2');
     saveActiveOnboardingAuthFlow(saved2.flowId);
@@ -1163,7 +1144,6 @@ describe('Pending payload as transaction marker', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     if (!saved1.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved1.flowId);
@@ -1185,7 +1165,6 @@ describe('Pending payload as transaction marker', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
 
     // Both should resolve without error

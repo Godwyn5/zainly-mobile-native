@@ -1,7 +1,7 @@
 /// <reference types="jest" />
 import { QueryClient } from '@tanstack/react-query';
 import { orchestrateAuthedFinalize } from '../programSummaryOrchestration';
-import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { finalizeOnboardingV2Plan } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 
 jest.mock('@react-native-async-storage/async-storage', () => {
@@ -20,7 +20,7 @@ jest.mock('@react-native-async-storage/async-storage', () => {
 });
 
 jest.mock('@/lib/onboardingFinalize', () => ({
-  finalizeOnboardingV2PlanWithPremiumGate: jest.fn(),
+  finalizeOnboardingV2Plan: jest.fn(),
 }));
 jest.mock('@/lib/onboardingDashboardHandoff', () => ({
   handOffFinalizedProgram: jest.fn(),
@@ -30,7 +30,7 @@ jest.mock('@/lib/pendingOnboardingPlan', () => ({
   readPendingOnboardingPlan: jest.fn(async () => ({ flowId: 'test-flow-id', ownerUserId: 'user-aaa' })),
 }));
 
-const mockFinalize = finalizeOnboardingV2PlanWithPremiumGate as jest.Mock;
+const mockFinalize = finalizeOnboardingV2Plan as jest.Mock;
 const mockHandoff = handOffFinalizedProgram as jest.Mock;
 
 const USER_A = 'user-aaa';
@@ -47,7 +47,7 @@ function makeDeps(overrides: {
   clearPending?: jest.Mock;
 } = {}) {
   return {
-    finalizeWithPremiumGate: mockFinalize,
+    finalize: mockFinalize,
     handoff: mockHandoff,
     getSessionUserId: overrides.getSessionUserId ?? (() => USER_A),
     invalidateNonCritical: overrides.invalidateNonCritical ?? jest.fn(),
@@ -62,10 +62,7 @@ beforeEach(() => {
 describe('orchestrateAuthedFinalize', () => {
   it('navigates on full success (finalize ok + handoff ready)', async () => {
     const client = freshClient();
-    mockFinalize.mockResolvedValue({
-      status: 'ok',
-      finalize: { ok: true },
-    });
+    mockFinalize.mockResolvedValue({ ok: true });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
     const invalidateNonCritical = jest.fn();
     const clearPending = jest.fn(async () => 'cleared' as const);
@@ -79,10 +76,7 @@ describe('orchestrateAuthedFinalize', () => {
 
   it('does not navigate when finalize fails', async () => {
     const client = freshClient();
-    mockFinalize.mockResolvedValue({
-      status: 'ok',
-      finalize: { ok: false, message: 'DB write failed' },
-    });
+    mockFinalize.mockResolvedValue({ ok: false, message: 'DB write failed' });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
 
     const result = await orchestrateAuthedFinalize(client, USER_A, makeDeps());
@@ -92,29 +86,9 @@ describe('orchestrateAuthedFinalize', () => {
     expect(mockHandoff).not.toHaveBeenCalled();
   });
 
-  it('does not navigate when premium sync fails', async () => {
-    const client = freshClient();
-    mockFinalize.mockResolvedValue({ status: 'premium_sync_failed' });
-
-    const result = await orchestrateAuthedFinalize(client, USER_A, makeDeps());
-
-    expect(result.status).toBe('premium_sync_failed');
-    expect(mockHandoff).not.toHaveBeenCalled();
-  });
-
-  it('does not navigate when premium entitlement is missing', async () => {
-    const client = freshClient();
-    mockFinalize.mockResolvedValue({ status: 'premium_entitlement_missing' });
-
-    const result = await orchestrateAuthedFinalize(client, USER_A, makeDeps());
-
-    expect(result.status).toBe('premium_entitlement_missing');
-    expect(mockHandoff).not.toHaveBeenCalled();
-  });
-
   it('aborts without navigating if session changes during finalize', async () => {
     const client = freshClient();
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
 
     let currentSession = USER_A;
@@ -125,7 +99,7 @@ describe('orchestrateAuthedFinalize', () => {
     // Now simulate session change — session check after finalize catches it
     // before handoff is ever called.
     jest.clearAllMocks();
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     currentSession = 'user-bbb';
 
     const result2 = await orchestrateAuthedFinalize(client, USER_A, makeDeps({
@@ -143,7 +117,7 @@ describe('orchestrateAuthedFinalize', () => {
     let currentSession = USER_A;
     // Finalize succeeds, then handoff succeeds, but session changes
     // during the handoff await — the post-handoff session check catches it.
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     mockHandoff.mockImplementationOnce(async () => {
       currentSession = 'user-bbb';
       return { status: 'ready', plan: PLAN_A, progress: PROGRESS_A };
@@ -160,7 +134,7 @@ describe('orchestrateAuthedFinalize', () => {
 
   it('does not navigate when handoff fails', async () => {
     const client = freshClient();
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     mockHandoff.mockResolvedValue({ status: 'error', error: new Error('network') });
     const invalidateNonCritical = jest.fn();
     const clearPending = jest.fn(async () => 'cleared' as const);
@@ -174,7 +148,7 @@ describe('orchestrateAuthedFinalize', () => {
 
   it('a retry after durable finalization but handoff failure succeeds on second call', async () => {
     const client = freshClient();
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     mockHandoff
       .mockResolvedValueOnce({ status: 'error', error: new Error('network') })
       .mockResolvedValueOnce({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
@@ -191,12 +165,12 @@ describe('orchestrateAuthedFinalize', () => {
     const invalidateNonCritical = jest.fn();
 
     // Failure path
-    mockFinalize.mockResolvedValueOnce({ status: 'ok', finalize: { ok: false } });
+    mockFinalize.mockResolvedValueOnce({ ok: false });
     await orchestrateAuthedFinalize(client, USER_A, makeDeps({ invalidateNonCritical }));
     expect(invalidateNonCritical).not.toHaveBeenCalled();
 
     // Success path
-    mockFinalize.mockResolvedValueOnce({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValueOnce({ ok: true });
     mockHandoff.mockResolvedValueOnce({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
     await orchestrateAuthedFinalize(client, USER_A, makeDeps({ invalidateNonCritical }));
     expect(invalidateNonCritical).toHaveBeenCalledTimes(1);
@@ -204,7 +178,7 @@ describe('orchestrateAuthedFinalize', () => {
 
   it('clearPending is called with the correct userId, never a different user', async () => {
     const client = freshClient();
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
     const clearPending = jest.fn(async () => 'cleared' as const);
 
@@ -216,7 +190,7 @@ describe('orchestrateAuthedFinalize', () => {
 
   it('session change after handoff but before clearPending → session_changed, no clearPending', async () => {
     const client = freshClient();
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     const clearPending = jest.fn(async () => 'cleared' as const);
 
     let currentSession = USER_A;
@@ -247,7 +221,7 @@ describe('orchestrateAuthedFinalize', () => {
     // Session changes DURING finalize's await
     mockFinalize.mockImplementationOnce(async () => {
       currentSession = 'user-bbb';
-      return { status: 'ok', finalize: { ok: true } };
+      return { ok: true, reason: 'created' };
     });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
 
@@ -266,7 +240,7 @@ describe('orchestrateAuthedFinalize', () => {
     const clearPending = jest.fn(async () => 'cleared' as const);
     let currentSession = USER_A;
 
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     // Session changes DURING handoff's await
     mockHandoff.mockImplementationOnce(async () => {
       currentSession = 'user-bbb';
@@ -287,7 +261,7 @@ describe('orchestrateAuthedFinalize', () => {
     const clearPending = jest.fn(async () => 'cleared' as const);
     let currentSession = USER_A;
 
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
 
     // Change session right after handoff resolves, before clearPending runs.
@@ -314,7 +288,7 @@ describe('orchestrateAuthedFinalize', () => {
     const clearPending = jest.fn(async (_uid: string, _txId: string) => 'cleared' as const);
     let currentSession = USER_A;
 
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
 
     await orchestrateAuthedFinalize(client, USER_A, makeDeps({
@@ -333,7 +307,7 @@ describe('orchestrateAuthedFinalize', () => {
     const clearPending = jest.fn(async () => 'cleared' as const);
     let currentSession = USER_A;
 
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
 
     // Simulate: the pending was overwritten with a new flowId between
@@ -360,7 +334,7 @@ describe('orchestrateAuthedFinalize', () => {
 
   it('clearPending returns storage_error → navigate_clear_failed, invalidate called, no crash', async () => {
     const client = freshClient();
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
     const invalidateNonCritical = jest.fn();
     const clearPending = jest.fn(async () => 'storage_error' as const);
@@ -380,7 +354,7 @@ describe('orchestrateAuthedFinalize', () => {
 
   it('clearPending returns superseded → no navigation, no invalidate, silent abort', async () => {
     const client = freshClient();
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
     const invalidateNonCritical = jest.fn();
     const clearPending = jest.fn(async () => 'superseded' as const);
@@ -399,7 +373,7 @@ describe('orchestrateAuthedFinalize', () => {
 
   it('clearPending returns already_absent → navigate (no pending existed, session still valid)', async () => {
     const client = freshClient();
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
     const invalidateNonCritical = jest.fn();
     const clearPending = jest.fn(async () => 'already_absent' as const);
@@ -416,7 +390,7 @@ describe('orchestrateAuthedFinalize', () => {
 
   it('T1 handoff done, T2 replaces pending before T1 clear → T1 gets superseded, no navigation', async () => {
     const client = freshClient();
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
     const invalidateNonCritical = jest.fn();
 
@@ -438,7 +412,7 @@ describe('orchestrateAuthedFinalize', () => {
 
   it('A→B between pre-clear session check and clear result → session_changed, B pending untouched', async () => {
     const client = freshClient();
-    mockFinalize.mockResolvedValue({ status: 'ok', finalize: { ok: true } });
+    mockFinalize.mockResolvedValue({ ok: true });
     mockHandoff.mockResolvedValue({ status: 'ready', plan: PLAN_A, progress: PROGRESS_A });
     const invalidateNonCritical = jest.fn();
     const clearPending = jest.fn(async () => 'cleared' as const);

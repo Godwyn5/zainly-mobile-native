@@ -51,7 +51,6 @@ function makeDraft(name: string): OnboardingDraftV1 {
     startingSurah: null,
     customSurahOrder: [],
     continueWithRest: true,
-    experienceChoice: 'daily_limited',
     notificationPreference: 'enabled',
     discoverySource: 'tiktok',
     updatedAt: new Date().toISOString(),
@@ -138,7 +137,6 @@ describe('prepareGuestLaunchIfNeeded', () => {
       continueWithRest: true,
       notificationPreference: 'enabled',
       discoverySource: 'tiktok',
-      experienceChoice: 'daily_limited',
     });
     expect(result.ok).toBe(true);
 

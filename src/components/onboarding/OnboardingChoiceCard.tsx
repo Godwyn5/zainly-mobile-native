@@ -13,15 +13,15 @@ const DOT_BORDER           = 'rgba(22,48,38,0.18)';
 
 interface OnboardingChoiceCardProps {
   title: string;
-  /** Optional supporting line under the title (used by learning-mode and
-   *  experience-choice; motivation's cards are title-only). */
+  /** Optional supporting line under the title (used by learning-mode).
+   *  Motivation's cards are title-only, but motivation has been removed. */
   description?: string;
   /** e.g. "Recommandé" — rendered only when provided, never implied by
    *  selection state. */
   badge?: string;
   /** Permanent visual priority (bigger border/soft shadow), independent of
    *  selection — used for the one card of a set that IS the recommended
-   *  option (learning-mode's first card, experience-choice's first card). */
+   *  option (learning-mode's first card). */
   emphasized?: boolean;
   selected: boolean;
   onPress: () => void;
@@ -31,9 +31,9 @@ interface OnboardingChoiceCardProps {
 
 /**
  * Shared premium answer card for every questionnaire screen of
- * Onboarding V2 (motivation / learning-mode / experience-choice). A single
- * place for the "normal vs selected vs emphasized" visual language, so it
- * never drifts between screens.
+ * Onboarding V2 (currently learning-mode). A single place for the
+ * "normal vs selected vs emphasized" visual language, so it never drifts
+ * between screens.
  */
 export default function OnboardingChoiceCard({
   title, description, badge, emphasized, selected, onPress, accessibilityLabel,

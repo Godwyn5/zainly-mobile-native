@@ -44,9 +44,6 @@ export type OnboardingStep =
   | 'start_surah_picker'
   | 'custom_order_picker'
   | 'known_surahs'
-  | 'experience_choice'
-  | 'premium_confirmation'
-  | 'free_support'
   | 'notifications'
   | 'discovery_source'
   | 'program_generating'
@@ -56,14 +53,13 @@ const VALID_STEPS: OnboardingStep[] = [
   'first_name', 'greeting',
   'learning_mode',
   'start_surah_picker', 'custom_order_picker', 'known_surahs',
-  'experience_choice',
-  'premium_confirmation', 'free_support',
   'notifications', 'discovery_source',
   'program_generating', 'program_summary',
 ];
 
 // ── Legacy step migration ────────────────────────────────────────────────
-// 'motivation' / 'motivation_reassurance' / 'learning_mode_reassurance' were
+// 'motivation' / 'motivation_reassurance' / 'learning_mode_reassurance',
+// plus 'experience_choice' / 'premium_confirmation' / 'free_support' were
 // removed from the parcours. A draft persisted by an older app version may
 // still carry one of these stale currentStep values — without remapping,
 // isValidDraftShape would reject the ENTIRE draft (losing firstName,
@@ -78,6 +74,9 @@ const LEGACY_STEP_MIGRATIONS: Record<string, (data: Record<string, unknown>) => 
     if (data.learningMode === 'custom_order') return 'custom_order_picker';
     return 'known_surahs';
   },
+  experience_choice: () => 'notifications',
+  premium_confirmation: () => 'notifications',
+  free_support: () => 'notifications',
 };
 
 function migrateLegacyCurrentStep(data: Record<string, unknown>): void {
@@ -95,13 +94,6 @@ function migrateLegacyCurrentStep(data: Record<string, unknown>): void {
 export type LearningMode = PlanMode;
 
 const VALID_LEARNING_MODES: LearningMode[] = ['recommended', 'start_surah', 'custom_order'];
-
-// No pre-existing draft/DB field maps to this intent — it deliberately does
-// NOT touch RevenueCat/paywall/is_premium; it only remembers the user's
-// stated preference for later use in the flow.
-export type ExperienceChoice = 'unlimited' | 'daily_limited';
-
-const VALID_EXPERIENCE_CHOICES: ExperienceChoice[] = ['unlimited', 'daily_limited'];
 
 // ── notifications pre-permission screen ─────────────────────────────────────
 // Deliberately does NOT store a push token or schedule anything itself — it
@@ -144,8 +136,7 @@ export interface OnboardingDraftV1 {
   customSurahOrder: number[];
   // 'custom_order' mode only — mirrors computePlan's own default (true).
   continueWithRest: boolean;
-  experienceChoice: ExperienceChoice | null;
-  // ── post-experience-choice block — never touches computePlan/PlanInput ──
+  // ── post-niveau block ───────────────────────────────────────────────────────
   notificationPreference: NotificationPreference | null;
   discoverySource: DiscoverySource | null;
 }
@@ -166,10 +157,6 @@ function isValidDraftShape(raw: unknown): raw is OnboardingDraftV1 {
   if (
     d.learningMode !== null
     && (typeof d.learningMode !== 'string' || !VALID_LEARNING_MODES.includes(d.learningMode as LearningMode))
-  ) return false;
-  if (
-    d.experienceChoice !== null
-    && (typeof d.experienceChoice !== 'string' || !VALID_EXPERIENCE_CHOICES.includes(d.experienceChoice as ExperienceChoice))
   ) return false;
   if (
     d.notificationPreference !== null
@@ -201,7 +188,6 @@ function createDefaultDraft(step: OnboardingStep = 'first_name'): OnboardingDraf
     startingSurah: null,
     customSurahOrder: [],
     continueWithRest: true,
-    experienceChoice: null,
     notificationPreference: null,
     discoverySource: null,
   };
@@ -562,7 +548,7 @@ export async function updateOnboardingDraftForOwner(
     OnboardingDraftV1,
     | 'currentStep' | 'firstName' | 'learningMode'
     | 'knownSurahs' | 'startingSurah' | 'customSurahOrder' | 'continueWithRest'
-    | 'experienceChoice' | 'notificationPreference' | 'discoverySource'
+    | 'notificationPreference' | 'discoverySource'
   >>
 ): Promise<OnboardingDraftV1> {
   const existing = await readOnboardingDraftForOwner(owner);

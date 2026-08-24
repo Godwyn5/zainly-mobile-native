@@ -41,10 +41,7 @@ jest.mock('@/db/client', () => ({
 }));
 
 jest.mock('@/lib/onboardingFinalize', () => ({
-  finalizeOnboardingV2PlanWithPremiumGate: jest.fn(async () => ({
-    status: 'finalized',
-    finalize: { ok: true, reason: 'created' },
-  })),
+  finalizeOnboardingV2Plan: jest.fn(async () => ({ ok: true, reason: 'created' })),
 }));
 
 jest.mock('@/lib/onboardingDashboardHandoff', () => ({
@@ -154,7 +151,7 @@ import { fetchPlan } from '@/db/plans';
 import { fetchProgress } from '@/db/progress';
 import { clearPendingOnboardingIfMatches } from '@/lib/pendingOnboardingPlan';
 import { forceReleaseTransitionLease, hasActiveTransitionLease, getLeaseSnapshot } from '../transitionLease';
-import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { finalizeOnboardingV2Plan } from '@/lib/onboardingFinalize';
 /* eslint-enable import/first */
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -869,7 +866,7 @@ describe('performSocialAuth — data safety & attempt guard', () => {
     expect(okCount).toBe(1);
 
     // The successful one should have called finalize exactly once
-    expect(finalizeOnboardingV2PlanWithPremiumGate).toHaveBeenCalledTimes(1);
+    expect(finalizeOnboardingV2Plan).toHaveBeenCalledTimes(1);
   });
 
   // Helper to safely await p2 (which may reject if lease throws)
@@ -894,14 +891,14 @@ describe('performSocialAuth — data safety & attempt guard', () => {
     (fetchPlan as jest.Mock).mockResolvedValue({ id: 'plan-created', surah_start: 1, start_ayah: 1, ayah_per_day: 5 });
     (fetchProgress as jest.Mock).mockResolvedValue({ id: 'progress-created', current_surah: 1, current_ayah: 0, streak: 0 });
 
-    const callsBefore = (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mock.calls.length;
+    const callsBefore = (finalizeOnboardingV2Plan as jest.Mock).mock.calls.length;
 
     const r2 = await performSocialAuth('google', queryClient, { flowId: 'flow-idempotent' });
 
     expect(r2.ok).toBe(true);
     if (r2.ok) expect(r2.skippedFinalization).toBe(true);
 
-    const callsAfter = (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mock.calls.length;
+    const callsAfter = (finalizeOnboardingV2Plan as jest.Mock).mock.calls.length;
     expect(callsAfter).toBe(callsBefore);
   });
 
@@ -920,7 +917,7 @@ describe('performSocialAuth — data safety & attempt guard', () => {
     if (!result.ok) expect(result.reason).toBe('state_check_failed');
 
     // Finalizer must not have been called
-    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
+    expect(finalizeOnboardingV2Plan).not.toHaveBeenCalled();
   });
 
   // ── 9. Bad flowId → pending payload ignored ──
@@ -974,7 +971,7 @@ describe('performSocialAuth — data safety & attempt guard', () => {
     if (!result.ok) expect(result.reason).toBe('stale_attempt');
 
     // Finalizer must not have been called
-    expect(finalizeOnboardingV2PlanWithPremiumGate).not.toHaveBeenCalled();
+    expect(finalizeOnboardingV2Plan).not.toHaveBeenCalled();
   });
 
   // ── 12. SIGNED_IN before state check → no incomplete dashboard ──

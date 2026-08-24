@@ -25,8 +25,8 @@ const DEFAULT_DAILY_AYAT_GOAL = 1;
 // never queries Supabase itself — see src/core/planEngine.ts) — real
 // persistence (upsertPlan/upsertProgress) always happens later, with the
 // real authenticated userId, from src/lib/onboardingFinalize.ts. This
-// shared placeholder lets every pre-signup screen (experience-choice's own
-// completeness check, program-generating, program-summary) run the exact
+// shared placeholder lets every pre-signup screen (known-surahs,
+// notifications, program-generating, program-summary) run the exact
 // same structural validation / preview computation without duplicating a
 // magic string.
 export const PENDING_SIGNUP_USER_ID = 'pending-signup';
@@ -136,9 +136,6 @@ const ROUTE_FOR_STEP: Record<OnboardingStep, string> = {
   start_surah_picker:       '/onboarding-v2/start-surah',
   custom_order_picker:      '/onboarding-v2/custom-order',
   known_surahs:             '/onboarding-v2/known-surahs',
-  experience_choice:        '/onboarding-v2/experience-choice',
-  premium_confirmation:     '/onboarding-v2/experience-choice',
-  free_support:             '/onboarding-v2/experience-choice',
   notifications:            '/onboarding-v2/notifications',
   discovery_source:         '/onboarding-v2/discovery-source',
   program_generating:       '/onboarding-v2/discovery-source',

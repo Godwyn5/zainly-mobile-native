@@ -46,7 +46,6 @@ function makeDraftWithGreeting(name: string): OnboardingDraftV1 {
     startingSurah: null,
     customSurahOrder: [],
     continueWithRest: true,
-    experienceChoice: 'daily_limited',
     notificationPreference: 'enabled',
     discoverySource: 'tiktok',
     updatedAt: new Date().toISOString(),
@@ -137,7 +136,6 @@ describe('name screen resume logic — no auto-skip on currentStep=greeting', ()
       // every other field survives the migration untouched
       expect(d?.firstName).toBe('Walid');
       expect(d?.knownSurahs).toEqual([1, 2, 3]);
-      expect(d?.experienceChoice).toBe('daily_limited');
       expect(d?.discoverySource).toBe('tiktok');
     }
   });

@@ -13,8 +13,7 @@ interface DashboardStateInput {
   progressLoading: boolean;
   pendingLoading: boolean;
   pendingHasPending: boolean;
-  finalizeStatus: 'idle' | 'running' | 'success' | 'error'
-    | 'premium_sync_failed' | 'premium_entitlement_missing';
+  finalizeStatus: 'idle' | 'running' | 'success' | 'error';
 }
 
 function computeDashboardState(input: DashboardStateInput) {
@@ -25,9 +24,7 @@ function computeDashboardState(input: DashboardStateInput) {
     (input.pendingLoading ||
       input.pendingHasPending ||
       input.finalizeStatus === 'running' ||
-      input.finalizeStatus === 'error' ||
-      input.finalizeStatus === 'premium_sync_failed' ||
-      input.finalizeStatus === 'premium_entitlement_missing');
+      input.finalizeStatus === 'error');
 
   // Early returns in render order:
   // 1. isLoading → recovery card (safety net, gate prevents in normal operation)

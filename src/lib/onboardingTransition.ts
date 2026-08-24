@@ -2,7 +2,7 @@
 // Shared transition logic for signup-email and login-email when the auth flow
 // originates from an onboarding-v2 parcours. Runs the full sequence:
 //   createTransitionLease → setSessionAuthFlowId → signUp/signIn →
-//   finalizeOnboardingV2PlanWithPremiumGate → handOffFinalizedProgram →
+//   finalizeOnboardingV2Plan → handOffFinalizedProgram →
 //   clearPendingOnboardingIfMatches → cache verification → releaseTransitionLease
 //
 // While the lease is active, _layout.tsx treats the user as unauthenticated,
@@ -14,7 +14,7 @@
 // is never exposed with incomplete data.
 
 import { QueryClient } from '@tanstack/react-query';
-import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { finalizeOnboardingV2Plan } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 import {
   setSessionAuthFlowId,
@@ -35,8 +35,6 @@ import { planQueryOptions, progressQueryOptions } from '@/queries';
 
 export type OnboardingTransitionError =
   | { kind: 'finalize_error'; reason: string; message?: string }
-  | { kind: 'premium_sync_failed'; reason: 'configure_failed' | 'login_failed' | 'customer_info_failed' }
-  | { kind: 'premium_entitlement_missing' }
   | { kind: 'handoff_error'; message: string }
   | { kind: 'proof_persist_failed'; message: string }
   | { kind: 'clear_superseded'; message: string }
@@ -56,7 +54,7 @@ export type OnboardingTransitionResult =
  *   3. Pass the userId from the session and the leaseId from step 1
  *
  * This function:
- *   1. Runs finalizeOnboardingV2PlanWithPremiumGate
+ *   1. Runs finalizeOnboardingV2Plan
  *   2. On success, runs handOffFinalizedProgram (populates plan+progress cache)
  *   3. On handoff success, clears the pending payload
  *   4. Verifies the cache has non-null plan and progress
@@ -71,27 +69,18 @@ export async function runOnboardingTransition(
   visual: SignupVisualSnapshot,
 ): Promise<OnboardingTransitionResult> {
   try {
-    // ── Step 1: Finalize with premium gate ──────────────────────────────
+    // ── Step 1: Finalize onboarding plan ────────────────────────────────
     const authFlowId = getActiveTransitionLeaseFlowId() ?? '';
-    const outcome = await finalizeOnboardingV2PlanWithPremiumGate(userId, authFlowId);
+    const outcome = await finalizeOnboardingV2Plan(userId, authFlowId);
 
-    if (outcome.status === 'premium_sync_failed') {
-      releaseTransitionLease(leaseId);
-      return { status: 'error', error: { kind: 'premium_sync_failed', reason: outcome.reason } };
-    }
-    if (outcome.status === 'premium_entitlement_missing') {
-      releaseTransitionLease(leaseId);
-      return { status: 'error', error: { kind: 'premium_entitlement_missing' } };
-    }
-
-    if (!outcome.finalize.ok) {
+    if (!outcome.ok) {
       releaseTransitionLease(leaseId);
       return {
         status: 'error',
         error: {
           kind: 'finalize_error',
-          reason: outcome.finalize.reason,
-          message: outcome.finalize.message,
+          reason: outcome.reason,
+          message: outcome.message,
         },
       };
     }

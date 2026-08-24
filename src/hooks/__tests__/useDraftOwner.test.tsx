@@ -3,7 +3,7 @@
 //
 // Reproduces the root cause of the "selection reverts / impossible to
 // select" bug reported across onboarding-v2 screens (learning-mode,
-// experience-choice, motivation, custom-order, start-surah, name, etc.):
+// custom-order, start-surah, name, etc.):
 // useDraftOwner() used to return a brand-new object literal on every
 // render. Any `useEffect(..., [draftOwner])` therefore re-fired on every
 // unrelated re-render of the host screen (e.g. selecting a card, typing in

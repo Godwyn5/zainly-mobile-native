@@ -27,7 +27,7 @@ import {
   shouldShowMinimalOverlay,
 } from '../preparationStateMachine';
 import { orchestrateAuthedFinalize } from '../programSummaryOrchestration';
-import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { finalizeOnboardingV2Plan } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 import { clearPendingOnboardingIfMatches, readPendingOnboardingPlan } from '@/lib/pendingOnboardingPlan';
 import { QueryClient } from '@tanstack/react-query';
@@ -49,10 +49,7 @@ jest.mock('@react-native-async-storage/async-storage', () => {
 });
 
 jest.mock('@/lib/onboardingFinalize', () => ({
-  finalizeOnboardingV2PlanWithPremiumGate: jest.fn(async () => ({
-    status: 'finalized',
-    finalize: { ok: true, reason: 'created' },
-  })),
+  finalizeOnboardingV2Plan: jest.fn(async () => ({ ok: true, reason: 'created' })),
 }));
 jest.mock('@/lib/onboardingDashboardHandoff', () => ({
   handOffFinalizedProgram: jest.fn(async () => ({
@@ -93,7 +90,6 @@ function makeDraft(firstName: string): OnboardingDraftV1 {
     startingSurah: null,
     customSurahOrder: [],
     continueWithRest: true,
-    experienceChoice: null,
     notificationPreference: null,
     discoverySource: null,
   };
@@ -209,9 +205,9 @@ describe('Logout and account switch', () => {
   it('9. session change during finalization — returns session_changed', async () => {
     await saveOnboardingDraftForOwner(ownerA, makeDraft('Alice'));
     let sessionUserId = userA;
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockImplementation(async () => {
+    (finalizeOnboardingV2Plan as jest.Mock).mockImplementation(async () => {
       sessionUserId = userB; // session changes during finalize
-      return { status: 'finalized', finalize: { ok: true, reason: 'created' } };
+      return {  ok: true, reason: 'created'  };
     });
     const result = await orchestrateAuthedFinalize(
       new QueryClient(),
@@ -504,10 +500,7 @@ describe('Finalization owner guard', () => {
 
   beforeEach(() => {
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({
-      status: 'finalized',
-      finalize: { ok: true, reason: 'created' },
-    });
+    (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValue({ ok: true, reason: 'created' });
     (handOffFinalizedProgram as jest.Mock).mockResolvedValue({
       status: 'ready',
       plan: { id: 'plan-1' },
@@ -759,10 +752,7 @@ describe('Corrupted envelope under wrong key', () => {
 
   it('finalization of B fails closed when A envelope is under B key', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({
-      status: 'finalized',
-      finalize: { ok: true, reason: 'created' },
-    });
+    (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValue({ ok: true, reason: 'created' });
     (handOffFinalizedProgram as jest.Mock).mockResolvedValue({
       status: 'ready',
       plan: { id: 'plan-1' },

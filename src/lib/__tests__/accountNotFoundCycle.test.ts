@@ -58,7 +58,7 @@ jest.mock('@/lib/pendingOnboardingPlan', () => ({
   saveCompletedAuthProof: jest.fn(async () => {}),
 }));
 jest.mock('@/lib/onboardingFinalize', () => ({
-  finalizeOnboardingV2PlanWithPremiumGate: jest.fn(),
+  finalizeOnboardingV2Plan: jest.fn(),
 }));
 jest.mock('@/lib/onboardingDashboardHandoff', () => ({
   handOffFinalizedProgram: jest.fn(),

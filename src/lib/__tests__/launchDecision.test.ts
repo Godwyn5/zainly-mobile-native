@@ -22,7 +22,7 @@ import {
   clearPendingOnboardingIfMatches,
   readPendingOnboardingPlan,
 } from '@/lib/pendingOnboardingPlan';
-import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { finalizeOnboardingV2Plan } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 import { getRevenueCatCustomerInfo, ensureRevenueCatReadyForUser } from '@/lib/revenueCat';
 import {
@@ -57,10 +57,7 @@ jest.mock('@/lib/pendingOnboardingPlan', () => ({
   clearPendingOnboardingIfMatches: jest.fn(async () => 'already_absent' as never),
 }));
 jest.mock('@/lib/onboardingFinalize', () => ({
-  finalizeOnboardingV2PlanWithPremiumGate: jest.fn(async () => ({
-    status: 'finalized',
-    finalize: { ok: true, reason: 'created' },
-  })),
+  finalizeOnboardingV2Plan: jest.fn(async () => ({ ok: true, reason: 'created' })),
 }));
 jest.mock('@/lib/onboardingDashboardHandoff', () => ({
   handOffFinalizedProgram: jest.fn(async () => ({
@@ -103,9 +100,7 @@ function setupDefaultMocks() {
   (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValue(false);
   (getRevenueCatCustomerInfo as jest.Mock).mockResolvedValue(null);
   (ensureRevenueCatReadyForUser as jest.Mock).mockResolvedValue({ ready: true, generation: 1 });
-  (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({
-    status: 'finalized', finalize: { ok: true, reason: 'created' },
-  });
+  (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValue({ ok: true, reason: 'created' });
   (handOffFinalizedProgram as jest.Mock).mockResolvedValue({
     status: 'ready', plan: { id: 'plan-1' }, progress: { id: 'progress-1' },
   });
@@ -272,16 +267,14 @@ describe('Launch decision — valid pending onboarding', () => {
     });
     const r = await prepareAuthenticatedLaunch(trackClient(), 'user-A');
     expect(r.status).toBe('ready');
-    expect(finalizeOnboardingV2PlanWithPremiumGate).toHaveBeenCalled();
+    expect(finalizeOnboardingV2Plan).toHaveBeenCalled();
     expect(handOffFinalizedProgram).toHaveBeenCalled();
     expect(clearPendingOnboardingIfMatches).toHaveBeenCalled();
   });
 
   it('pending=true, finalize fails → status:error (no fallthrough to plan/progress)', async () => {
     (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValue(true);
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({
-      status: 'finalized', finalize: { ok: false, reason: 'persist_error' },
-    });
+    (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValue({ ok: false, reason: 'persist_error' });
     const r = await prepareAuthenticatedLaunch(trackClient(), 'user-A');
     expect(r.status).toBe('error');
     expect(handOffFinalizedProgram).not.toHaveBeenCalled();

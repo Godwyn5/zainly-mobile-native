@@ -71,7 +71,7 @@ export default function OnboardingProgramGeneratingScreen() {
       const draft = await readOnboardingDraftForOwner(draftOwner);
       if (cancelled) return;
       if (!draft) {
-        router.replace('/onboarding-v2/experience-choice');
+        router.replace('/onboarding-v2/known-surahs');
         return;
       }
 

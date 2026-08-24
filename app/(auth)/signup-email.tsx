@@ -249,13 +249,7 @@ export default function SignupEmailScreen() {
     const err = transitionError.error;
     let title = 'Impossible de finaliser ton programme';
     let desc = "Ton programme n'a pas été perdu. Vérifie ta connexion puis réessaie.";
-    if (err.kind === 'premium_entitlement_missing') {
-      title = 'Abonnement Zainly+ requis';
-      desc = "Ce parcours nécessite un abonnement Zainly+ actif. Restaure ton achat ou réessaie.";
-    } else if (err.kind === 'premium_sync_failed') {
-      title = "Vérification de l'abonnement impossible";
-      desc = "Impossible de vérifier ton abonnement Zainly+. Réessaie.";
-    } else if (err.kind === 'handoff_error') {
+    if (err.kind === 'handoff_error') {
       desc = err.message;
     } else if (err.kind === 'clear_superseded') {
       desc = err.message;

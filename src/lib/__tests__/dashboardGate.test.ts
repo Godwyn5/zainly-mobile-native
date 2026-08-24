@@ -13,7 +13,7 @@ import { fetchProgress } from '@/db/progress';
 import { fetchDueCount } from '@/db/reviewItems';
 import { fetchProfile } from '@/db/profiles';
 import { hasValidPendingOnboardingPlanForUser, readPendingOnboardingPlan, clearPendingOnboardingIfMatches } from '@/lib/pendingOnboardingPlan';
-import { finalizeOnboardingV2PlanWithPremiumGate } from '@/lib/onboardingFinalize';
+import { finalizeOnboardingV2Plan } from '@/lib/onboardingFinalize';
 import { handOffFinalizedProgram } from '@/lib/onboardingDashboardHandoff';
 import {
   getRevenueCatCustomerInfo,
@@ -43,10 +43,7 @@ jest.mock('@/lib/pendingOnboardingPlan', () => ({
   clearPendingOnboardingIfMatches: jest.fn(async () => 'already_absent' as never),
 }));
 jest.mock('@/lib/onboardingFinalize', () => ({
-  finalizeOnboardingV2PlanWithPremiumGate: jest.fn(async () => ({
-    status: 'finalized',
-    finalize: { ok: true, reason: 'created' },
-  })),
+  finalizeOnboardingV2Plan: jest.fn(async () => ({ ok: true, reason: 'created' })),
 }));
 jest.mock('@/lib/onboardingDashboardHandoff', () => ({
   handOffFinalizedProgram: jest.fn(async () => ({
@@ -99,9 +96,7 @@ describe('Snapshot gate — critical query failures', () => {
     (getRevenueCatCurrentUserId as jest.Mock).mockReturnValue('user-A');
     (getRevenueCatGeneration as jest.Mock).mockReturnValue(1);
     // Re-setup finalize/handoff/clear mocks after resetAllMocks
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({
-      status: 'finalized', finalize: { ok: true, reason: 'created' },
-    });
+    (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValue({ ok: true, reason: 'created' });
     (handOffFinalizedProgram as jest.Mock).mockResolvedValue({
       status: 'ready', plan: { id: 'plan-1' }, progress: { id: 'progress-1' },
     });
@@ -166,7 +161,7 @@ describe('Snapshot gate — terminal states', () => {
     (getRevenueCatCurrentUserId as jest.Mock).mockReturnValue('user-A');
     (getRevenueCatGeneration as jest.Mock).mockReturnValue(1);
     // Re-setup finalize/handoff/clear mocks after resetAllMocks
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+    (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValue({  ok: true, reason: 'created'  });
     (handOffFinalizedProgram as jest.Mock).mockResolvedValue({ status: 'ready', plan: { id: 'plan-1' }, progress: { id: 'progress-1' } });
     (readPendingOnboardingPlan as jest.Mock).mockResolvedValue(null);
     (clearPendingOnboardingIfMatches as jest.Mock).mockResolvedValue('already_absent' as never);
@@ -250,7 +245,7 @@ describe('Timeout and retry', () => {
     (getRevenueCatCurrentUserId as jest.Mock).mockReturnValue('user-A');
     (getRevenueCatGeneration as jest.Mock).mockReturnValue(1);
     // Re-setup finalize/handoff/clear mocks after resetAllMocks
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+    (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValue({  ok: true, reason: 'created'  });
     (handOffFinalizedProgram as jest.Mock).mockResolvedValue({ status: 'ready', plan: { id: 'plan-1' }, progress: { id: 'progress-1' } });
     (readPendingOnboardingPlan as jest.Mock).mockResolvedValue(null);
     (clearPendingOnboardingIfMatches as jest.Mock).mockResolvedValue('already_absent' as never);
@@ -360,7 +355,7 @@ describe('Loader removal invariants', () => {
     (getRevenueCatCurrentUserId as jest.Mock).mockReturnValue('user-A');
     (getRevenueCatGeneration as jest.Mock).mockReturnValue(1);
     // Re-setup finalize/handoff/clear mocks after resetAllMocks
-    (finalizeOnboardingV2PlanWithPremiumGate as jest.Mock).mockResolvedValue({ status: 'finalized', finalize: { ok: true, reason: 'created' } });
+    (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValue({  ok: true, reason: 'created'  });
     (handOffFinalizedProgram as jest.Mock).mockResolvedValue({ status: 'ready', plan: { id: 'plan-1' }, progress: { id: 'progress-1' } });
     (readPendingOnboardingPlan as jest.Mock).mockResolvedValue(null);
     (clearPendingOnboardingIfMatches as jest.Mock).mockResolvedValue('already_absent' as never);

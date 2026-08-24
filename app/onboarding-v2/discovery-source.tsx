@@ -72,8 +72,20 @@ export default function OnboardingDiscoverySourceScreen() {
     let cancelled = false;
     readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
-      if (!draft?.experienceChoice) {
-        router.replace('/onboarding-v2/experience-choice');
+      if (!draft?.firstName) {
+        router.replace('/onboarding-v2/name');
+        return;
+      }
+      if (!draft.learningMode) {
+        router.replace('/onboarding-v2/learning-mode');
+        return;
+      }
+      if (draft.learningMode === 'start_surah' && draft.startingSurah == null) {
+        router.replace('/onboarding-v2/start-surah');
+        return;
+      }
+      if (draft.learningMode === 'custom_order' && draft.customSurahOrder.length === 0) {
+        router.replace('/onboarding-v2/custom-order');
         return;
       }
       if (draft.discoverySource) setSelected(draft.discoverySource);
