@@ -20,18 +20,16 @@ const GOLD_DARK              = '#9F7628';
 
 // ─── typewriter rhythm — one single, perfectly regular cadence for the
 // whole scene. Never varies, so the ear/finger never feels a jump. ─────────
-const CHAR_INTERVAL      = 42;  // ms between the start of two consecutive characters
-const CHAR_ANIM_DURATION = 150; // ms for a single character's fade + rise
-const CHAR_TRANSLATE     = 5;   // px — "quelques pixels seulement"
+const CHAR_INTERVAL = 36; // ms between the appearance of two consecutive characters
 
 // ─── natural pauses between narrative beats (ms) — the name gets its own
 // dedicated beat, isolated from the greeting line, so it can land as the
 // scene's focal point rather than as the tail of a sentence. ──────────────
-const T_FIRST_START          = 250; // living background → first character
-const PAUSE_AFTER_GREETING   = 480; // "As-salāmu ʿalaykum," → prénom
-const PAUSE_AFTER_NAME       = 780; // prénom (focal beat) → invocation
-const PAUSE_AFTER_INVOCATION = 720; // invocation → transition text
-const PAUSE_AFTER_TRANSITION = 460; // transition text → CTA
+const T_FIRST_START          = 300; // living background → first character
+const PAUSE_AFTER_GREETING   = 400; // "As-salāmu ʿalaykum," → prénom
+const PAUSE_AFTER_NAME       = 600; // prénom (focal beat) → invocation
+const PAUSE_AFTER_INVOCATION = 500; // invocation → transition text
+const PAUSE_AFTER_TRANSITION = 350; // transition text → CTA
 
 /** A slow, symmetric 0→1→0 breathing loop — the single primitive behind
  *  every ambient background motion on this screen (glow, wash, motifs).
@@ -54,41 +52,6 @@ function ambientBreath(value: Animated.Value, halfDuration: number, delay = 0) {
 interface TypeSegment {
   text: string;
   style?: any;
-  /** Extra silent delay inserted before this segment's first character. */
-  pauseBefore?: number;
-}
-
-interface RenderChar {
-  char: string;
-  style?: any;
-  index: number;
-}
-
-/** Splits segments into visual lines (on '\n') while computing a single,
- *  continuous, absolute start-delay for every visible character across the
- *  whole block — this is what keeps the rhythm perfectly regular even when
- *  a segment changes style/color or a line wraps. */
-function buildTimeline(segments: TypeSegment[], charInterval: number) {
-  const lines: RenderChar[][] = [[]];
-  const delays: number[] = [];
-  let elapsed = 0;
-  let index = 0;
-
-  segments.forEach(seg => {
-    elapsed += seg.pauseBefore ?? 0;
-    const parts = seg.text.split('\n');
-    parts.forEach((part, partIdx) => {
-      Array.from(part).forEach(ch => {
-        delays.push(elapsed);
-        lines[lines.length - 1].push({ char: ch, style: seg.style, index });
-        index += 1;
-        elapsed += charInterval;
-      });
-      if (partIdx < parts.length - 1) lines.push([]);
-    });
-  });
-
-  return { lines, delays, totalChars: index };
 }
 
 interface TypewriterBlockProps {
@@ -102,33 +65,31 @@ interface TypewriterBlockProps {
 }
 
 /**
- * High-end typewriter: each character is laid down individually, in a
- * perfectly regular rhythm (fixed interval), with only opacity + a few
- * pixels of vertical settle — no bounce, no blink, no retro cursor.
- * Under Reduce Motion, the whole block is shown with one simple fade
- * instead, and no per-character ticks are produced.
+ * Real typewriter: characters appear one by one by revealing a growing prefix
+ * of each segment. Already-written characters stay immediately visible.
+ * Under Reduce Motion, the whole block is shown with one simple fade instead,
+ * and no per-character ticks are produced.
  */
 function TypewriterBlock({
-  segments, active, reduceMotion, onCharTick, onDone, containerStyle, rowStyle,
+  segments, active, reduceMotion, onCharTick, onDone, containerStyle,
+  rowStyle: _rowStyle,
 }: TypewriterBlockProps) {
-  const { lines, delays, totalChars } = useMemo(
-    () => buildTimeline(segments, CHAR_INTERVAL),
-    [segments]
-  );
-
-  const valuesRef = useRef<Animated.Value[]>([]);
-  if (valuesRef.current.length !== totalChars) {
-    valuesRef.current = Array.from({ length: totalChars }, () => new Animated.Value(0));
-  }
+  const [visibleCount, setVisibleCount] = useState(0);
   const fadeAll = useRef(new Animated.Value(0)).current;
   const startedRef = useRef(false);
   const timeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  const totalChars = useMemo(
+    () => segments.reduce((acc, seg) => acc + Array.from(seg.text).length, 0),
+    [segments]
+  );
 
   useEffect(() => {
     if (!active || startedRef.current) return;
     startedRef.current = true;
 
     if (reduceMotion) {
+      setVisibleCount(totalChars);
       Animated.timing(fadeAll, {
         toValue: 1, duration: 320,
         easing: Easing.out(Easing.cubic), useNativeDriver: true,
@@ -138,19 +99,22 @@ function TypewriterBlock({
 
     if (totalChars === 0) { onDone?.(); return; }
 
-    for (let i = 0; i < totalChars; i++) {
-      const isLast = i === totalChars - 1;
+    const schedule = (remaining: number) => {
       const id = setTimeout(() => {
         onCharTick?.();
-        Animated.timing(valuesRef.current[i], {
-          toValue: 1, duration: CHAR_ANIM_DURATION,
-          easing: Easing.out(Easing.cubic), useNativeDriver: true,
-        }).start(() => { if (isLast) onDone?.(); });
-      }, delays[i]);
+        setVisibleCount(prev => prev + 1);
+        if (remaining > 1) {
+          schedule(remaining - 1);
+        } else {
+          onDone?.();
+        }
+      }, CHAR_INTERVAL);
       timeoutsRef.current.push(id);
-    }
+    };
+
+    schedule(totalChars);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active]);
+  }, [active, totalChars, reduceMotion]);
 
   useEffect(() => () => { timeoutsRef.current.forEach(clearTimeout); }, []);
 
@@ -162,26 +126,20 @@ function TypewriterBlock({
     );
   }
 
+  let written = 0;
   return (
     <View style={containerStyle}>
-      {lines.map((line, li) => (
-        <View key={li} style={rowStyle}>
-          {line.map(({ char, style, index }) => {
-            const v = valuesRef.current[index];
-            const translateY = v.interpolate({
-              inputRange: [0, 1], outputRange: [CHAR_TRANSLATE, 0],
-            });
-            return (
-              <Animated.Text
-                key={index}
-                style={[style, { opacity: v, transform: [{ translateY }] }]}
-              >
-                {char}
-              </Animated.Text>
-            );
-          })}
-        </View>
-      ))}
+      {segments.map((seg, i) => {
+        const chars = Array.from(seg.text);
+        const segLen = chars.length;
+        const visible = Math.max(0, Math.min(visibleCount - written, segLen));
+        written += segLen;
+        return (
+          <Text key={i} style={seg.style}>
+            {chars.slice(0, visible).join('')}
+          </Text>
+        );
+      })}
     </View>
   );
 }
