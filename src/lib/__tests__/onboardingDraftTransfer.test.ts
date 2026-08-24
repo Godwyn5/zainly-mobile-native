@@ -93,7 +93,6 @@ function makeDraft(firstName: string): OnboardingDraftV1 {
     customSurahOrder: [],
     continueWithRest: true,
     notificationPreference: 'skipped',
-    discoverySource: 'google',
   };
 }
 
@@ -350,7 +349,6 @@ describe('Pending onboarding cross-account isolation', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'skipped',
-      discoverySource: 'google',
     });
     expect(saved.ok).toBe(true);
     if (!saved.ok) return;
@@ -378,7 +376,6 @@ describe('Pending onboarding cross-account isolation', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'skipped',
-      discoverySource: 'google',
     });
     expect(saved.ok).toBe(true);
     if (!saved.ok) return;

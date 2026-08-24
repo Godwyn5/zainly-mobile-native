@@ -91,7 +91,6 @@ function makeDraft(firstName: string): OnboardingDraftV1 {
     customSurahOrder: [],
     continueWithRest: true,
     notificationPreference: null,
-    discoverySource: null,
   };
 }
 

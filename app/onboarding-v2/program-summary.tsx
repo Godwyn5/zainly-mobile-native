@@ -119,7 +119,7 @@ export default function OnboardingProgramSummaryScreen() {
       }
       const result = computePlan(validation.planInput);
       if (isPlanError(result)) {
-        router.replace('/onboarding-v2/discovery-source');
+        router.replace('/onboarding-v2/notifications');
         return;
       }
       setPlanResult(result);
@@ -270,7 +270,6 @@ export default function OnboardingProgramSummaryScreen() {
         customSurahOrder: draft.customSurahOrder,
         continueWithRest: draft.continueWithRest,
         notificationPreference: draft.notificationPreference,
-        discoverySource: draft.discoverySource,
       });
 
       if (!saved.ok) {

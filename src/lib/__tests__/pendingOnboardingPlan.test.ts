@@ -46,7 +46,6 @@ const validInput: PendingPlanInput = {
   customSurahOrder: [],
   continueWithRest: false,
   notificationPreference: 'enabled',
-  discoverySource: 'tiktok',
 };
 
 beforeEach(() => {
@@ -85,7 +84,6 @@ describe('savePendingOnboardingPlan', () => {
     expect(parsed.learningMode).toBe('recommended');
     expect(parsed.knownSurahs).toEqual([1, 114]);
     expect(parsed.notificationPreference).toBe('enabled');
-    expect(parsed.discoverySource).toBe('tiktok');
   });
 
   it('never writes experienceChoice in a new payload', async () => {
@@ -114,6 +112,20 @@ describe('readPendingOnboardingPlan — valid payload', () => {
       version: 1 as const,
       createdAt: new Date().toISOString(),
       experienceChoice: 'unlimited',
+    };
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(legacy));
+    const payload = await readPendingOnboardingPlan();
+    expect(payload).not.toBeNull();
+    expect(payload!.learningMode).toBe('recommended');
+    expect(await hasValidPendingOnboardingPlan()).toBe(true);
+  });
+
+  it('still reads and validates a legacy payload that contains discoverySource', async () => {
+    const legacy = {
+      ...validInput,
+      version: 1 as const,
+      createdAt: new Date().toISOString(),
+      discoverySource: 'tiktok',
     };
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(legacy));
     const payload = await readPendingOnboardingPlan();

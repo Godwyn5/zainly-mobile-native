@@ -45,7 +45,6 @@ export type OnboardingStep =
   | 'custom_order_picker'
   | 'known_surahs'
   | 'notifications'
-  | 'discovery_source'
   | 'program_generating'
   | 'program_summary';
 
@@ -53,7 +52,7 @@ const VALID_STEPS: OnboardingStep[] = [
   'first_name', 'greeting',
   'learning_mode',
   'start_surah_picker', 'custom_order_picker', 'known_surahs',
-  'notifications', 'discovery_source',
+  'notifications',
   'program_generating', 'program_summary',
 ];
 
@@ -77,6 +76,7 @@ const LEGACY_STEP_MIGRATIONS: Record<string, (data: Record<string, unknown>) => 
   experience_choice: () => 'notifications',
   premium_confirmation: () => 'notifications',
   free_support: () => 'notifications',
+  discovery_source: () => 'program_generating',
 };
 
 function migrateLegacyCurrentStep(data: Record<string, unknown>): void {
@@ -106,16 +106,6 @@ const VALID_NOTIFICATION_PREFERENCES: NotificationPreference[] = [
   'enabled', 'denied', 'skipped', 'already_granted',
 ];
 
-// ── discovery-source question ───────────────────────────────────────────────
-export type DiscoverySource =
-  | 'tiktok' | 'instagram' | 'youtube' | 'google'
-  | 'app_store' | 'word_of_mouth' | 'other';
-
-const VALID_DISCOVERY_SOURCES: DiscoverySource[] = [
-  'tiktok', 'instagram', 'youtube', 'google',
-  'app_store', 'word_of_mouth', 'other',
-];
-
 // ─── deep branch fields — mirror PlanInput exactly (src/core/planEngine.ts) ─
 // knownSurahs / startingSurah / customSurahOrder / continueWithRest are the
 // exact historical field names and shapes consumed by computePlan(). No new
@@ -138,7 +128,6 @@ export interface OnboardingDraftV1 {
   continueWithRest: boolean;
   // ── post-niveau block ───────────────────────────────────────────────────────
   notificationPreference: NotificationPreference | null;
-  discoverySource: DiscoverySource | null;
 }
 
 // fields that must never appear in this draft — defensive guard against
@@ -161,10 +150,6 @@ function isValidDraftShape(raw: unknown): raw is OnboardingDraftV1 {
   if (
     d.notificationPreference !== null
     && (typeof d.notificationPreference !== 'string' || !VALID_NOTIFICATION_PREFERENCES.includes(d.notificationPreference as NotificationPreference))
-  ) return false;
-  if (
-    d.discoverySource !== null
-    && (typeof d.discoverySource !== 'string' || !VALID_DISCOVERY_SOURCES.includes(d.discoverySource as DiscoverySource))
   ) return false;
   if (!Array.isArray(d.knownSurahs) || !d.knownSurahs.every(n => typeof n === 'number')) return false;
   if (d.startingSurah !== null && typeof d.startingSurah !== 'number') return false;
@@ -189,7 +174,6 @@ function createDefaultDraft(step: OnboardingStep = 'first_name'): OnboardingDraf
     customSurahOrder: [],
     continueWithRest: true,
     notificationPreference: null,
-    discoverySource: null,
   };
 }
 
@@ -548,7 +532,7 @@ export async function updateOnboardingDraftForOwner(
     OnboardingDraftV1,
     | 'currentStep' | 'firstName' | 'learningMode'
     | 'knownSurahs' | 'startingSurah' | 'customSurahOrder' | 'continueWithRest'
-    | 'notificationPreference' | 'discoverySource'
+    | 'notificationPreference'
   >>
 ): Promise<OnboardingDraftV1> {
   const existing = await readOnboardingDraftForOwner(owner);

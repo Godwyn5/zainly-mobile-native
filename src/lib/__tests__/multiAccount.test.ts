@@ -64,9 +64,7 @@ const validInput: PendingPlanInput = {
   startingSurah: null,
   customSurahOrder: [],
   continueWithRest: true,
-  notificationPreference: 'enabled',
-  discoverySource: 'tiktok',
-  ownerUserId: null,
+  notificationPreference: 'enabled',  ownerUserId: null,
 };
 
 // ─── Multi-account preparation state machine tests ──────────────────────────
@@ -210,9 +208,7 @@ describe('hasValidPendingOnboardingPlanForUser', () => {
       startingSurah: null,
       customSurahOrder: [],
       continueWithRest: true,
-      notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
-      ownerUserId: null,
+      notificationPreference: 'enabled',      ownerUserId: null,
     };
     await AsyncStorage.setItem('zainly:onboardingV2:pendingPlan', JSON.stringify(payload));
     expect(await hasValidPendingOnboardingPlanForUser('user-A')).toBe(false);
@@ -257,9 +253,7 @@ describe('hasValidPendingOnboardingPlanForUser', () => {
       startingSurah: null,
       customSurahOrder: [],
       continueWithRest: true,
-      notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
-      ownerUserId: null,
+      notificationPreference: 'enabled',      ownerUserId: null,
       flowId: 'test-flow-id',
     };
     await AsyncStorage.setItem('zainly:onboardingV2:pendingPlan', JSON.stringify(expiredPayload));
@@ -374,9 +368,7 @@ describe('Pending payload ownership lifecycle', () => {
       startingSurah: null,
       customSurahOrder: [],
       continueWithRest: true,
-      notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
-      ownerUserId: null,
+      notificationPreference: 'enabled',      ownerUserId: null,
     };
     await AsyncStorage.setItem('zainly:onboardingV2:pendingPlan', JSON.stringify(legacyPayload));
     // Legacy payload has no flowId — any authFlowId is irrelevant, claim cleared

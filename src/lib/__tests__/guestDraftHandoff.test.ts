@@ -77,7 +77,6 @@ function makeDraft(name: string): OnboardingDraftV1 {
     customSurahOrder: [],
     continueWithRest: true,
     notificationPreference: 'enabled',
-    discoverySource: 'tiktok',
     updatedAt: new Date().toISOString(),
   };
 }
@@ -91,7 +90,6 @@ function makePlanInput(name: string) {
     customSurahOrder: [],
     continueWithRest: true,
     notificationPreference: 'enabled' as const,
-    discoverySource: 'tiktok' as const,
   };
 }
 

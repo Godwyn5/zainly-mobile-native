@@ -17,21 +17,19 @@
 // parcours — 'parcours' is now the first phase.
 //
 // Example:
-//   learning-mode (phase 1)         → 1/5
-//   start-surah (phase 2, mode-dependent) → 2/5
-//   known-surahs (phase 2, common)  → 2/5
-//   notifications (phase 3)         → 3/5
-//   discovery-source (phase 4)      → 4/5
-//   program-summary (phase 5)       → 5/5 (100% only here — program-generating
+//   learning-mode (phase 1)         → 1/4
+//   start-surah (phase 2, mode-dependent) → 2/4
+//   known-surahs (phase 2, common)  → 2/4
+//   notifications (phase 3)         → 3/4
+//   program-summary (phase 4)       → 4/4 (100% only here — program-generating
 //     renders no numeric progress bar at all, see its own screen)
 
 export type OnboardingPhase =
   | 'parcours' | 'niveau' | 'notifications'
-  | 'discovery' | 'programme';
+  | 'programme';
 
 export const ONBOARDING_PHASE_ORDER: OnboardingPhase[] = [
-  'parcours', 'niveau', 'notifications',
-  'discovery', 'programme',
+  'parcours', 'niveau', 'notifications', 'programme',
 ];
 
 export const TOTAL_ONBOARDING_PHASES = ONBOARDING_PHASE_ORDER.length;
@@ -40,8 +38,7 @@ export const PHASE_NUMBER: Record<OnboardingPhase, number> = {
   parcours: 1,
   niveau: 2,
   notifications: 3,
-  discovery: 4,
-  programme: 5,
+  programme: 4,
 };
 
 /** Every route of the block (decisions + their branch screens). Used for
@@ -52,7 +49,6 @@ export type OnboardingQuestionnaireRouteId =
   | 'custom_order_picker'
   | 'known_surahs'
   | 'notifications'
-  | 'discovery_source'
   | 'program_summary';
 
 export const QUESTIONNAIRE_ROUTE_PHASE: Record<OnboardingQuestionnaireRouteId, OnboardingPhase> = {
@@ -61,7 +57,6 @@ export const QUESTIONNAIRE_ROUTE_PHASE: Record<OnboardingQuestionnaireRouteId, O
   custom_order_picker: 'niveau',
   known_surahs: 'niveau',
   notifications: 'notifications',
-  discovery_source: 'discovery',
   program_summary: 'programme',
 };
 
@@ -89,7 +84,6 @@ export const QUESTIONNAIRE_BACK_TARGETS: Partial<Record<OnboardingQuestionnaireR
   // 'recommended'). Screens must compute it from draft.learningMode via
   // knownSurahsBackTarget() below, never a constant.
   notifications: '/onboarding-v2/known-surahs',
-  discovery_source: '/onboarding-v2/notifications',
   // program_summary has no static entry either — see programSummaryBackTarget().
 };
 
@@ -105,7 +99,7 @@ export function knownSurahsBackTarget(learningMode: 'recommended' | 'start_surah
 /**
  * program_summary's "back" deliberately never points at program_generating
  * (a transient loading animation with nothing to resume into) — it returns
- * to the last real input screen, so the user can change their discovery
- * answer and regenerate.
+ * to the last real input screen (notifications), so the user can change
+ * their answer and regenerate.
  */
-export const PROGRAM_SUMMARY_BACK_TARGET = '/onboarding-v2/discovery-source';
+export const PROGRAM_SUMMARY_BACK_TARGET = '/onboarding-v2/notifications';

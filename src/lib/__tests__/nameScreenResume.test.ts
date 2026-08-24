@@ -47,7 +47,6 @@ function makeDraftWithGreeting(name: string): OnboardingDraftV1 {
     customSurahOrder: [],
     continueWithRest: true,
     notificationPreference: 'enabled',
-    discoverySource: 'tiktok',
     updatedAt: new Date().toISOString(),
   };
 }
@@ -109,9 +108,10 @@ describe('name screen resume logic — no auto-skip on currentStep=greeting', ()
 
   // ─── Legacy step migration — a draft persisted by an older app version
   // may still carry a currentStep value for a screen that no longer exists
-  // ('motivation' / 'motivation_reassurance' / 'learning_mode_reassurance').
-  // Reading it must never wipe the draft — every other field is preserved
-  // and currentStep is remapped to the next valid step. ─────────────────────
+  // ('motivation' / 'motivation_reassurance' / 'learning_mode_reassurance' /
+  // 'discovery_source'). Reading it must never wipe the draft — every other
+  // field is preserved and currentStep is remapped to the next valid step.
+  // ─────────────────────────────────────────────────────────────────────────
   it('migrates a stale currentStep from a removed screen to the next valid step, preserving every other field', async () => {
     const flowId = await getOrCreateGuestFlowId();
     const guestOwner = { kind: 'guest' as const, flowId };
@@ -122,6 +122,7 @@ describe('name screen resume logic — no auto-skip on currentStep=greeting', ()
       { legacyStep: 'learning_mode_reassurance', expectedStep: 'known_surahs', learningMode: 'recommended' },
       { legacyStep: 'learning_mode_reassurance', expectedStep: 'start_surah_picker', learningMode: 'start_surah' },
       { legacyStep: 'learning_mode_reassurance', expectedStep: 'custom_order_picker', learningMode: 'custom_order' },
+      { legacyStep: 'discovery_source', expectedStep: 'program_generating', learningMode: 'recommended' },
     ];
 
     for (const { legacyStep, expectedStep, learningMode } of cases) {
@@ -136,7 +137,6 @@ describe('name screen resume logic — no auto-skip on currentStep=greeting', ()
       // every other field survives the migration untouched
       expect(d?.firstName).toBe('Walid');
       expect(d?.knownSurahs).toEqual([1, 2, 3]);
-      expect(d?.discoverySource).toBe('tiktok');
     }
   });
 

@@ -18,7 +18,7 @@
 // personalize the account it creates.
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { LearningMode, NotificationPreference, DiscoverySource } from './onboardingDraft';
+import type { LearningMode, NotificationPreference } from './onboardingDraft';
 import { purgeAllOnboardingDrafts, claimDraftForUser, readOnboardingDraftForOwner, clearOnboardingDraftForOwner, getOrCreateGuestFlowId, clearGuestFlowId } from './onboardingDraft';
 
 const STORAGE_KEY = 'zainly:onboardingV2:pendingPlan';
@@ -59,10 +59,6 @@ const VALID_LEARNING_MODES: LearningMode[] = ['recommended', 'start_surah', 'cus
 const VALID_NOTIFICATION_PREFERENCES: NotificationPreference[] = [
   'enabled', 'denied', 'skipped', 'already_granted',
 ];
-const VALID_DISCOVERY_SOURCES: DiscoverySource[] = [
-  'tiktok', 'instagram', 'youtube', 'google', 'app_store', 'word_of_mouth', 'other',
-];
-
 export interface PendingOnboardingPlanV1 {
   version: 1;
   createdAt: string;
@@ -73,7 +69,6 @@ export interface PendingOnboardingPlanV1 {
   customSurahOrder: number[];
   continueWithRest: boolean;
   notificationPreference: NotificationPreference | null;
-  discoverySource: DiscoverySource | null;
   // userId of the account that claimed this payload during finalization.
   // null means the payload was created pre-auth and is still unclaimed.
   // Once set, only that userId may use it.
@@ -215,10 +210,6 @@ function isValidShape(raw: unknown): raw is PendingOnboardingPlanV1 {
   if (
     d.notificationPreference !== null
     && (typeof d.notificationPreference !== 'string' || !VALID_NOTIFICATION_PREFERENCES.includes(d.notificationPreference as NotificationPreference))
-  ) return false;
-  if (
-    d.discoverySource !== null
-    && (typeof d.discoverySource !== 'string' || !VALID_DISCOVERY_SOURCES.includes(d.discoverySource as DiscoverySource))
   ) return false;
   if (d.ownerUserId !== undefined && d.ownerUserId !== null && typeof d.ownerUserId !== 'string') return false;
   if (d.flowId !== undefined && d.flowId !== null && typeof d.flowId !== 'string') return false;

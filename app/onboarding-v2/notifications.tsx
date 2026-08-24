@@ -136,9 +136,9 @@ export default function OnboardingNotificationsScreen() {
       const status = await requestNotificationPermission();
       await updateOnboardingDraftForOwner(draftOwner, {
         notificationPreference: status === 'granted' ? 'enabled' : 'denied',
-        currentStep: 'discovery_source',
+        currentStep: 'program_generating',
       });
-      router.push('/onboarding-v2/discovery-source');
+      router.push('/onboarding-v2/program-generating');
     } finally {
       setBusy(false);
       isSubmittingRef.current = false;
@@ -152,9 +152,9 @@ export default function OnboardingNotificationsScreen() {
     try {
       await updateOnboardingDraftForOwner(draftOwner, {
         notificationPreference: 'already_granted',
-        currentStep: 'discovery_source',
+        currentStep: 'program_generating',
       });
-      router.push('/onboarding-v2/discovery-source');
+      router.push('/onboarding-v2/program-generating');
     } finally {
       isSubmittingRef.current = false;
     }
@@ -167,9 +167,9 @@ export default function OnboardingNotificationsScreen() {
     try {
       await updateOnboardingDraftForOwner(draftOwner, {
         notificationPreference: 'denied',
-        currentStep: 'discovery_source',
+        currentStep: 'program_generating',
       });
-      router.push('/onboarding-v2/discovery-source');
+      router.push('/onboarding-v2/program-generating');
     } finally {
       isSubmittingRef.current = false;
     }
@@ -182,9 +182,9 @@ export default function OnboardingNotificationsScreen() {
     try {
       await updateOnboardingDraftForOwner(draftOwner, {
         notificationPreference: 'skipped',
-        currentStep: 'discovery_source',
+        currentStep: 'program_generating',
       });
-      router.push('/onboarding-v2/discovery-source');
+      router.push('/onboarding-v2/program-generating');
     } finally {
       isSubmittingRef.current = false;
     }

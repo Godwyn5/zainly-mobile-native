@@ -137,9 +137,8 @@ const ROUTE_FOR_STEP: Record<OnboardingStep, string> = {
   custom_order_picker:      '/onboarding-v2/custom-order',
   known_surahs:             '/onboarding-v2/known-surahs',
   notifications:            '/onboarding-v2/notifications',
-  discovery_source:         '/onboarding-v2/discovery-source',
-  program_generating:       '/onboarding-v2/discovery-source',
-  program_summary:          '/onboarding-v2/discovery-source',
+  program_generating:       '/onboarding-v2/notifications',
+  program_summary:          '/onboarding-v2/notifications',
 };
 
 /** Maps a missing step to the route the user should be redirected to. */

@@ -192,7 +192,6 @@ async function seedValidDraft() {
     learningMode: 'recommended',
     knownSurahs: [1, 2],
     notificationPreference: 'enabled',
-    discoverySource: 'tiktok',
   });
 }
 
@@ -278,7 +277,6 @@ describe('Plan-already-exists guard', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
 
     await finalizeOnboardingV2Plan(USER_A, '');
@@ -380,7 +378,6 @@ describe('Plan-already-exists guard', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved.flowId);
@@ -582,7 +579,6 @@ describe('Combined auth boundary clearing', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     await seedValidDraft();
 
@@ -623,7 +619,6 @@ describe('Session-expiry boundary (clearOnboardingStateForSessionExpiry)', () =>
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     // Set up the auth flow proof so claim can succeed
@@ -648,7 +643,6 @@ describe('Session-expiry boundary (clearOnboardingStateForSessionExpiry)', () =>
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     // Not claimed — ownerUserId is absent (undefined), not explicitly null
 
@@ -684,7 +678,6 @@ describe('Cross-account pending payload protection in plan_already_exists', () =
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved.flowId);
@@ -698,7 +691,6 @@ describe('Cross-account pending payload protection in plan_already_exists', () =
       learningMode: 'recommended',
       knownSurahs: [1, 2],
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
 
     // USER_B finalizes — plan already exists for B
@@ -744,7 +736,6 @@ describe('Pending payload as transaction marker', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved.flowId);
@@ -803,7 +794,6 @@ describe('Pending payload as transaction marker', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved.flowId);
@@ -828,7 +818,6 @@ describe('Pending payload as transaction marker', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     // Not claimed — no ownerUserId
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
@@ -851,7 +840,6 @@ describe('Pending payload as transaction marker', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     if (!saved1.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved1.flowId);
@@ -867,7 +855,6 @@ describe('Pending payload as transaction marker', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     if (!saved2.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved2.flowId);
@@ -894,7 +881,6 @@ describe('Pending payload as transaction marker', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved.flowId);
@@ -920,7 +906,6 @@ describe('Pending payload as transaction marker', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved.flowId);
@@ -978,7 +963,6 @@ describe('Pending payload as transaction marker', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     if (!saved.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved.flowId);
@@ -1047,7 +1031,6 @@ describe('Pending payload as transaction marker', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     if (!saved2.ok) throw new Error('savePendingOnboardingPlan failed in test setup 2');
     saveActiveOnboardingAuthFlow(saved2.flowId);
@@ -1094,7 +1077,6 @@ describe('Pending payload as transaction marker', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     if (!saved1.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved1.flowId);
@@ -1110,7 +1092,6 @@ describe('Pending payload as transaction marker', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     if (!saved2.ok) throw new Error('savePendingOnboardingPlan failed in test setup 2');
     saveActiveOnboardingAuthFlow(saved2.flowId);
@@ -1143,7 +1124,6 @@ describe('Pending payload as transaction marker', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
     if (!saved1.ok) throw new Error('savePendingOnboardingPlan failed in test setup');
     saveActiveOnboardingAuthFlow(saved1.flowId);
@@ -1164,7 +1144,6 @@ describe('Pending payload as transaction marker', () => {
       customSurahOrder: [],
       continueWithRest: true,
       notificationPreference: 'enabled',
-      discoverySource: 'tiktok',
     });
 
     // Both should resolve without error
