@@ -62,7 +62,7 @@ describe('prepareAuthenticatedLaunch', () => {
 
   beforeEach(() => {
     queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
     jest.clearAllMocks();
   });
@@ -232,7 +232,7 @@ describe('Targeted cancellation and retry', () => {
 
   beforeEach(() => {
     queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false, staleTime: 0 } },
+      defaultOptions: { queries: { retry: false, staleTime: 0, gcTime: 0 } },
     });
     // resetAllMocks clears both call counts AND mockResolvedValueOnce queues,
     // preventing bleed between tests that queue different resolved values.
@@ -308,7 +308,7 @@ describe('Targeted cancellation and retry', () => {
 
   it('P21. unrelated query for different userId is not affected by preparation of user-A', async () => {
     // Use a fresh queryClient to avoid mock queue bleed from previous tests
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 0 } } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 0, gcTime: 0 } } });
     // Seed user-B data directly in cache (not via fetch)
     qc.setQueryData(['plan', 'user-B'], { id: 'plan-B' });
     // Reset mock to known value for this test

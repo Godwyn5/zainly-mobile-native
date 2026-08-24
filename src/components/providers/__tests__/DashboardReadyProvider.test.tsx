@@ -73,7 +73,7 @@ describe('DashboardReadyProvider / onDashboardLayout', () => {
   });
 
   function renderHarness(): () => void {
-    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     let captured: (() => void) | null = null;
     act(() => {
       renderer = create(

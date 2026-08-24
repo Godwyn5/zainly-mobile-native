@@ -523,7 +523,7 @@ describe('performSocialAuth', () => {
 
   beforeEach(() => {
     queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
   });
 
@@ -608,7 +608,7 @@ describe('performSocialAuth', () => {
 
 describe('performSocialAuth — data safety & attempt guard', () => {
   const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } },
   });
 
   beforeEach(() => {

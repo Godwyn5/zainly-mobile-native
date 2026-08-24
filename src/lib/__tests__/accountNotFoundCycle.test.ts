@@ -74,7 +74,7 @@ jest.mock('@/lib/revenueCat', () => ({
 
 function makeQueryClient() {
   return new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
   });
 }
 

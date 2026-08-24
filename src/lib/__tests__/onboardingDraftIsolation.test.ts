@@ -209,7 +209,7 @@ describe('Logout and account switch', () => {
       return {  ok: true, reason: 'created'  };
     });
     const result = await orchestrateAuthedFinalize(
-      new QueryClient(),
+      new QueryClient({ defaultOptions: { queries: { gcTime: 0 } } }),
       userA,
       { getSessionUserId: () => sessionUserId },
     );
@@ -377,7 +377,7 @@ describe('React Query cache isolation', () => {
   it('22. A\'s React Query caches not visible to B (useLogout clears)', async () => {
     // useLogout calls queryClient.clear() which removes all cached data.
     // This test verifies the contract: after clear, no cached data exists.
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     qc.setQueryData(['plan', userA], { id: 'plan-a' });
     expect(qc.getQueryData(['plan', userA])).toEqual({ id: 'plan-a' });
     qc.clear();
@@ -498,7 +498,7 @@ describe('Finalization owner guard', () => {
   let queryClient: QueryClient;
 
   beforeEach(() => {
-    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValue({ ok: true, reason: 'created' });
     (handOffFinalizedProgram as jest.Mock).mockResolvedValue({
       status: 'ready',
@@ -750,7 +750,7 @@ describe('Corrupted envelope under wrong key', () => {
   });
 
   it('finalization of B fails closed when A envelope is under B key', async () => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValue({ ok: true, reason: 'created' });
     (handOffFinalizedProgram as jest.Mock).mockResolvedValue({
       status: 'ready',

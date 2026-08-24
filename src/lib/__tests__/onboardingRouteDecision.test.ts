@@ -242,7 +242,7 @@ describe('Authenticated onboarding finalization', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
     sessionUserId = 'user-google-123';
 
     (finalizeOnboardingV2Plan as jest.Mock).mockResolvedValue({ ok: true, reason: 'created' });

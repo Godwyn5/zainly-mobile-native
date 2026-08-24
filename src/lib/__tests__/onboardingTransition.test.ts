@@ -63,7 +63,7 @@ describe('runOnboardingTransition', () => {
 
   beforeEach(() => {
     queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
     jest.clearAllMocks();
     forceReleaseTransitionLease();
