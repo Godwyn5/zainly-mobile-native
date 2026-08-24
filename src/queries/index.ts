@@ -3,7 +3,6 @@ import { fetchPlan } from '@/db/plans';
 import { fetchProgress } from '@/db/progress';
 import { fetchDueCount, fetchLearnedItems } from '@/db/reviewItems';
 import { fetchProfile } from '@/db/profiles';
-import { hasValidPendingOnboardingPlanForUser } from '@/lib/pendingOnboardingPlan';
 import { getRevenueCatCustomerInfo, ensureRevenueCatReadyForUser, getRevenueCatCurrentUserId, getRevenueCatGeneration, CustomerInfo } from '@/lib/revenueCat';
 
 // ─── Date helpers (must match useDueReviews exactly) ────────────────────────
@@ -67,25 +66,6 @@ export function learnedItemsQueryOptions(userId: string | undefined): UseQueryOp
     queryFn: () => fetchLearnedItems(userId!),
     enabled: !!userId,
     staleTime: 5 * 60_000,
-  };
-}
-
-// ─── Pending onboarding-v2 status ──────────────────────────────────────────
-// userId-aware: the queryFn validates that the pending payload's ownerUserId
-// is either null (unclaimed, pre-auth) or matches the given userId. This
-// prevents cross-account leakage when a user switch occurs without an
-// explicit clear (e.g. session expiry without logout).
-//
-// staleTime: Infinity — the query is only refetched on explicit invalidation
-// (after finalization in useOnboardingV2AuthFinalize, or after a user switch
-// clears the cache). This avoids a redundant AsyncStorage read on every
-// dashboard mount/re-focus.
-export function pendingOnboardingQueryOptions(userId: string | undefined): UseQueryOptions<boolean> {
-  return {
-    queryKey: ['pendingOnboarding', userId],
-    queryFn: () => hasValidPendingOnboardingPlanForUser(userId!),
-    enabled: !!userId,
-    staleTime: Infinity,
   };
 }
 

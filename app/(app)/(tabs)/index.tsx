@@ -9,11 +9,8 @@ import { usePlan } from '@/hooks/usePlan';
 import { useProgress } from '@/hooks/useProgress';
 import { useDueReviews } from '@/hooks/useDueReviews';
 import { useLocalDate } from '@/hooks/useLocalDate';
-import { usePendingOnboardingPlanStatus } from '@/hooks/usePendingOnboardingPlanStatus';
-import { useOnboardingV2AuthFinalize } from '@/hooks/useOnboardingV2AuthFinalize';
 import { getTodayProgramme } from '@/core/dailyPlan';
 import { Screen } from '@/components/ui/Screen';
-import { useDashboardReady } from '@/components/providers/DashboardReadyProvider';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { colors } from '@/theme/colors';
 import { spacing } from '@/theme/spacing';
@@ -169,7 +166,6 @@ const pb = StyleSheet.create({
 // ─── TodayScreen ──────────────────────────────────────────────────────────────
 
 export default function TodayScreen() {
-  const { onDashboardLayout } = useDashboardReady();
   const isFocused = useIsFocused();
   const user   = useAuthStore((s) => s.user);
   const userId = user?.id;
@@ -183,74 +179,10 @@ export default function TodayScreen() {
 
   // Only plan and progress are critical for the dashboard's first frame.
   // Reviews and premium loading must NOT block the render — they have
-  // fallbacks (0 reviews, free-tier display) and are non-critical sources
-  // in prepareAuthenticatedLaunch.
+  // fallbacks (0 reviews, free-tier display) and are non-critical sources.
   const isLoading = plan.isLoading || progress.isLoading;
   const hasError  = plan.isError   || progress.isError;
   const hasNoPlan = !plan.data || !progress.data;
-
-  // ── onboarding-v2 finalization guard ──────────────────────────────────
-  // AuthLayout (app/(auth)/_layout.tsx) redirects into this dashboard the
-  // instant a Supabase session exists — which can happen BEFORE
-  // finalizeOnboardingV2Plan() (src/lib/onboardingFinalize.ts) has finished
-  // persisting the plan/progress rows. Re-checked whenever isFocused or the
-  // plan/progress queries actually refetch (e.g. the invalidateQueries()
-  // triggered by a successful finalize in useOnboardingV2AuthFinalize.ts) —
-  // never a timer/poll.
-  const pendingOnboardingV2 = usePendingOnboardingPlanStatus(userId);
-  // Shared finalization hook — exposes declarative status and retry/restore
-  // actions. The dashboard auto-triggers it once when a valid pending
-  // payload exists and no plan is present yet. Signup/login already call
-  // runFinalize themselves; this is purely for recovery when the dashboard
-  // mounts before that flow completes or after a restart.
-  const finalize = useOnboardingV2AuthFinalize();
-  const autoAttemptRef = useRef(false); // Ensure exactly one auto-attempt per session
-
-  // Auto-trigger finalization once when: authed, valid pending, not already
-  // running, and we haven't already attempted this session. Fires whether or
-  // not the pair is complete: if the pair is already complete, the idempotent
-  // guard in finalizeOnboardingV2Plan detects it without recreating anything,
-  // the handoff succeeds, and the residual pending is cleaned up. If the pair
-  // is incomplete, the full finalize → handoff → clear sequence runs.
-  useEffect(() => {
-    if (
-      userId &&
-      pendingOnboardingV2.hasPending &&
-      finalize.status === 'idle' &&
-      !autoAttemptRef.current
-    ) {
-      autoAttemptRef.current = true;
-      finalize.runFinalize(userId);
-    }
-  }, [userId, pendingOnboardingV2.hasPending, finalize.status, finalize.runFinalize]);
-
-  // True while there is no plan yet AND either the pending-payload check
-  // hasn't resolved, or it found a still-valid one, OR the finalize hook
-  // is actively running/errored from a pending payload — in all these cases
-  // the legacy "Créer mon programme" CTA must never render.
-  const isFinalizingOnboardingV2 =
-    hasNoPlan &&
-    (pendingOnboardingV2.isLoading ||
-      pendingOnboardingV2.hasPending ||
-      finalize.status === 'running' ||
-      finalize.status === 'error');
-
-  // ── dashboard-ready signal: gated on the REAL hydrated branch, not mount ──
-  // Screen's onLayout resolves the instant its flex:1 SafeAreaView is laid
-  // out — independent of children — which is BEFORE the hero/cards below
-  // finish fading in from opacity 0 (staggered entrance, ~630ms). Signaling
-  // from that onLayout exposes Screen's own beige background (colors.
-  // background) for that whole window. isRealDashboardRef is refreshed on
-  // every render (effect below, no deps) so the entrance-animation
-  // completion callback — the actual first moment hero+cards are fully
-  // opaque — can check it and only signal when this render's branch is the
-  // final hydrated one (never loading/error/finalizing/no-plan).
-  const isRealDashboard =
-    !isLoading && !hasError && !isFinalizingOnboardingV2 && !hasNoPlan;
-  const isRealDashboardRef = useRef(false);
-  useEffect(() => {
-    isRealDashboardRef.current = isRealDashboard;
-  });
 
   // ── animation refs ──
   const mountedRef   = useRef(true);
@@ -288,17 +220,7 @@ export default function TodayScreen() {
       Animated.timing(card1Anim, { toValue: 1, duration: 460, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       Animated.timing(card2Anim, { toValue: 1, duration: 430, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
     ]);
-    // This is the actual first moment the hero+cards are fully opaque —
-    // the real signal for the signup-transition cover overlay (see
-    // DashboardReadyProvider/onDashboardLayout). Not an artificial delay:
-    // it reports the completion of an entrance animation that already runs
-    // unconditionally on every mount, gated to fire only when this finished
-    // render is genuinely the final hydrated branch.
-    seq.start(({ finished }) => {
-      if (finished && mountedRef.current && isRealDashboardRef.current) {
-        onDashboardLayout();
-      }
-    });
+    seq.start();
 
     // hero gold line grow
     const goldLine = Animated.timing(goldLineAnim, {
@@ -464,71 +386,11 @@ export default function TodayScreen() {
     );
   }
 
-  // ── onboarding-v2 finalization states — never the legacy CTA here ──
-  if (isFinalizingOnboardingV2) {
-    // Running state — static card, no spinner
-    if (finalize.status === 'running') {
-      return (
-        <SafeAreaView style={s.centered}>
-          <View style={s.stateCard}>
-            <View style={s.finalizingIconWrap}>
-              <Text style={s.finalizingIcon}>📖</Text>
-            </View>
-            <EmptyState
-              title="Finalisation de ton programme"
-              description="Zainly prépare ton espace."
-            />
-          </View>
-        </SafeAreaView>
-      );
-    }
-
-    // Standard error (persist/network)
-    if (finalize.status === 'error') {
-      return (
-        <SafeAreaView style={s.centered}>
-          <View style={s.stateCard}>
-            <EmptyState
-              title="Impossible de finaliser ton programme"
-              description="Ton programme n'a pas été perdu. Vérifie ta connexion puis réessaie."
-              buttonLabel="Réessayer"
-              onPress={finalize.retryFinalize}
-            />
-          </View>
-        </SafeAreaView>
-      );
-    }
-
-    // Fallback (pending payload detected but hook idle — shouldn't happen after auto-trigger)
-    return (
-      <SafeAreaView style={s.centered}>
-        <View style={s.stateCard}>
-          <View style={s.finalizingIconWrap}>
-            <Text style={s.finalizingIcon}>📖</Text>
-          </View>
-          <EmptyState
-            title="Finalisation de ton programme"
-            description="Zainly prépare ton espace."
-          />
-        </View>
-      </SafeAreaView>
-    );
-  }
-
   // ── no plan state — secondary defense, never a CTA ──────────────────
-  // Under normal operation, (app) only mounts when app/_layout.tsx's
-  // accountPreparation.status is 'ready' for this exact userId (or a
-  // verified onboarding handoff) — both of which guarantee plan and
-  // progress exist. A session with no recognized Zainly account is
-  // caught upstream, at the connection/preparation boundary (see
-  // src/lib/socialAuth.ts and src/lib/prepareAuthenticatedLaunch.ts),
-  // resulting in a fail-closed sign-out and an "account introuvable"
-  // message on the auth screen — never in this dashboard.
-  //
   // This branch is a defensive fallback only, for the narrow edge case
-  // where plan/progress are removed after the gate already committed
-  // 'ready' for this userId. TodayScreen never navigates or signs out
-  // itself — it only renders a neutral background.
+  // where plan/progress are removed after the user already reached the
+  // dashboard. TodayScreen never navigates or signs out itself — it only
+  // renders a neutral background.
   if (hasNoPlan) {
     return <View style={{ flex: 1, backgroundColor: colors.background }} />;
   }

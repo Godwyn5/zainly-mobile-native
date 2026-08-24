@@ -58,48 +58,6 @@ export async function upsertProgress(userId: string, payload: ProgressPayload): 
   }
 }
 
-// ─── resetProgressForNewPlan ──────────────────────────────────────────────
-// Used only by onboarding-v2 finalization when a NEW plan is being created
-// (src/lib/onboardingFinalize.ts). Unlike upsertProgress() above — which
-// deliberately PRESERVES streak/total_memorized/session_dates on update for
-// legitimate session-completion callers — this always resets every
-// progress-history field to its initial state. A progress row found here
-// necessarily predates the plan just created (this is only ever called from
-// the branch where fetchPlan(userId) returned null just before), so it can
-// never be a legitimate continuation of the plan about to be persisted —
-// carrying its streak/totals forward would silently misrepresent a fresh
-// program as already in progress.
-export async function resetProgressForNewPlan(userId: string, payload: ProgressPayload): Promise<void> {
-  const { data: existing } = await supabase
-    .from('progress')
-    .select('id')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const freshFields = {
-    current_surah:           payload.current_surah,
-    current_ayah:            payload.current_ayah,
-    ayah_per_day:            payload.ayah_per_day,
-    streak:                  0,
-    total_memorized:         0,
-    session_dates:           [] as string[],
-    last_session_date:       null,
-    last_session_difficulty: null,
-    last_revision_scores:    null,
-    last_adaptation_date:    null,
-  };
-
-  if (existing) {
-    const { error } = await supabase.from('progress').update(freshFields).eq('id', existing.id);
-    if (error) throw error;
-  } else {
-    const { error } = await supabase.from('progress').insert({ user_id: userId, ...freshFields });
-    if (error) throw error;
-  }
-}
-
 export async function fetchProgress(userId: string) {
   const { data, error } = await supabase
     .from('progress')
