@@ -337,7 +337,7 @@ export default function OnboardingBuildScreen() {
 
             <View style={styles.titleMaskWrap}>
               <Text style={styles.title}>
-                Construisons ton programme.
+                Ton programme commence ici.
               </Text>
               <Animated.View
                 pointerEvents="none"
@@ -348,7 +348,7 @@ export default function OnboardingBuildScreen() {
             <Animated.Text
               style={[styles.subtitle, { opacity: subtitleOpacity, transform: [{ scale: subtitleScale }] }]}
             >
-              Réponds à quelques questions. Zainly utilisera tes réponses pour créer un programme adapté à toi.
+              Crée ton compte pour sauvegarder ta progression. Ensuite, quelques questions nous permettront de construire un programme adapté à toi.
             </Animated.Text>
 
             <Animated.View
@@ -414,11 +414,11 @@ export default function OnboardingBuildScreen() {
               activeOpacity={0.88}
               style={styles.cta}
               accessibilityRole="button"
-              accessibilityLabel="Créer mon programme"
+              accessibilityLabel="Créer mon compte"
               accessibilityState={{ disabled: !finished }}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             >
-              <Text style={styles.ctaText}>Créer mon programme</Text>
+              <Text style={styles.ctaText}>Créer mon compte</Text>
             </TouchableOpacity>
           </Animated.View>
 
