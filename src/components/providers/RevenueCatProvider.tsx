@@ -1,10 +1,10 @@
 // ─── RevenueCatProvider (Phase 1 — read-only) ──────────────────────────────────
 // Configures RevenueCat once, then keeps the RevenueCat identity in sync with
 // the current Supabase auth session (logIn on session, logOut on sign-out).
-// Renders nothing. Never throws, never blocks the app — all RevenueCat calls
-// in src/lib/revenueCat.ts are best-effort and swallow their own errors.
+// Passes through children. Never throws, never blocks the app — all RevenueCat
+// calls in src/lib/revenueCat.ts are best-effort and swallow their own errors.
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '@/store/authStore';
 import {
@@ -13,7 +13,7 @@ import {
   revenueCatLogOut,
 } from '@/lib/revenueCat';
 
-export function RevenueCatProvider() {
+export function RevenueCatProvider({ children }: { children: ReactNode }) {
   const userId = useAuthStore((s) => s.user?.id);
   const ready = useAuthStore((s) => s.ready);
   const lastSyncedUserId = useRef<string | null | undefined>(undefined);
@@ -47,8 +47,8 @@ export function RevenueCatProvider() {
         // resetting this ref) retry — without looping synchronously here,
         // since this effect only re-runs when ready/userId/queryClient
         // themselves change again. This provider is a reactive safety net,
-        // not the sole guarantee: signup.tsx/login.tsx explicitly await and
-        // verify syncRevenueCatUserAfterAuth() at the moment that matters.
+        // not the sole guarantee: useLogout explicitly calls revenueCatLogOut
+        // directly, so the invalidation below also covers the anonymous state.
         return;
       }
 
@@ -61,5 +61,5 @@ export function RevenueCatProvider() {
     })();
   }, [ready, userId, queryClient]);
 
-  return null;
+  return <>{children}</>;
 }
