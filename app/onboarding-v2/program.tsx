@@ -115,7 +115,7 @@ export default function OnboardingProgramScreen() {
 
   // ── title & subtitle — this screen pairs a "légère mise au point" title
   // with a "montée douce" subtitle, distinct from the adjacent
-  // revisions.tsx (glow title / mask subtitle) and ready.tsx. ────────────
+  // revisions.tsx (glow title / mask subtitle) and build.tsx. ────────────
   const titleOpacity    = useRef(new Animated.Value(0)).current;
   const titleScale       = useRef(new Animated.Value(1.06)).current;
   const subtitleOpacity = useRef(new Animated.Value(0)).current;
@@ -242,7 +242,7 @@ export default function OnboardingProgramScreen() {
     if (navigatedRef.current) return;
     navigatedRef.current = true;
     hapticLight();
-    router.push('/onboarding-v2/ready');
+    router.push('/onboarding-v2/build');
   }
 
   if (!draftChecked) {

@@ -40,6 +40,7 @@ const CURRENT_DRAFT_VERSION = 1 as const;
 export type OnboardingStep =
   | 'first_name'
   | 'greeting'
+  | 'build'
   | 'learning_mode'
   | 'start_surah_picker'
   | 'custom_order_picker'
@@ -50,6 +51,7 @@ export type OnboardingStep =
 
 const VALID_STEPS: OnboardingStep[] = [
   'first_name', 'greeting',
+  'build',
   'learning_mode',
   'start_surah_picker', 'custom_order_picker', 'known_surahs',
   'notifications',
@@ -58,8 +60,8 @@ const VALID_STEPS: OnboardingStep[] = [
 
 // ── Legacy step migration ────────────────────────────────────────────────
 // 'motivation' / 'motivation_reassurance' / 'learning_mode_reassurance',
-// plus 'experience_choice' / 'premium_confirmation' / 'free_support' were
-// removed from the parcours. A draft persisted by an older app version may
+// plus 'experience_choice' / 'premium_confirmation' / 'free_support' / 'ready'
+// were removed from the parcours. A draft persisted by an older app version may
 // still carry one of these stale currentStep values — without remapping,
 // isValidDraftShape would reject the ENTIRE draft (losing firstName,
 // learningMode, etc.) since these strings are no longer valid OnboardingStep
@@ -77,6 +79,7 @@ const LEGACY_STEP_MIGRATIONS: Record<string, (data: Record<string, unknown>) => 
   premium_confirmation: () => 'notifications',
   free_support: () => 'notifications',
   discovery_source: () => 'program_generating',
+  ready: () => 'build',
 };
 
 function migrateLegacyCurrentStep(data: Record<string, unknown>): void {

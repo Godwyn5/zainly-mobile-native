@@ -132,6 +132,7 @@ export function buildPlanInputFromDraft(
 const ROUTE_FOR_STEP: Record<OnboardingStep, string> = {
   first_name:               '/onboarding-v2/name',
   greeting:                 '/onboarding-v2/greeting',
+  build:                    '/onboarding-v2/build',
   learning_mode:            '/onboarding-v2/learning-mode',
   start_surah_picker:       '/onboarding-v2/start-surah',
   custom_order_picker:      '/onboarding-v2/custom-order',
