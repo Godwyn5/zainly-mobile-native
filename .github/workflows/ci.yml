@@ -45,7 +45,7 @@ jobs:
         run: npm run lint
 
       - name: Tests
-        run: npx jest --detectOpenHandles --runInBand
+        run: npx jest --runInBand
 
       - name: Expo Doctor
         run: npm run doctor
