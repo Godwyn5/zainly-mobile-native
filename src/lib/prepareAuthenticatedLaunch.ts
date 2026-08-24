@@ -32,9 +32,12 @@ import {
   readPendingOnboardingPlan,
   clearPendingOnboardingIfMatches,
 } from '@/lib/pendingOnboardingPlan';
+import { readOnboardingDraftForOwner } from '@/lib/onboardingDraft';
+import { routeForOnboardingStep } from '@/lib/onboardingPlanValidation';
 
 export type PrepareAuthenticatedLaunchResult =
   | { status: 'ready' }
+  | { status: 'needs_onboarding'; resumeRoute: string }
   | { status: 'account_not_found' }
   | { status: 'error'; error: unknown };
 
@@ -158,9 +161,11 @@ export async function prepareAuthenticatedLaunch(
     // ── Typed launch decision ──────────────────────────────────────────
     //   - Both queries rejected → genuine network/RLS error → error screen
     //   - Both queries fulfilled, both null → no Zainly account recognized
-    //     for this identity (no pending onboarding either, checked above)
-    //     → account_not_found: the gate fails closed (local sign-out) and
-    //     shows "Compte introuvable" on the auth screen
+    //     for this identity (no pending onboarding either, checked above).
+    //     If a valid user-owned onboarding draft exists, the user is mid-V2
+    //     and should resume at the draft's currentStep → needs_onboarding.
+    //     Otherwise → account_not_found: the gate fails closed (local sign-out)
+    //     and shows "Compte introuvable" on the auth screen.
     //   - Both queries fulfilled, both non-null → complete program → ready
     //   - One null, one non-null → inconsistent state → error (partial data)
     //   - One rejected, one fulfilled → genuine error on the rejected query
@@ -178,6 +183,11 @@ export async function prepareAuthenticatedLaunch(
     const progressData = (criticalResults[1] as PromiseFulfilledResult<unknown>).value;
 
     if (!planData && !progressData) {
+      const draft = await readOnboardingDraftForOwner({ kind: 'authenticated', userId });
+      if (draft) {
+        const resumeRoute = routeForOnboardingStep(draft.currentStep);
+        return { status: 'needs_onboarding', resumeRoute };
+      }
       return { status: 'account_not_found' };
     }
 
