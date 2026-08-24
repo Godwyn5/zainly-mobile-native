@@ -87,7 +87,6 @@ function makeDraft(firstName: string): OnboardingDraftV1 {
     updatedAt: new Date().toISOString(),
     currentStep: 'program_summary',
     firstName,
-    motivationReason: 'closer_to_allah',
     learningMode: 'recommended',
     knownSurahs: [1, 2],
     startingSurah: null,
@@ -137,11 +136,10 @@ describe('Guest → auth transfer — real runtime flow', () => {
 
     // Step 2: Several screens write/read the same guest:F draft
     await updateOnboardingDraftForOwner(guestOwner, { firstName: 'Alice', currentStep: 'greeting' });
-    await updateOnboardingDraftForOwner(guestOwner, { motivationReason: 'closer_to_allah' });
     await updateOnboardingDraftForOwner(guestOwner, { learningMode: 'recommended' });
     const draft = await readOnboardingDraftForOwner(guestOwner);
     expect(draft?.firstName).toBe('Alice');
-    expect(draft?.motivationReason).toBe('closer_to_allah');
+    expect(draft?.learningMode).toBe('recommended');
 
     // Step 3: Authentication changes from null to user U
     // (Simulated — in real runtime, useAuthStore.session.user.id becomes userA)

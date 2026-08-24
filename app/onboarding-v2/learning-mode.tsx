@@ -100,10 +100,6 @@ export default function OnboardingLearningModeScreen() {
         router.replace('/onboarding-v2/name');
         return;
       }
-      if (!draft.motivationReason) {
-        router.replace('/onboarding-v2/motivation');
-        return;
-      }
       if (draft.learningMode) setSelected(draft.learningMode);
       setDraftChecked(true);
     });
@@ -187,8 +183,22 @@ export default function OnboardingLearningModeScreen() {
     // filled-in branch — knownSurahs (common) is preserved.
     await setLearningModeAndCleanupBranchForOwner(draftOwner, selected);
 
-    await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'learning_mode_reassurance' });
-    router.push('/onboarding-v2/learning-mode-reassurance');
+    // Opens the deep branch matching the chosen mode directly — never a
+    // reassurance screen in between — so computePlan() later receives the
+    // specific data each mode requires (startingSurah / customSurahOrder),
+    // then the common known-surahs question shared by all 3 modes.
+    if (selected === 'start_surah') {
+      await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'start_surah_picker' });
+      router.push('/onboarding-v2/start-surah');
+      return;
+    }
+    if (selected === 'custom_order') {
+      await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'custom_order_picker' });
+      router.push('/onboarding-v2/custom-order');
+      return;
+    }
+    await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'known_surahs' });
+    router.push('/onboarding-v2/known-surahs');
   }
 
   if (!draftChecked) {

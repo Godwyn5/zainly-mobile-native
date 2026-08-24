@@ -88,7 +88,6 @@ function makeDraft(firstName: string): OnboardingDraftV1 {
     updatedAt: new Date().toISOString(),
     currentStep: 'greeting',
     firstName,
-    motivationReason: null,
     learningMode: null,
     knownSurahs: [],
     startingSurah: null,

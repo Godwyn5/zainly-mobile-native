@@ -41,7 +41,6 @@ function makeDraftWithGreeting(name: string): OnboardingDraftV1 {
     createdAt: new Date().toISOString(),
     currentStep: 'greeting',
     firstName: name,
-    motivationReason: 'closer_to_allah',
     learningMode: 'recommended',
     knownSurahs: [1, 2, 3],
     startingSurah: null,
@@ -97,7 +96,7 @@ describe('name screen resume logic — no auto-skip on currentStep=greeting', ()
     // Since we're testing the contract (not the component), we assert
     // that the resume path always reaches firstName restoration regardless
     // of currentStep value.
-    const stepsThatShouldNotRedirect = ['greeting', 'motivation', 'program_summary'] as const;
+    const stepsThatShouldNotRedirect: OnboardingDraftV1['currentStep'][] = ['greeting', 'program_summary'];
     for (const step of stepsThatShouldNotRedirect) {
       await saveOnboardingDraftForOwner(guestOwner, {
         ...makeDraftWithGreeting('Walid'),
@@ -106,6 +105,40 @@ describe('name screen resume logic — no auto-skip on currentStep=greeting', ()
       const d = await readOnboardingDraftForOwner(guestOwner);
       // firstName must always be restorable, regardless of currentStep
       expect(d?.firstName).toBe('Walid');
+    }
+  });
+
+  // ─── Legacy step migration — a draft persisted by an older app version
+  // may still carry a currentStep value for a screen that no longer exists
+  // ('motivation' / 'motivation_reassurance' / 'learning_mode_reassurance').
+  // Reading it must never wipe the draft — every other field is preserved
+  // and currentStep is remapped to the next valid step. ─────────────────────
+  it('migrates a stale currentStep from a removed screen to the next valid step, preserving every other field', async () => {
+    const flowId = await getOrCreateGuestFlowId();
+    const guestOwner = { kind: 'guest' as const, flowId };
+
+    const cases: { legacyStep: string; expectedStep: string; learningMode: OnboardingDraftV1['learningMode'] }[] = [
+      { legacyStep: 'motivation', expectedStep: 'learning_mode', learningMode: null },
+      { legacyStep: 'motivation_reassurance', expectedStep: 'learning_mode', learningMode: null },
+      { legacyStep: 'learning_mode_reassurance', expectedStep: 'known_surahs', learningMode: 'recommended' },
+      { legacyStep: 'learning_mode_reassurance', expectedStep: 'start_surah_picker', learningMode: 'start_surah' },
+      { legacyStep: 'learning_mode_reassurance', expectedStep: 'custom_order_picker', learningMode: 'custom_order' },
+    ];
+
+    for (const { legacyStep, expectedStep, learningMode } of cases) {
+      await saveOnboardingDraftForOwner(guestOwner, {
+        ...makeDraftWithGreeting('Walid'),
+        currentStep: legacyStep as unknown as OnboardingDraftV1['currentStep'],
+        learningMode,
+      });
+      const d = await readOnboardingDraftForOwner(guestOwner);
+      expect(d).not.toBeNull();
+      expect(d?.currentStep).toBe(expectedStep);
+      // every other field survives the migration untouched
+      expect(d?.firstName).toBe('Walid');
+      expect(d?.knownSurahs).toEqual([1, 2, 3]);
+      expect(d?.experienceChoice).toBe('daily_limited');
+      expect(d?.discoverySource).toBe('tiktok');
     }
   });
 

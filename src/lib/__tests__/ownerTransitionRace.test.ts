@@ -47,7 +47,6 @@ function makeDraft(firstName: string): OnboardingDraftV1 {
     updatedAt: '2025-01-01T00:00:00.000Z',
     currentStep: 'program_summary',
     firstName,
-    motivationReason: null,
     learningMode: 'recommended',
     knownSurahs: [],
     startingSurah: 1,

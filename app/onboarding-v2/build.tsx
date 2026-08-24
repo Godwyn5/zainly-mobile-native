@@ -249,7 +249,7 @@ export default function OnboardingBuildScreen() {
     if (navigatedRef.current) return;
     navigatedRef.current = true;
     hapticLight();
-    router.push('/onboarding-v2/motivation');
+    router.push('/onboarding-v2/learning-mode');
   }
 
   if (!draftChecked) {

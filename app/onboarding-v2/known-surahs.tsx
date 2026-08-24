@@ -47,7 +47,6 @@ export default function OnboardingKnownSurahsScreen() {
     readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
       if (!draft?.firstName) { router.replace('/onboarding-v2/name'); return; }
-      if (!draft.motivationReason) { router.replace('/onboarding-v2/motivation'); return; }
       if (!draft.learningMode) { router.replace('/onboarding-v2/learning-mode'); return; }
       if (draft.learningMode === 'start_surah' && draft.startingSurah == null) {
         router.replace('/onboarding-v2/start-surah');

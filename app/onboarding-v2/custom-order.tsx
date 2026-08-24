@@ -45,7 +45,6 @@ export default function OnboardingCustomOrderScreen() {
     readOnboardingDraftForOwner(draftOwner).then(draft => {
       if (cancelled) return;
       if (!draft?.firstName) { router.replace('/onboarding-v2/name'); return; }
-      if (!draft.motivationReason) { router.replace('/onboarding-v2/motivation'); return; }
       if (draft.learningMode !== 'custom_order') {
         router.replace('/onboarding-v2/learning-mode');
         return;

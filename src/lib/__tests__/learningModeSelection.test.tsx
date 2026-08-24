@@ -28,9 +28,8 @@ import { create, act } from 'react-test-renderer';
 import { TouchableOpacity } from 'react-native';
 import OnboardingLearningModeScreen from '../../../app/onboarding-v2/learning-mode';
 
-const mockDraft: { firstName: string | null; motivationReason: string | null; learningMode: string | null } = {
+const mockDraft: { firstName: string | null; learningMode: string | null } = {
   firstName: 'Yusuf',
-  motivationReason: 'consistency',
   learningMode: 'recommended', // simulates a mode already answered in a previous pass
 };
 
@@ -52,7 +51,7 @@ jest.mock('@/lib/onboardingDraft', () => ({
 jest.mock('@/lib/onboardingQuestionnaire', () => ({
   TOTAL_ONBOARDING_PHASES: 10,
   phaseStepNumber: () => 3,
-  QUESTIONNAIRE_BACK_TARGETS: { learning_mode: '/onboarding-v2/motivation' },
+  QUESTIONNAIRE_BACK_TARGETS: { learning_mode: '/onboarding-v2/build' },
 }));
 
 jest.mock('@/utils/haptics', () => ({ hapticLight: jest.fn() }));
@@ -167,5 +166,53 @@ describe('OnboardingLearningModeScreen — selection survives re-render', () => 
     expect(isCardSelected(tree, 0)).toBe(false);
 
     act(() => { tree.unmount(); });
+  });
+});
+
+// ─── learning-mode — continue routes directly to the mode-specific branch,
+// never through the removed learning-mode-reassurance screen ──────────────
+describe('OnboardingLearningModeScreen — continue destination per mode', () => {
+  beforeEach(() => {
+    jest.useFakeTimers({ doNotFake: ['queueMicrotask'] });
+    jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  async function selectAndContinue(cardIndex: number) {
+    const tree = renderScreen();
+    await flushMicrotasks();
+
+    tapCard(tree, cardIndex);
+
+    const cta = tree.root.findByProps({ accessibilityLabel: 'Continuer' });
+    act(() => { cta.props.onPress(); });
+    await flushMicrotasks();
+
+    act(() => { tree.unmount(); });
+  }
+
+  it('routes "recommended" (index 0) to known-surahs', async () => {
+    const { router } = jest.requireMock('expo-router') as { router: { push: jest.Mock } };
+    await selectAndContinue(0);
+    expect(router.push).toHaveBeenCalledWith('/onboarding-v2/known-surahs');
+    expect(router.push).not.toHaveBeenCalledWith('/onboarding-v2/learning-mode-reassurance');
+  });
+
+  it('routes "start_surah" (index 1) to start-surah', async () => {
+    const { router } = jest.requireMock('expo-router') as { router: { push: jest.Mock } };
+    await selectAndContinue(1);
+    expect(router.push).toHaveBeenCalledWith('/onboarding-v2/start-surah');
+    expect(router.push).not.toHaveBeenCalledWith('/onboarding-v2/learning-mode-reassurance');
+  });
+
+  it('routes "custom_order" (index 2) to custom-order', async () => {
+    const { router } = jest.requireMock('expo-router') as { router: { push: jest.Mock } };
+    await selectAndContinue(2);
+    expect(router.push).toHaveBeenCalledWith('/onboarding-v2/custom-order');
+    expect(router.push).not.toHaveBeenCalledWith('/onboarding-v2/learning-mode-reassurance');
   });
 });

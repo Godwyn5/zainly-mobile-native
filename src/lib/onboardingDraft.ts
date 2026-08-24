@@ -40,10 +40,7 @@ const CURRENT_DRAFT_VERSION = 1 as const;
 export type OnboardingStep =
   | 'first_name'
   | 'greeting'
-  | 'motivation'
-  | 'motivation_reassurance'
   | 'learning_mode'
-  | 'learning_mode_reassurance'
   | 'start_surah_picker'
   | 'custom_order_picker'
   | 'known_surahs'
@@ -57,8 +54,7 @@ export type OnboardingStep =
 
 const VALID_STEPS: OnboardingStep[] = [
   'first_name', 'greeting',
-  'motivation', 'motivation_reassurance',
-  'learning_mode', 'learning_mode_reassurance',
+  'learning_mode',
   'start_surah_picker', 'custom_order_picker', 'known_surahs',
   'experience_choice',
   'premium_confirmation', 'free_support',
@@ -66,18 +62,30 @@ const VALID_STEPS: OnboardingStep[] = [
   'program_generating', 'program_summary',
 ];
 
-export type MotivationReason =
-  | 'closer_to_allah'
-  | 'memorize_all'
-  | 'memorize_surahs'
-  | 'build_consistency'
-  | 'personal_goal'
-  | 'other';
+// ── Legacy step migration ────────────────────────────────────────────────
+// 'motivation' / 'motivation_reassurance' / 'learning_mode_reassurance' were
+// removed from the parcours. A draft persisted by an older app version may
+// still carry one of these stale currentStep values — without remapping,
+// isValidDraftShape would reject the ENTIRE draft (losing firstName,
+// learningMode, etc.) since these strings are no longer valid OnboardingStep
+// members. Remapping to the next valid step here preserves every other
+// field and guarantees no user ever lands on a deleted route.
+const LEGACY_STEP_MIGRATIONS: Record<string, (data: Record<string, unknown>) => OnboardingStep> = {
+  motivation: () => 'learning_mode',
+  motivation_reassurance: () => 'learning_mode',
+  learning_mode_reassurance: (data) => {
+    if (data.learningMode === 'start_surah') return 'start_surah_picker';
+    if (data.learningMode === 'custom_order') return 'custom_order_picker';
+    return 'known_surahs';
+  },
+};
 
-const VALID_MOTIVATION_REASONS: MotivationReason[] = [
-  'closer_to_allah', 'memorize_all', 'memorize_surahs',
-  'build_consistency', 'personal_goal', 'other',
-];
+function migrateLegacyCurrentStep(data: Record<string, unknown>): void {
+  const step = data.currentStep;
+  if (typeof step === 'string' && step in LEGACY_STEP_MIGRATIONS) {
+    data.currentStep = LEGACY_STEP_MIGRATIONS[step](data);
+  }
+}
 
 // Reuses PlanMode as-is from the historical plan engine (src/core/planEngine)
 // instead of inventing a second, incompatible vocabulary for the same
@@ -127,7 +135,6 @@ export interface OnboardingDraftV1 {
   updatedAt: string;
   currentStep: OnboardingStep;
   firstName: string | null;
-  motivationReason: MotivationReason | null;
   learningMode: LearningMode | null;
   // Common to all 3 modes — surah numbers the user already fully knows.
   knownSurahs: number[];
@@ -156,10 +163,6 @@ function isValidDraftShape(raw: unknown): raw is OnboardingDraftV1 {
   if (typeof d.updatedAt !== 'string' || !d.updatedAt) return false;
   if (typeof d.currentStep !== 'string' || !VALID_STEPS.includes(d.currentStep as OnboardingStep)) return false;
   if (d.firstName !== null && typeof d.firstName !== 'string') return false;
-  if (
-    d.motivationReason !== null
-    && (typeof d.motivationReason !== 'string' || !VALID_MOTIVATION_REASONS.includes(d.motivationReason as MotivationReason))
-  ) return false;
   if (
     d.learningMode !== null
     && (typeof d.learningMode !== 'string' || !VALID_LEARNING_MODES.includes(d.learningMode as LearningMode))
@@ -193,7 +196,6 @@ function createDefaultDraft(step: OnboardingStep = 'first_name'): OnboardingDraf
     updatedAt: now,
     currentStep: step,
     firstName: null,
-    motivationReason: null,
     learningMode: null,
     knownSurahs: [],
     startingSurah: null,
@@ -435,6 +437,7 @@ export async function readOnboardingDraftForOwner(
   const env = envelope as Partial<OnboardingDraftEnvelope>;
   if (!env.owner || !env.data) return null;
   if (!envelopeOwnerMatches(env as OnboardingDraftEnvelope, owner)) return null;
+  migrateLegacyCurrentStep(env.data as unknown as Record<string, unknown>);
   if (!isValidDraftShape(env.data)) return null;
   return env.data;
 }
@@ -539,6 +542,10 @@ export async function inspectDraftForOwner(
   if (!envelopeOwnerMatches(env as OnboardingDraftEnvelope, owner)) {
     return { status: 'owner_mismatch', envelopeOwner: env.owner };
   }
+  migrateLegacyCurrentStep(env.data as unknown as Record<string, unknown>);
+  if (!isValidDraftShape(env.data)) {
+    return { status: 'corrupt' };
+  }
   return { status: 'valid', owner: env.owner, data: env.data };
 }
 
@@ -553,7 +560,7 @@ export async function updateOnboardingDraftForOwner(
   owner: OnboardingDraftOwner,
   patch: Partial<Pick<
     OnboardingDraftV1,
-    | 'currentStep' | 'firstName' | 'motivationReason' | 'learningMode'
+    | 'currentStep' | 'firstName' | 'learningMode'
     | 'knownSurahs' | 'startingSurah' | 'customSurahOrder' | 'continueWithRest'
     | 'experienceChoice' | 'notificationPreference' | 'discoverySource'
   >>

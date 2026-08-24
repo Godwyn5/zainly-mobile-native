@@ -71,7 +71,6 @@ function makeDraft(name: string): OnboardingDraftV1 {
     createdAt: new Date().toISOString(),
     currentStep: 'program_summary',
     firstName: name,
-    motivationReason: 'closer_to_allah',
     learningMode: 'recommended',
     knownSurahs: [1, 2, 3],
     startingSurah: null,

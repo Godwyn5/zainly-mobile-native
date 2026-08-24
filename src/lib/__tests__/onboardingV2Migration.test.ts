@@ -189,7 +189,6 @@ async function seedValidDraft() {
   await updateOnboardingDraftForOwner(ownerA, {
     currentStep: 'program_summary',
     firstName: 'Ahmed',
-    motivationReason: 'closer_to_allah',
     learningMode: 'recommended',
     knownSurahs: [1, 2],
     experienceChoice: 'daily_limited',
@@ -457,10 +456,10 @@ describe('Draft isolation across auth boundaries', () => {
   it('same-account draft is resumed without being overwritten', async () => {
     await updateOnboardingDraftForOwner(ownerA, { firstName: 'Alice', currentStep: 'first_name' });
     // A second update merges, not replaces
-    await updateOnboardingDraftForOwner(ownerA, { motivationReason: 'closer_to_allah' });
+    await updateOnboardingDraftForOwner(ownerA, { learningMode: 'recommended' });
     const draft = await readOnboardingDraftForOwner(ownerA);
     expect(draft?.firstName).toBe('Alice');
-    expect(draft?.motivationReason).toBe('closer_to_allah');
+    expect(draft?.learningMode).toBe('recommended');
   });
 });
 
@@ -703,7 +702,6 @@ describe('Cross-account pending payload protection in plan_already_exists', () =
     await updateOnboardingDraftForOwner(ownerB, {
       currentStep: 'program_summary',
       firstName: 'Bob',
-      motivationReason: 'closer_to_allah',
       learningMode: 'recommended',
       knownSurahs: [1, 2],
       experienceChoice: 'daily_limited',
