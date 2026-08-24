@@ -6,10 +6,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { hapticLight } from '@/utils/haptics';
-import { useAuthStore } from '@/store/authStore';
-import { readOnboardingDraftForOwner, updateOnboardingDraftForOwner } from '@/lib/onboardingDraft';
+import { readOnboardingDraftForOwner } from '@/lib/onboardingDraft';
 import { useDraftOwner } from '@/hooks/useDraftOwner';
-import { saveActiveOnboardingAuthFlow, saveGuestDraftHandoff } from '@/lib/pendingOnboardingPlan';
 
 // ─── palette — identical tokens to Splash/Welcome/Name/Greeting/
 // Session/Revisions/Program/Ready (kept local, not exported from those
@@ -47,7 +45,6 @@ function ambientBreath(value: Animated.Value, halfDuration: number, delay = 0) {
 }
 
 export default function OnboardingBuildScreen() {
-  const { session } = useAuthStore();
   const [draftChecked, setDraftChecked] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
   const [finished, setFinished]         = useState(false);
@@ -248,37 +245,11 @@ export default function OnboardingBuildScreen() {
     ]).start();
   }
 
-  async function navigateNext() {
+  function navigateNext() {
     if (navigatedRef.current) return;
     navigatedRef.current = true;
     hapticLight();
-
-    if (!draftOwner) {
-      navigatedRef.current = false;
-      return;
-    }
-
-    const authedUserId = session?.user?.id;
-
-    if (authedUserId) {
-      // Authenticated user (e.g. resume via dashboard CTA) — go straight to questions.
-      await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'learning_mode' });
-      router.push('/onboarding-v2/learning-mode');
-      return;
-    }
-
-    // Guest early-auth path: remember we left from Build, then create the
-    // durable proof that this authentication must claim this specific guest draft.
-    const flowId = draftOwner.kind === 'guest' ? draftOwner.flowId : '';
-    if (!flowId) {
-      navigatedRef.current = false;
-      return;
-    }
-
-    await updateOnboardingDraftForOwner(draftOwner, { currentStep: 'learning_mode' });
-    await saveActiveOnboardingAuthFlow(flowId);
-    await saveGuestDraftHandoff(flowId, flowId);
-    router.push(`/(auth)/signup-methods?context=onboarding&flowId=${encodeURIComponent(flowId)}`);
+    router.push('/onboarding-v2/learning-mode');
   }
 
   if (!draftChecked) {
@@ -337,7 +308,7 @@ export default function OnboardingBuildScreen() {
 
             <View style={styles.titleMaskWrap}>
               <Text style={styles.title}>
-                Ton programme commence ici.
+                Construisons ton programme.
               </Text>
               <Animated.View
                 pointerEvents="none"
@@ -348,7 +319,7 @@ export default function OnboardingBuildScreen() {
             <Animated.Text
               style={[styles.subtitle, { opacity: subtitleOpacity, transform: [{ scale: subtitleScale }] }]}
             >
-              Crée ton compte pour sauvegarder ta progression. Ensuite, quelques questions nous permettront de construire un programme adapté à toi.
+              Réponds à quelques questions. Zainly utilisera tes réponses pour créer un programme adapté à toi.
             </Animated.Text>
 
             <Animated.View
@@ -414,11 +385,11 @@ export default function OnboardingBuildScreen() {
               activeOpacity={0.88}
               style={styles.cta}
               accessibilityRole="button"
-              accessibilityLabel="Créer mon compte"
+              accessibilityLabel="Créer mon programme"
               accessibilityState={{ disabled: !finished }}
               hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             >
-              <Text style={styles.ctaText}>Créer mon compte</Text>
+              <Text style={styles.ctaText}>Créer mon programme</Text>
             </TouchableOpacity>
           </Animated.View>
 

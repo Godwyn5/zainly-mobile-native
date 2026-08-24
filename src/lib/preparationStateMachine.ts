@@ -12,7 +12,6 @@ export interface PreparationIdentity {
 export interface PreparationState {
   userId: string | null;
   status: PreparationStatus;
-  resumeRoute?: string;
   error?: unknown;
 }
 
@@ -58,12 +57,12 @@ export function createReadyState(userId: string): PreparationState {
 /**
  * Creates a "needs_onboarding" state for a given userId.
  * The user authenticated successfully but no Zainly account (plan +
- * progress) is associated with this identity. If a resumeRoute is
- * provided, the root layout uses it; otherwise it falls back to
- * /onboarding-v2/name.
+ * progress) is associated with this identity, and no onboarding handoff
+ * is active. The root layout mounts the onboarding-only Stack and
+ * navigates to /onboarding-v2/name.
  */
-export function createNeedsOnboardingState(userId: string, resumeRoute?: string): PreparationState {
-  return { userId, status: 'needs_onboarding', resumeRoute };
+export function createNeedsOnboardingState(userId: string): PreparationState {
+  return { userId, status: 'needs_onboarding' };
 }
 
 /**

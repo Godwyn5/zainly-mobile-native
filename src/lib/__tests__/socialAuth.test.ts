@@ -31,10 +31,7 @@ jest.mock('@/db/client', () => ({
         mockAuthCallbacks.forEach(cb => cb('SIGNED_OUT', null));
         return { error: null };
       }),
-      getSession: jest.fn(async () => ({
-        data: { session: mockSessionStorage ? { user: { id: mockSessionStorage.userId } } : null },
-        error: null,
-      })),
+      getSession: jest.fn(async () => ({ data: { session: mockSessionStorage }, error: null })),
       onAuthStateChange: jest.fn((cb: (event: string, session: unknown) => void) => {
         mockAuthCallbacks.push(cb);
         return { data: { subscription: { unsubscribe: () => {} } } };
@@ -55,15 +52,6 @@ jest.mock('@/lib/onboardingDashboardHandoff', () => ({
   })),
 }));
 
-jest.mock('@/store/authStore', () => ({
-  useAuthStore: {
-    getState: jest.fn(() => ({
-      session: { user: { id: 'user-new-001' } },
-      setSession: jest.fn(),
-    })),
-  },
-}));
-
 jest.mock('@/lib/pendingOnboardingPlan', () => ({
   setSessionAuthFlowId: jest.fn(),
   getSessionAuthFlowId: jest.fn(() => ''),
@@ -72,9 +60,6 @@ jest.mock('@/lib/pendingOnboardingPlan', () => ({
   clearPendingOnboardingIfMatches: jest.fn(async () => 'cleared'),
   invalidateStaleOnboardingAuthorization: jest.fn(async () => {}),
   saveCompletedAuthProof: jest.fn(async () => {}),
-  hasValidPendingOnboardingPlanForUser: jest.fn(async () => true),
-  readGuestDraftHandoff: jest.fn(async () => null),
-  claimGuestDraftWithHandoff: jest.fn(async () => ({ ok: false, reason: 'no_handoff' })),
 }));
 
 jest.mock('@/db/plans', () => ({
@@ -564,10 +549,9 @@ describe('performSocialAuth', () => {
     mockAppleIsAvailableAsync.mockResolvedValue(true);
     mockAppleSignInAsync.mockResolvedValue(makeAppleCredential());
     const session = makeSession('user-onboarding-123');
-    (supabase.auth.signInWithIdToken as jest.Mock).mockImplementation(async () => {
-      // Simulate the real SDK _saveSession side-effect so getSession finds the user
-      mockSessionStorage = { userId: session.user.id, access_token: session.access_token };
-      return { data: { session }, error: null };
+    (supabase.auth.signInWithIdToken as jest.Mock).mockResolvedValue({
+      data: { session },
+      error: null,
     });
     // Pre-populate cache as handoff would — runOnboardingTransition verifies cache
     queryClient.setQueryData(['plan', 'user-onboarding-123'], { id: 'plan-1' });

@@ -1,11 +1,6 @@
 /// <reference types="jest" />
 import { QueryClient } from '@tanstack/react-query';
 import { prepareAuthenticatedLaunch } from '../prepareAuthenticatedLaunch';
-import { readOnboardingDraftForOwner } from '@/lib/onboardingDraft';
-
-jest.mock('@/lib/onboardingDraft', () => ({
-  readOnboardingDraftForOwner: jest.fn(async () => null),
-}));
 import { fetchPlan } from '@/db/plans';
 import { fetchProgress } from '@/db/progress';
 import { fetchDueCount } from '@/db/reviewItems';
@@ -227,24 +222,6 @@ describe('prepareAuthenticatedLaunch', () => {
     expect(finalizeOnboardingV2Plan).not.toHaveBeenCalled();
     expect(handOffFinalizedProgram).not.toHaveBeenCalled();
     expect(clearPendingOnboardingIfMatches).not.toHaveBeenCalled();
-  });
-
-  it('when no plan/progress but a user draft exists, returns needs_onboarding with resumeRoute', async () => {
-    (fetchPlan as jest.Mock).mockResolvedValueOnce(null);
-    (fetchProgress as jest.Mock).mockResolvedValueOnce(null);
-    (readOnboardingDraftForOwner as jest.Mock).mockResolvedValueOnce({
-      version: 1,
-      currentStep: 'learning_mode',
-      learningMode: 'recommended',
-      knownSurahs: [],
-    });
-
-    const result = await prepareAuthenticatedLaunch(queryClient, 'user-A');
-    expect(result.status).toBe('needs_onboarding');
-    expect(result).toMatchObject({
-      status: 'needs_onboarding',
-      resumeRoute: '/onboarding-v2/learning-mode',
-    });
   });
 });
 

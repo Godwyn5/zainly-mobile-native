@@ -18,27 +18,8 @@ import {
   clearPendingOnboardingIfMatches,
   clearSessionAuthFlowId,
   saveCompletedAuthProof,
-  hasValidPendingOnboardingPlanForUser,
-  readGuestDraftHandoff,
-  claimGuestDraftWithHandoff,
 } from '@/lib/pendingOnboardingPlan';
-import { readOnboardingDraftForOwner } from '@/lib/onboardingDraft';
 
-jest.mock('@/db/client', () => ({
-  supabase: {
-    auth: {
-      getSession: jest.fn(async () => ({
-        data: { session: { user: { id: 'user-A' } } },
-        error: null,
-      })),
-    },
-  },
-}));
-jest.mock('@/store/authStore', () => ({
-  useAuthStore: {
-    getState: jest.fn(() => ({ session: { user: { id: 'user-A' } } })),
-  },
-}));
 jest.mock('@/lib/onboardingFinalize', () => ({
   finalizeOnboardingV2Plan: jest.fn(async () => ({ ok: true, reason: 'created' })),
 }));
@@ -56,12 +37,6 @@ jest.mock('@/lib/pendingOnboardingPlan', () => ({
   readPendingOnboardingPlan: jest.fn(async () => ({ flowId: 'flow-123', ownerUserId: 'user-A' })),
   clearPendingOnboardingIfMatches: jest.fn(async () => 'cleared'),
   saveCompletedAuthProof: jest.fn(async () => {}),
-  hasValidPendingOnboardingPlanForUser: jest.fn(async () => true),
-  readGuestDraftHandoff: jest.fn(async () => null),
-  claimGuestDraftWithHandoff: jest.fn(async () => ({ ok: false, reason: 'no_handoff' })),
-}));
-jest.mock('@/lib/onboardingDraft', () => ({
-  readOnboardingDraftForOwner: jest.fn(async () => null),
 }));
 jest.mock('@/db/plans', () => ({
   fetchPlan: jest.fn(async () => ({ id: 'plan-1' })),
@@ -214,47 +189,6 @@ describe('runOnboardingTransition', () => {
 
     const result = await runOnboardingTransition(queryClient, 'user-A', leaseId, 'gen-1', VISUAL);
     expect(result.status).toBe('error');
-    expect(hasActiveTransitionLease()).toBe(false);
-  });
-
-  it('returns needs_onboarding when no pending payload but a matching active flow and guest handoff exist (Build early auth)', async () => {
-    const leaseId = await setupLease('flow-123');
-    (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValueOnce(false);
-    (readGuestDraftHandoff as jest.Mock).mockResolvedValueOnce({
-      transactionFlowId: 'flow-123',
-      sourceGuestDraftFlowId: 'guest-flow',
-    });
-    (claimGuestDraftWithHandoff as jest.Mock).mockResolvedValueOnce({
-      ok: true,
-      reason: 'claimed',
-    });
-    (readOnboardingDraftForOwner as jest.Mock).mockResolvedValueOnce({
-      version: 1,
-      flowId: 'guest-flow',
-      currentStep: 'learning_mode',
-      learningMode: 'recommended',
-      knownSurahs: [],
-    });
-
-    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId, 'gen-1', VISUAL);
-    expect(result.status).toBe('needs_onboarding');
-    expect(hasActiveTransitionLease()).toBe(false);
-    expect(claimGuestDraftWithHandoff).toHaveBeenCalledWith(
-      'user-A',
-      'guest-flow',
-      expect.any(Function),
-    );
-    expect(finalizeOnboardingV2Plan).not.toHaveBeenCalled();
-  });
-
-  it('returns not_onboardable when neither a pending payload nor a guest handoff matches', async () => {
-    const leaseId = await setupLease('flow-123');
-    (hasValidPendingOnboardingPlanForUser as jest.Mock).mockResolvedValueOnce(false);
-    (readGuestDraftHandoff as jest.Mock).mockResolvedValueOnce(null);
-
-    const result = await runOnboardingTransition(queryClient, 'user-A', leaseId, 'gen-1', VISUAL);
-    expect(result.status).toBe('error');
-    expect((result as { error: { kind: string } }).error.kind).toBe('not_onboardable');
     expect(hasActiveTransitionLease()).toBe(false);
   });
 });

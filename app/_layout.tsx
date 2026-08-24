@@ -34,7 +34,6 @@ import {
   createInitialPreparationState,
   createPreparingState,
   createReadyState,
-  createNeedsOnboardingState,
   createAccountNotFoundState,
   createErrorState,
   type PreparationState,
@@ -363,8 +362,6 @@ export default function RootLayout() {
 
         if (result.status === 'ready') {
           setAccountPreparation(createReadyState(preparationUserId));
-        } else if (result.status === 'needs_onboarding') {
-          setAccountPreparation(createNeedsOnboardingState(preparationUserId, result.resumeRoute));
         } else if (result.status === 'account_not_found') {
           setAccountPreparation(createAccountNotFoundState(preparationUserId));
         } else {
@@ -563,21 +560,18 @@ export default function RootLayout() {
   useEffect(() => {
     if (canRenderOnboardingStack && userId && onboardingNavRef.current !== userId) {
       onboardingNavRef.current = userId;
-      // Use the resume route validated from the user's draft, falling back
-      // to the V2 entry screen if none is available.
-      const target = accountPreparation.resumeRoute ?? '/onboarding-v2/name';
-      if (!pathname.startsWith('/onboarding-v2/')) {
-        requestAnimationFrame(() => {
-          router.replace(target);
-        });
-      }
+      // Use a microtask to ensure the Stack has mounted before navigating.
+      // This avoids 'navigation not ready' errors during initial boot.
+      requestAnimationFrame(() => {
+        router.replace('/onboarding-v2/name');
+      });
     }
     // Reset the ref when userId changes or needs_onboarding clears so a
     // future needs_onboarding for the same or different user can fire.
     if (!canRenderOnboardingStack && onboardingNavRef.current !== null) {
       onboardingNavRef.current = null;
     }
-  }, [canRenderOnboardingStack, userId, pathname, accountPreparation.resumeRoute]);
+  }, [canRenderOnboardingStack, userId]);
 
   const showAccountNotFound =
     !!accountNotFoundUserId && ready && accountNotFoundPhase !== null;
